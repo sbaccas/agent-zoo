@@ -122,3 +122,31 @@ async def test_workbench_live_sync():
         assert state.latest_observation["self"]["facing"] == "east"
         # Autonomous brain should propose attack on the mouse ahead
         assert state.latest_autonomous["action"] == "attack"
+
+
+def test_workbench_lunge_override():
+    client = TestClient(app)
+
+    # 1. Set override to 'lunge'
+    override_resp = client.post("/api/agent/override", json={"action": "lunge", "mode": "once"})
+    assert override_resp.status_code == 200
+    assert override_resp.json()["pending_override"] == "lunge"
+
+    # 2. Cat at (10, 10) facing EAST
+    cat_obs = {
+        "tick": 1,
+        "round": 0,
+        "self": {"id": "cat-1", "position": {"x": 10, "y": 10}, "facing": "east", "hp": 100},
+        "visible_entities": [{"id": "mouse-1", "type": "mouse", "position": {"x": 14, "y": 10}}],
+        "legal_actions": ["north", "south", "east", "west", "stay", "attack", "lunge"],
+    }
+    act_resp = client.post("/act", json=cat_obs)
+    assert act_resp.status_code == 200
+    assert act_resp.json()["action"] == "lunge"
+
+    # Verify posture is 2 tiles ahead in facing direction (12, 10)
+    state_resp = client.get("/api/agent/state")
+    data = state_resp.json()
+    assert len(data["history"]) == 1
+    assert data["history"][0]["response"]["resulting_posture"]["position"] == {"x": 12, "y": 10}
+    assert data["history"][0]["response"]["resulting_posture"]["facing"] == "east"

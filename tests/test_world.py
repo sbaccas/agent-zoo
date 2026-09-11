@@ -59,3 +59,39 @@ def test_slash_aoe():
     for tx, ty in aoe:
         assert ty < 10, f"Slash AoE tile ({tx}, {ty}) should be in front (y < 10)"
         assert ty >= 8, f"Slash AoE tile ({tx}, {ty}) should be within reach of 2 tiles"
+
+
+def test_cat_lunge_next_position():
+    world = World(width=50, height=50, topology=Topology.BOUNDED)
+    pos = Position(x=10, y=10)
+
+    # Facing EAST -> 2 tiles forward to (12, 10)
+    p_east = world.get_next_position(pos, ActionType.LUNGE, facing=Direction.EAST)
+    assert p_east.x == 12
+    assert p_east.y == 10
+
+    # Facing NORTH -> 2 tiles forward to (10, 8)
+    p_north = world.get_next_position(pos, ActionType.LUNGE, facing=Direction.NORTH)
+    assert p_north.x == 10
+    assert p_north.y == 8
+
+
+def test_cat_lunge_wall_bonk_clamped():
+    # 10x10 bounded world (indices 0..9)
+    world = World(width=10, height=10, topology=Topology.BOUNDED)
+
+    # 1 tile away from eastern wall: at (8, 5) facing EAST
+    # 2 tiles would be x=10 (out of bounds), so it bonks and stops at x=9
+    pos_near_wall = Position(x=8, y=5)
+    p_bonk = world.get_next_position(pos_near_wall, ActionType.LUNGE, facing=Direction.EAST)
+    assert p_bonk.x == 9
+    assert p_bonk.y == 5
+
+    # At wall: at (9, 5) facing EAST
+    # Step 1 is already out of bounds -> lunge is not legal, get_next_position stays at 9
+    pos_at_wall = Position(x=9, y=5)
+    legal_at_wall = world.get_legal_actions(pos_at_wall, allow_attack=True, facing=Direction.EAST)
+    assert ActionType.LUNGE not in legal_at_wall
+    p_blocked = world.get_next_position(pos_at_wall, ActionType.LUNGE, facing=Direction.EAST)
+    assert p_blocked.x == 9
+    assert p_blocked.y == 5

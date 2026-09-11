@@ -54,6 +54,7 @@
   const dpadRight = document.getElementById('dpadRight');
   const dpadStay = document.getElementById('dpadStay');
   const btnAttack = document.getElementById('btnAttack');
+  const btnLunge = document.getElementById('btnLunge');
 
   let currentSimId = 'active';
   let pollTimeout = null;
@@ -420,7 +421,7 @@
       }
     }
 
-    // Slash Attack Button
+    // Slash Attack & Lunge Buttons
     const legal = obs.legal_actions || [];
     if (self.type === 'cat') {
       btnAttack.style.display = 'block';
@@ -431,8 +432,20 @@
         btnAttack.disabled = true;
         btnAttack.textContent = '⚔️ Slash Attack (No target ahead)';
       }
+
+      if (btnLunge) {
+        btnLunge.style.display = 'block';
+        if (legal.includes('lunge')) {
+          btnLunge.disabled = false;
+          btnLunge.textContent = '⚡ Forward Lunge (Ready!)';
+        } else {
+          btnLunge.disabled = true;
+          btnLunge.textContent = '⚡ Forward Lunge (Blocked)';
+        }
+      }
     } else {
       btnAttack.style.display = 'none';
+      if (btnLunge) btnLunge.style.display = 'none';
     }
   }
 
@@ -554,8 +567,9 @@
   if (dpadRight) dpadRight.addEventListener('click', () => sendAgentAction('east'));
   if (dpadStay) dpadStay.addEventListener('click', () => sendAgentAction('stay'));
   if (btnAttack) btnAttack.addEventListener('click', () => sendAgentAction('attack'));
+  if (btnLunge) btnLunge.addEventListener('click', () => sendAgentAction('lunge'));
 
-  // Keyboard Controls (WASD / Arrows / Spacebar)
+  // Keyboard Controls (WASD / Arrows / Spacebar / L for lunge)
   window.addEventListener('keydown', (e) => {
     if (!selectedAgentId || selectedAgentMode !== 'manual') return;
     if (document.activeElement && document.activeElement.tagName === 'INPUT') return;
@@ -566,6 +580,7 @@
     else if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') action = 'west';
     else if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') action = 'east';
     else if (e.key === ' ') action = 'attack';
+    else if (e.key === 'l' || e.key === 'L') action = 'lunge';
     else if (e.key === '.' || e.key === 'x') action = 'stay';
 
     if (action) {

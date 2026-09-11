@@ -42,7 +42,7 @@
   const overrideTitle = document.querySelector('.override-title');
   const btnModeOnce = document.getElementById('btnModeOnce');
   const btnModeSticky = document.getElementById('btnModeSticky');
-  const dpadButtons = document.querySelectorAll('.dpad-btn, .btn-attack-override');
+  const dpadButtons = document.querySelectorAll('.dpad-btn, .btn-attack-override, .btn-lunge-override');
   const overrideStatusBox = document.getElementById('overrideStatusBox');
   const overrideStatusText = document.getElementById('overrideStatusText');
   const btnClearOverride = document.getElementById('btnClearOverride');
@@ -593,6 +593,9 @@
     } else if (e.code === 'Space') {
       e.preventDefault();
       setOverride('attack');
+    } else if (key === 'l') {
+      e.preventDefault();
+      setOverride('lunge');
     } else if (key === 'escape') {
       e.preventDefault();
       clearOverride();

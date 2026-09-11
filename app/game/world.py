@@ -1,4 +1,4 @@
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 from app.models.action import ActionType
 from app.models.entity import Direction, Position
 from app.models.simulation import Topology
@@ -40,9 +40,31 @@ class World:
             return Direction.WEST
         return Direction.NORTH
 
-    def get_next_position(self, pos: Position, action: ActionType) -> Position:
+    def get_next_position(
+        self, pos: Position, action: ActionType, facing: Optional[Direction] = None
+    ) -> Position:
         if action in [ActionType.STAY, ActionType.ATTACK]:
             return Position(x=pos.x, y=pos.y)
+
+        if action == ActionType.LUNGE:
+            if not facing:
+                return Position(x=pos.x, y=pos.y)
+            dx, dy = self.get_forward_delta(facing)
+            if self.topology == Topology.TORUS:
+                wx, wy = self.wrap_position(pos.x + dx * 2, pos.y + dy * 2)
+                return Position(x=wx, y=wy)
+            else:
+                target_x = pos.x + dx * 2
+                target_y = pos.y + dy * 2
+                if self.is_in_bounds(target_x, target_y):
+                    return Position(x=target_x, y=target_y)
+                # If target is out of bounds, check 1 step forward (bonk into the wall)
+                step1_x = pos.x + dx
+                step1_y = pos.y + dy
+                if self.is_in_bounds(step1_x, step1_y):
+                    return Position(x=step1_x, y=step1_y)
+                # Already at the wall
+                return Position(x=pos.x, y=pos.y)
 
         dx, dy = 0, 0
         if action == ActionType.NORTH:
@@ -65,7 +87,12 @@ class World:
                 return Position(x=pos.x, y=pos.y)
             return Position(x=target_x, y=target_y)
 
-    def get_legal_actions(self, pos: Position, allow_attack: bool = False) -> List[ActionType]:
+    def get_legal_actions(
+        self,
+        pos: Position,
+        allow_attack: bool = False,
+        facing: Optional[Direction] = None,
+    ) -> List[ActionType]:
         legal = [ActionType.STAY]
         moves = [
             (ActionType.NORTH, 0, -1),
@@ -81,6 +108,14 @@ class World:
 
         if allow_attack:
             legal.append(ActionType.ATTACK)
+            if facing:
+                fdx, fdy = self.get_forward_delta(facing)
+                step1_x = pos.x + fdx
+                step1_y = pos.y + fdy
+                if self.topology == Topology.TORUS or self.is_in_bounds(step1_x, step1_y):
+                    legal.append(ActionType.LUNGE)
+            else:
+                legal.append(ActionType.LUNGE)
 
         return legal
 

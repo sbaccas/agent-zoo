@@ -11,6 +11,7 @@ class ActionType(str, Enum):
     WEST = "west"
     STAY = "stay"
     ATTACK = "attack"
+    LUNGE = "lunge"
 
 
 class ActionRequest(BaseModel):

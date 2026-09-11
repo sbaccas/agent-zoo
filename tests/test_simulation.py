@@ -144,3 +144,42 @@ async def test_http_agent_dispatch_live():
         assert cat.position.y == 9  # moved north
 
 
+@pytest.mark.asyncio
+async def test_cat_lunge_jumps_over_mouse():
+    from app.models.action import ActionType
+    from app.models.entity import Direction, EntityType, Position
+    sim = Simulation(config=SimulationConfig(populations={"cats": 0, "mice": 0}))
+    # Cat at (10, 10) facing EAST
+    cat = sim.entity_manager.spawn_entity(EntityType.CAT, pos=Position(x=10, y=10), facing=Direction.EAST)
+    # Mouse at (11, 10) directly 1 square ahead
+    mouse = sim.entity_manager.spawn_entity(EntityType.MOUSE, pos=Position(x=11, y=10), facing=Direction.WEST)
+
+    # Cat executes lunge -> lands at (12, 10), jumping right over mouse at (11, 10)
+    res = sim.action_handler.apply_action(cat, ActionType.LUNGE, current_tick=1)
+    assert res.accepted is True
+    assert cat.position.x == 12
+    assert cat.position.y == 10
+    assert cat.facing == Direction.EAST
+
+    # Mouse is untouched and alive
+    assert mouse.alive is True
+    assert mouse.position.x == 11
+    assert mouse.position.y == 10
+
+
+@pytest.mark.asyncio
+async def test_mouse_cannot_lunge():
+    from app.models.action import ActionType
+    from app.models.entity import Direction, EntityType, Position
+    sim = Simulation(config=SimulationConfig(populations={"cats": 0, "mice": 0}))
+    mouse = sim.entity_manager.spawn_entity(EntityType.MOUSE, pos=Position(x=10, y=10), facing=Direction.EAST)
+
+    # Mouse legal actions should NOT have LUNGE
+    legal = sim.world.get_legal_actions(mouse.position, allow_attack=False, facing=mouse.facing)
+    assert ActionType.LUNGE not in legal
+
+    # Attempting lunge fails
+    res = sim.action_handler.apply_action(mouse, ActionType.LUNGE, current_tick=1)
+    assert res.accepted is False
+
+

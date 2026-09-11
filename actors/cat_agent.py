@@ -109,7 +109,36 @@ def compute_autonomous_decision(obs: Observation):
                 }
                 return "attack", msg, meta
 
-    # 2. Advance towards nearest seen mouse
+    # 2. Can we lunge forward 2 squares to close distance on target?
+    if "lunge" in legal and mice_seen:
+        for m in mice_seen:
+            m_pos = m.get("position", {})
+            mx, my = m_pos.get("x", 0), m_pos.get("y", 0)
+            dx = mx - pos["x"]
+            dy = my - pos["y"]
+
+            directly_ahead = False
+            if facing == "north" and dy < 0 and dx == 0:
+                directly_ahead = True
+            elif facing == "south" and dy > 0 and dx == 0:
+                directly_ahead = True
+            elif facing == "east" and dx > 0 and dy == 0:
+                directly_ahead = True
+            elif facing == "west" and dx < 0 and dy == 0:
+                directly_ahead = True
+
+            dist = abs(dx) + abs(dy)
+            if directly_ahead and dist >= 3:
+                msg = f"Lunging 2 squares forward to close distance on {m.get('id')}!"
+                meta = {
+                    "phase": "LUNGE",
+                    "target_id": m.get("id"),
+                    "distance": dist,
+                    "target_pos": {"x": mx, "y": my},
+                }
+                return "lunge", msg, meta
+
+    # 3. Advance towards nearest seen mouse
     if mice_seen:
         target = min(
             mice_seen,
@@ -144,7 +173,7 @@ def compute_autonomous_decision(obs: Observation):
             }
             return choice, msg, meta
 
-    # 3. Explore
+    # 4. Explore
     movement_choices = [a for a in legal if a in ["north", "south", "east", "west", "stay"]]
     choice = random.choice(movement_choices) if movement_choices else "stay"
     meta = {
@@ -173,6 +202,15 @@ def compute_resulting_posture(pos: Dict[str, Any], facing: str, action: str) -> 
     elif action == "west":
         new_facing = "west"
         new_x = max(0, x - 1)
+    elif action == "lunge":
+        if facing == "north":
+            new_y = max(0, y - 2)
+        elif facing == "south":
+            new_y = y + 2
+        elif facing == "east":
+            new_x = x + 2
+        elif facing == "west":
+            new_x = max(0, x - 2)
 
     return {
         "position": {"x": new_x, "y": new_y},
@@ -187,7 +225,7 @@ def act(obs: Observation) -> ActionResponse:
     auto_action, auto_thought, auto_meta = compute_autonomous_decision(obs)
 
     # Check for manual override
-    if state.pending_override and state.pending_override in (obs.legal_actions or ["north", "south", "east", "west", "stay", "attack"]):
+    if state.pending_override and state.pending_override in (obs.legal_actions or ["north", "south", "east", "west", "stay", "attack", "lunge"]):
         chosen_action = state.pending_override
         chosen_thought = f"Manual override ({state.override_mode}): {chosen_action}"
         source = "manual_override"

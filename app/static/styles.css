@@ -538,6 +538,7 @@ body {
   align-items: center;
   gap: 4px;
   margin-top: 10px;
+  width: 100%;
 }
 
 .dpad-row {
@@ -573,6 +574,8 @@ body {
 
 .btn-attack {
   width: 100%;
+  max-width: 220px;
+  box-sizing: border-box;
   margin-top: 8px;
   padding: 8px 12px;
   font-size: 0.82rem;
@@ -590,6 +593,30 @@ body {
 }
 
 .btn-attack:active {
+  transform: scale(0.98);
+}
+
+.btn-lunge {
+  width: 100%;
+  max-width: 220px;
+  box-sizing: border-box;
+  margin-top: 6px;
+  padding: 8px 12px;
+  font-size: 0.82rem;
+  font-weight: 700;
+  background-color: #d97706;
+  color: #ffffff;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+
+.btn-lunge:hover {
+  background-color: #b45309;
+}
+
+.btn-lunge:active {
   transform: scale(0.98);
 }
 

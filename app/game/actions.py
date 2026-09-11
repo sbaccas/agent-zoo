@@ -36,8 +36,33 @@ class ActionHandler:
                 message=f"Attack executed hitting {len(hit_entities)} target(s)",
             )
 
+        if action == ActionType.LUNGE:
+            allow_attack = (entity.type == EntityType.CAT)
+            legal_actions = self.world.get_legal_actions(prev_pos, allow_attack=allow_attack, facing=entity.facing)
+            if action not in legal_actions:
+                return ActionResult(
+                    accepted=False,
+                    tick=current_tick,
+                    previous_position=prev_pos,
+                    new_position=prev_pos,
+                    action=action,
+                    message=f"Illegal action: {action.value} from ({prev_pos.x}, {prev_pos.y}) facing {entity.facing.value}",
+                )
+
+            new_pos = self.world.get_next_position(prev_pos, action, facing=entity.facing)
+            entity.position = new_pos
+            return ActionResult(
+                accepted=True,
+                tick=current_tick,
+                previous_position=prev_pos,
+                new_position=new_pos,
+                action=action,
+                message="Lunge executed successfully",
+            )
+
         # Movement / Stay actions
-        legal_actions = self.world.get_legal_actions(prev_pos, allow_attack=True)
+        allow_attack = (entity.type == EntityType.CAT)
+        legal_actions = self.world.get_legal_actions(prev_pos, allow_attack=allow_attack, facing=entity.facing)
         if action not in legal_actions:
             return ActionResult(
                 accepted=False,

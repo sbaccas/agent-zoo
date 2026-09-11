@@ -76,7 +76,7 @@ async def get_agent_observation(sim_id: str, agent_id: str):
                 visible.append(other)
 
     allow_attack = (entity.type == EntityType.CAT)
-    legal_actions = sim.world.get_legal_actions(entity.position, allow_attack=allow_attack)
+    legal_actions = sim.world.get_legal_actions(entity.position, allow_attack=allow_attack, facing=entity.facing)
 
     return ObservationResponse(
         simulation_id=sim.simulation_id,
