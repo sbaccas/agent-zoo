@@ -79,7 +79,7 @@ class Scheduler:
             "legal_actions": legal_actions,
         }
 
-    async def execute_simulation_step(self) -> int:
+    async def execute_simulation_step(self, skip_entity_id: Optional[str] = None) -> int:
         self.step_logical_clock()
 
         entities = self.entity_manager.get_alive_entities()
@@ -90,7 +90,7 @@ class Scheduler:
 
         # 1. Cats turn
         for cat in cats:
-            if not cat.alive:
+            if not cat.alive or cat.id == skip_entity_id:
                 continue
 
             mode = self.entity_manager.get_agent_mode(cat.id)
@@ -143,7 +143,7 @@ class Scheduler:
 
         # 2. Mice turn
         for mouse in mice:
-            if not mouse.alive:
+            if not mouse.alive or mouse.id == skip_entity_id:
                 continue
 
             mode = self.entity_manager.get_agent_mode(mouse.id)

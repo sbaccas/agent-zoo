@@ -66,9 +66,14 @@ def test_workbench_override_and_act():
     assert state_data["total_ticks_processed"] == 1
     assert state_data["history"][0]["source"] == "manual_override"
     assert state_data["history"][0]["autonomous_decision"]["action"] == "attack"
+    assert state_data["history"][0]["response"]["resulting_posture"]["position"] == {"x": 9, "y": 10}
+    assert state_data["history"][0]["response"]["resulting_posture"]["facing"] == "west"
 
-    # 3. Next tick without override should execute autonomous 'attack'
+    # 3. Next tick (tick 5) receives post-move observation: cat at (9, 10) facing west
     cat_obs["tick"] = 5
+    cat_obs["self"]["position"] = {"x": 9, "y": 10}
+    cat_obs["self"]["facing"] = "west"
+    cat_obs["visible_entities"] = [{"id": "mouse-1", "type": "mouse", "position": {"x": 8, "y": 10}}]
     act_resp2 = client.post("/act", json=cat_obs)
     assert act_resp2.status_code == 200
     assert act_resp2.json()["action"] == "attack"
@@ -77,3 +82,43 @@ def test_workbench_override_and_act():
     clear_resp = client.post("/api/agent/clear-history")
     assert clear_resp.status_code == 200
     assert client.get("/api/agent/state").json()["history"] == []
+
+
+@pytest.mark.asyncio
+async def test_workbench_live_sync():
+    from unittest.mock import patch, AsyncMock
+    from actors.cat_agent import sync_live_observation
+
+    # Mock response from Game Server (:8000)
+    mock_obs_data = {
+        "simulation_id": "test-sim-1",
+        "tick": 2,
+        "round": 0,
+        "self": {
+            "id": "cat-1",
+            "type": "cat",
+            "position": {"x": 50, "y": 50},
+            "facing": "east",
+            "hp": 100,
+        },
+        "visible_entities": [{"id": "mouse-9", "type": "mouse", "position": {"x": 51, "y": 50}}],
+        "legal_actions": ["stay", "north", "south", "east", "west", "attack"],
+    }
+
+    mock_resp = AsyncMock()
+    mock_resp.status_code = 200
+    mock_resp.json = lambda: mock_obs_data
+
+    # Set up history with Tick 2 completed
+    state.history.append({"tick": 2, "action": "east"})
+
+    with patch("httpx.AsyncClient.get", new=AsyncMock(return_value=mock_resp)):
+        synced = await sync_live_observation("cat-1")
+        assert synced is True
+        # Upcoming tick must be 3 because tick 2 is in history
+        assert state.active_tick == 3
+        assert state.latest_observation["tick"] == 3
+        assert state.latest_observation["self"]["position"] == {"x": 50, "y": 50}
+        assert state.latest_observation["self"]["facing"] == "east"
+        # Autonomous brain should propose attack on the mouse ahead
+        assert state.latest_autonomous["action"] == "attack"

@@ -123,7 +123,7 @@ async def submit_agent_action(sim_id: str, agent_id: str, req: ActionRequest, st
     # 3. Synchronize simulation clock: advance world 1 tick so other animals react
     if step and sim.status != SimulationStatus.RUNNING:
         sim._save_snapshot()
-        await sim.scheduler.execute_simulation_step()
+        await sim.scheduler.execute_simulation_step(skip_entity_id=agent_id)
 
     return result
 

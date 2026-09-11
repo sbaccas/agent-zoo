@@ -32,11 +32,14 @@
   const chipVisible = document.getElementById('chipVisible');
   const obsJsonViewer = document.getElementById('obsJsonViewer');
   const btnCopyObs = document.getElementById('btnCopyObs');
+  const obsSubtitleChip = document.getElementById('obsSubtitleChip');
 
   // DOM Elements - Box 2: Brain & Override
   const badgeBrainState = document.getElementById('badgeBrainState');
   const autonomousThought = document.getElementById('autonomousThought');
   const autoActionPill = document.getElementById('autoActionPill');
+  const autoDecisionLabel = document.querySelector('.autonomous-decision-label');
+  const overrideTitle = document.querySelector('.override-title');
   const btnModeOnce = document.getElementById('btnModeOnce');
   const btnModeSticky = document.getElementById('btnModeSticky');
   const dpadButtons = document.querySelectorAll('.dpad-btn, .btn-attack-override');
@@ -51,6 +54,7 @@
   const responseThought = document.getElementById('responseThought');
   const respJsonViewer = document.getElementById('respJsonViewer');
   const btnCopyResp = document.getElementById('btnCopyResp');
+  const respSubtitleChip = document.getElementById('respSubtitleChip');
 
   // DOM Elements - Box 4: History
   const historyCountPill = document.getElementById('historyCountPill');
@@ -69,35 +73,49 @@
     }, 1200);
   }
 
+  let wasServerReachable = true;
+
   // API Call helper
   async function api(path, method = 'GET', body = null) {
     try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 2500);
       const opts = {
         method,
         headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
       };
       if (body) {
         opts.body = JSON.stringify(body);
       }
       const res = await fetch(path, opts);
+      clearTimeout(timer);
       if (!res.ok) {
         throw new Error(`HTTP ${res.status}`);
       }
+      if (!wasServerReachable) {
+        console.log('[API] Connection restored to server');
+        wasServerReachable = true;
+      }
       return await res.json();
     } catch (err) {
-      console.warn(`[API] Error on ${path}:`, err);
+      if (wasServerReachable) {
+        console.warn(`[API] Server unreachable on ${path}:`, err.message || err);
+        wasServerReachable = false;
+      }
       return null;
     }
   }
 
   // Render Box 1: Observation
-  function renderObservation(obs) {
+  function renderObservation(obs, isHistorical = false) {
     if (!obs) {
       chipPos.textContent = '--';
       chipFacing.textContent = '--';
       chipHp.textContent = '--';
       chipVisible.textContent = '--';
       obsJsonViewer.textContent = '// Waiting for observations from simulation server...';
+      if (obsSubtitleChip) obsSubtitleChip.textContent = 'Server ➔ Cat';
       return;
     }
 
@@ -115,11 +133,29 @@
       chipVisible.textContent = `${visible.length} entities`;
     }
 
+    if (obsSubtitleChip) {
+      if (isHistorical) {
+        obsSubtitleChip.textContent = `Historical Tick #${obs.tick}`;
+      } else if (obs.tick !== undefined) {
+        obsSubtitleChip.textContent = `Incoming for Tick #${obs.tick}`;
+      } else {
+        obsSubtitleChip.textContent = 'Server ➔ Cat';
+      }
+    }
+
     obsJsonViewer.textContent = JSON.stringify(obs, null, 2);
   }
 
   // Render Box 2: Brain Decision & Override
   function renderBrain(state) {
+    const currentTick = (state.active_tick !== undefined && state.active_tick !== null && state.active_tick > 0) ? state.active_tick : 1;
+    if (overrideTitle) {
+      overrideTitle.textContent = `Manual Override for Tick #${currentTick}`;
+    }
+    if (autoDecisionLabel) {
+      autoDecisionLabel.textContent = `Proposed Auto Action for Tick #${currentTick}:`;
+    }
+
     const latestAuto = state.latest_autonomous;
     if (latestAuto) {
       autonomousThought.textContent = latestAuto.thought || 'Autonomous decision ready';
@@ -191,6 +227,7 @@
       responseThought.textContent = 'No actions returned yet';
       respJsonViewer.textContent = '// Waiting to send action response...';
       actionSummaryCard.classList.remove('override-sent');
+      if (respSubtitleChip) respSubtitleChip.textContent = 'Cat ➔ Server';
       return;
     }
 
@@ -213,15 +250,28 @@
       actionSummaryCard.classList.remove('override-sent');
     }
 
-    responseThought.textContent = resp.thought || '';
-    respJsonViewer.textContent = JSON.stringify(
-      {
-        action: resp.action,
-        thought: resp.thought,
-      },
-      null,
-      2
-    );
+    if (respSubtitleChip) {
+      const tickNum = (cachedState && cachedState.active_tick !== undefined && cachedState.active_tick !== null) ? `Tick #${cachedState.active_tick} ` : '';
+      respSubtitleChip.textContent = `${tickNum}Executed & Recorded`;
+    }
+
+    if (resp.resulting_posture) {
+      const rp = resp.resulting_posture;
+      const rPos = rp.position || {};
+      responseThought.textContent = `${resp.thought || ''} • Resulting: (${rPos.x}, ${rPos.y}) facing ${(rp.facing || '').toUpperCase()}`;
+    } else {
+      responseThought.textContent = resp.thought || '';
+    }
+
+    const payloadObj = {
+      action: resp.action,
+      thought: resp.thought,
+    };
+    if (resp.resulting_posture) {
+      payloadObj.resulting_posture = resp.resulting_posture;
+    }
+
+    respJsonViewer.textContent = JSON.stringify(payloadObj, null, 2);
   }
 
   // Render Box 4: History Table (Zero innerHTML)
@@ -291,14 +341,22 @@
       descContainer.style.gap = '2px';
 
       const obs = item.observation || {};
-      const pos = (obs.self && obs.self.position) ? `(${obs.self.position.x}, ${obs.self.position.y})` : '';
+      const selfObj = obs.self || {};
+      const pos = selfObj.position ? `(${selfObj.position.x}, ${selfObj.position.y})` : '';
+      const facing = (selfObj.facing || '').toUpperCase();
       const visible = obs.visible_entities || [];
       const mice = visible.filter((e) => e.type === 'mouse');
+
+      const rp = (item.response && item.response.resulting_posture) ? item.response.resulting_posture : null;
+      let postureTransition = `At ${pos} [${facing}]`;
+      if (rp && rp.position) {
+        postureTransition = `${pos} [${facing}] ➔ (${rp.position.x}, ${rp.position.y}) [${(rp.facing || '').toUpperCase()}]`;
+      }
 
       const senseRow = document.createElement('span');
       senseRow.style.fontSize = '0.72rem';
       senseRow.style.color = 'var(--text-muted)';
-      senseRow.textContent = `At ${pos} | ${mice.length} mouse seen | Legal: ${(obs.legal_actions || []).length}`;
+      senseRow.textContent = `${postureTransition} | ${mice.length} mouse seen`;
       descContainer.appendChild(senseRow);
 
       const thoughtRow = document.createElement('span');
@@ -332,7 +390,7 @@
     inspectionBanner.style.display = 'flex';
 
     // Show historical payload in Box 1 and Box 3
-    renderObservation(item.observation);
+    renderObservation(item.observation, true);
 
     // Box 2: Show what the brain calculated on that tick
     const autoDec = item.autonomous_decision || (item.autonomous || {});
@@ -366,12 +424,16 @@
     cachedState = state;
 
     // Header info
-    headerTick.textContent = state.active_tick !== undefined ? `#${state.active_tick}` : '--';
+    if (state.active_tick !== undefined && state.active_tick !== null && state.active_tick > 0) {
+      headerTick.textContent = `#${state.active_tick}`;
+    } else {
+      headerTick.textContent = '--';
+    }
     headerCycles.textContent = state.total_ticks_processed || '0';
 
     if (state.connected) {
       statusBadge.className = 'wb-status-badge online';
-      statusText.textContent = 'Active • Receiving Observations';
+      statusText.textContent = `Active • Cat ${state.agent_id || 'cat-1'}`;
     } else {
       statusBadge.className = 'wb-status-badge waiting';
       statusText.textContent = 'Waiting for Game Server';
@@ -391,9 +453,9 @@
     renderHistory(state.history || []);
   }
 
-  // Fetch agent state
+  // Fetch agent state with live board synchronization
   async function pollAgentState() {
-    const data = await api('/api/agent/state');
+    const data = await api('/api/agent/state?sync=1');
     if (data) {
       renderLiveState(data);
     }

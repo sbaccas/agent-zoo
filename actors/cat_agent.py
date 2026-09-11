@@ -8,6 +8,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from starlette.middleware.base import BaseHTTPMiddleware
+import httpx
 import uvicorn
 
 app = FastAPI(title="Cat Agent Service & Workbench")
@@ -53,6 +54,8 @@ class OverrideRequest(BaseModel):
 class AgentWorkbenchState:
     def __init__(self, max_history: int = 50):
         self.max_history = max_history
+        self.agent_id: str = "cat-1"
+        self.simulation_id: Optional[str] = None
         self.active_tick: int = 0
         self.total_ticks_processed: int = 0
         self.latest_observation: Optional[Dict[str, Any]] = None
@@ -152,6 +155,31 @@ def compute_autonomous_decision(obs: Observation):
     return choice, "Exploring territory", meta
 
 
+def compute_resulting_posture(pos: Dict[str, Any], facing: str, action: str) -> Dict[str, Any]:
+    x = pos.get("x", 0)
+    y = pos.get("y", 0)
+    new_facing = facing
+    new_x, new_y = x, y
+
+    if action == "north":
+        new_facing = "north"
+        new_y = max(0, y - 1)
+    elif action == "south":
+        new_facing = "south"
+        new_y = y + 1
+    elif action == "east":
+        new_facing = "east"
+        new_x = x + 1
+    elif action == "west":
+        new_facing = "west"
+        new_x = max(0, x - 1)
+
+    return {
+        "position": {"x": new_x, "y": new_y},
+        "facing": new_facing,
+    }
+
+
 @app.post("/act", response_model=ActionResponse)
 @app.post("/", response_model=ActionResponse)
 def act(obs: Observation) -> ActionResponse:
@@ -181,8 +209,14 @@ def act(obs: Observation) -> ActionResponse:
         source = "autonomous"
         print(f"[{my_id} @ Tick {obs.tick}] {auto_meta['phase']} -> {chosen_action}", flush=True)
 
-    # Record exchange
+    # Record exchange with input observation and resulting posture
     obs_dict = obs.model_dump()
+    posture = compute_resulting_posture(
+        pos=obs.self.get("position", {"x": 0, "y": 0}),
+        facing=obs.self.get("facing", "north"),
+        action=chosen_action,
+    )
+
     exchange = {
         "tick": obs.tick,
         "round": obs.round,
@@ -197,11 +231,18 @@ def act(obs: Observation) -> ActionResponse:
             "action": chosen_action,
             "thought": chosen_thought,
             "source": source,
+            "resulting_posture": posture,
         },
         "source": source,
     }
 
-    state.latest_observation = obs_dict
+    # Update latest observation to capture the move that was just applied (prevents 1-tick delay)
+    current_obs = dict(obs_dict)
+    current_obs["self"] = dict(obs_dict.get("self", {}))
+    current_obs["self"]["position"] = posture["position"]
+    current_obs["self"]["facing"] = posture["facing"]
+
+    state.latest_observation = current_obs
     state.latest_response = exchange["response"]
     state.latest_autonomous = exchange["autonomous_decision"]
     state.active_tick = obs.tick
@@ -214,10 +255,80 @@ def act(obs: Observation) -> ActionResponse:
     return ActionResponse(action=chosen_action, thought=chosen_thought)
 
 
+GAME_SERVER_URL = "http://127.0.0.1:8000"
+
+
+async def sync_live_observation(agent_id: Optional[str] = None) -> bool:
+    target_id = agent_id or state.agent_id or "cat-1"
+    try:
+        async with httpx.AsyncClient(timeout=0.35) as client:
+            resp = await client.get(f"{GAME_SERVER_URL}/api/simulations/active/agents/{target_id}/observation")
+            if resp.status_code == 200:
+                data = resp.json()
+                sim_id = data.get("simulation_id")
+                server_tick = data.get("tick", 0)
+
+                # Reset history if simulation restarted or rewound
+                if state.simulation_id and sim_id and state.simulation_id != sim_id:
+                    state.history.clear()
+                    state.total_ticks_processed = 0
+                state.simulation_id = sim_id
+
+                last_history_tick = state.history[-1]["tick"] if state.history else 0
+                if server_tick < last_history_tick:
+                    state.history.clear()
+                    state.total_ticks_processed = 0
+                    last_history_tick = 0
+
+                # Compute upcoming tick:
+                # If last history action matches or exceeds server_tick, board is ready for the upcoming tick
+                if state.history and last_history_tick >= server_tick:
+                    upcoming_tick = last_history_tick + 1
+                elif server_tick == 0 and not state.history:
+                    upcoming_tick = 1
+                else:
+                    upcoming_tick = server_tick
+
+                self_info = data.get("self", {})
+                live_obs = {
+                    "tick": upcoming_tick,
+                    "round": data.get("round", 0),
+                    "self": {
+                        "id": self_info.get("id", target_id),
+                        "type": self_info.get("type", "cat"),
+                        "position": self_info.get("position", {"x": 0, "y": 0}),
+                        "facing": self_info.get("facing", "north"),
+                        "hp": self_info.get("hp", 100),
+                    },
+                    "visible_entities": data.get("visible_entities", []),
+                    "legal_actions": data.get("legal_actions", ["stay", "north", "south", "east", "west", "attack"]),
+                }
+
+                state.agent_id = target_id
+                state.latest_observation = live_obs
+                state.active_tick = upcoming_tick
+
+                # Evaluate proposed autonomous action for this live observation
+                auto_action, auto_thought, auto_meta = compute_autonomous_decision(Observation(**live_obs))
+                state.latest_autonomous = {
+                    "action": auto_action,
+                    "thought": auto_thought,
+                    "meta": auto_meta,
+                }
+                return True
+    except Exception:
+        pass
+    return False
+
+
 @app.get("/api/agent/state")
-def get_agent_state() -> Dict[str, Any]:
+async def get_agent_state(sync: bool = False, agent_id: Optional[str] = None) -> Dict[str, Any]:
+    if sync:
+        await sync_live_observation(agent_id)
+
     return {
         "connected": state.latest_observation is not None,
+        "agent_id": state.agent_id,
         "active_tick": state.active_tick,
         "total_ticks_processed": state.total_ticks_processed,
         "latest_observation": state.latest_observation,
@@ -261,6 +372,11 @@ app.mount("/static", StaticFiles(directory=static_dir), name="static")
 @app.get("/")
 async def get_workbench():
     return FileResponse(static_dir / "index.html")
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    return Response(status_code=204)
 
 
 if __name__ == "__main__":
