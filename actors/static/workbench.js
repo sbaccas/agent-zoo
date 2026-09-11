@@ -36,6 +36,12 @@
 
   // DOM Elements - Box 2: Brain & Override
   const badgeBrainState = document.getElementById('badgeBrainState');
+  const engineBadge = document.getElementById('engineBadge');
+  const btnViewSkills = document.getElementById('btnViewSkills');
+  const btnConfigKey = document.getElementById('btnConfigKey');
+  const tacticalStrategy = document.getElementById('tacticalStrategy');
+  const tacticalTarget = document.getElementById('tacticalTarget');
+  const tacticalEngine = document.getElementById('tacticalEngine');
   const autonomousThought = document.getElementById('autonomousThought');
   const autoActionPill = document.getElementById('autoActionPill');
   const autoDecisionLabel = document.querySelector('.autonomous-decision-label');
@@ -46,6 +52,20 @@
   const overrideStatusBox = document.getElementById('overrideStatusBox');
   const overrideStatusText = document.getElementById('overrideStatusText');
   const btnClearOverride = document.getElementById('btnClearOverride');
+
+  // DOM Elements - Modals
+  const skillsModal = document.getElementById('skillsModal');
+  const btnCloseSkills = document.getElementById('btnCloseSkills');
+  const btnCloseSkillsFooter = document.getElementById('btnCloseSkillsFooter');
+  const btnCopySkills = document.getElementById('btnCopySkills');
+  const skillsManualContent = document.getElementById('skillsManualContent');
+
+  const apiKeyModal = document.getElementById('apiKeyModal');
+  const btnCloseApiKey = document.getElementById('btnCloseApiKey');
+  const inputApiKey = document.getElementById('inputApiKey');
+  const apiKeyStatus = document.getElementById('apiKeyStatus');
+  const btnClearApiKey = document.getElementById('btnClearApiKey');
+  const btnSaveApiKey = document.getElementById('btnSaveApiKey');
 
   // DOM Elements - Box 3: Action Response
   const actionSummaryCard = document.getElementById('actionSummaryCard');
@@ -156,6 +176,20 @@
       autoDecisionLabel.textContent = `Proposed Auto Action for Tick #${currentTick}:`;
     }
 
+    const hasKey = Boolean(state.has_api_key);
+    const lastSource = state.last_engine_source;
+    if (engineBadge) {
+      if (lastSource === 'adk_gemini' || hasKey) {
+        engineBadge.textContent = '✨ ADK Gemini';
+        engineBadge.className = 'engine-badge adk';
+        engineBadge.title = 'Google ADK Active (gemini-2.5-flash)';
+      } else {
+        engineBadge.textContent = '🤖 Heuristic';
+        engineBadge.className = 'engine-badge fallback';
+        engineBadge.title = 'Autonomous Heuristic Brain (Awaiting Gemini API Key)';
+      }
+    }
+
     const latestAuto = state.latest_autonomous;
     if (latestAuto) {
       autonomousThought.textContent = latestAuto.thought || 'Autonomous decision ready';
@@ -168,6 +202,9 @@
       if (phase === 'ATTACK') {
         badgeBrainState.classList.add('badge-attack');
         autoActionPill.className = 'action-pill-lg attack';
+      } else if (phase === 'LUNGE') {
+        badgeBrainState.classList.add('badge-lunge');
+        autoActionPill.className = 'action-pill-lg';
       } else if (phase === 'STALKING') {
         badgeBrainState.classList.add('badge-stalking');
         autoActionPill.className = 'action-pill-lg';
@@ -175,12 +212,21 @@
         badgeBrainState.classList.add('badge-roaming');
         autoActionPill.className = 'action-pill-lg';
       }
+
+      if (tacticalStrategy) tacticalStrategy.textContent = phase;
+      if (tacticalTarget) tacticalTarget.textContent = meta.target_id || 'None';
+      if (tacticalEngine) {
+        tacticalEngine.textContent = meta.engine === 'adk_gemini' ? 'ADK Gemini' : 'Heuristic';
+      }
     } else {
       autonomousThought.textContent = 'Standing by for tick...';
       autoActionPill.textContent = '--';
       autoActionPill.className = 'action-pill-lg';
       badgeBrainState.textContent = 'IDLE';
       badgeBrainState.className = 'badge-state badge-roaming';
+      if (tacticalStrategy) tacticalStrategy.textContent = '--';
+      if (tacticalTarget) tacticalTarget.textContent = 'None';
+      if (tacticalEngine) tacticalEngine.textContent = hasKey ? 'ADK Gemini' : 'Heuristic';
     }
 
     // Override mode toggles
@@ -240,12 +286,18 @@
     }
 
     const isOverride = resp.source === 'manual_override';
+    const isAdk = resp.source === 'adk_gemini';
+
     if (isOverride) {
       responseSourceBadge.textContent = 'Override';
       responseSourceBadge.className = 'history-source-badge override';
       actionSummaryCard.classList.add('override-sent');
+    } else if (isAdk) {
+      responseSourceBadge.textContent = 'ADK Gemini';
+      responseSourceBadge.className = 'history-source-badge adk-gemini';
+      actionSummaryCard.classList.remove('override-sent');
     } else {
-      responseSourceBadge.textContent = 'Autonomous';
+      responseSourceBadge.textContent = 'Heuristic';
       responseSourceBadge.className = 'history-source-badge auto';
       actionSummaryCard.classList.remove('override-sent');
     }
@@ -319,8 +371,17 @@
       const tdSource = document.createElement('td');
       const sourceBadge = document.createElement('span');
       const isOverride = item.source === 'manual_override';
-      sourceBadge.className = isOverride ? 'history-source-badge override' : 'history-source-badge auto';
-      sourceBadge.textContent = isOverride ? 'Override' : 'Auto';
+      const isAdk = item.source === 'adk_gemini';
+      if (isOverride) {
+        sourceBadge.className = 'history-source-badge override';
+        sourceBadge.textContent = 'Override';
+      } else if (isAdk) {
+        sourceBadge.className = 'history-source-badge adk-gemini';
+        sourceBadge.textContent = 'ADK Gemini';
+      } else {
+        sourceBadge.className = 'history-source-badge auto';
+        sourceBadge.textContent = 'Heuristic';
+      }
       tdSource.appendChild(sourceBadge);
       tr.appendChild(tdSource);
 
@@ -600,6 +661,99 @@
       e.preventDefault();
       clearOverride();
     }
+  });
+
+  // Event Listeners - Skills Manual Modal
+  if (btnViewSkills && skillsModal) {
+    btnViewSkills.addEventListener('click', async () => {
+      skillsModal.style.display = 'flex';
+      skillsManualContent.textContent = 'Loading skills manual from server...';
+      const res = await api('/api/agent/skills');
+      if (res && res.content) {
+        skillsManualContent.textContent = res.content;
+      } else {
+        skillsManualContent.textContent = 'Failed to load skills manual from server.';
+      }
+    });
+  }
+
+  function closeSkillsModal() {
+    if (skillsModal) skillsModal.style.display = 'none';
+  }
+  if (btnCloseSkills) btnCloseSkills.addEventListener('click', closeSkillsModal);
+  if (btnCloseSkillsFooter) btnCloseSkillsFooter.addEventListener('click', closeSkillsModal);
+  if (btnCopySkills) {
+    btnCopySkills.addEventListener('click', () => {
+      navigator.clipboard.writeText(skillsManualContent.textContent).then(() => {
+        flashCopied(btnCopySkills, '✓ Copied Manual!');
+      });
+    });
+  }
+
+  // Event Listeners - API Key Modal
+  if (btnConfigKey && apiKeyModal) {
+    btnConfigKey.addEventListener('click', () => {
+      apiKeyModal.style.display = 'flex';
+      const hasKey = Boolean(cachedState && cachedState.has_api_key);
+      if (hasKey) {
+        apiKeyStatus.textContent = '✓ Active Gemini API Key detected on agent server.';
+        apiKeyStatus.style.color = 'var(--success-color)';
+      } else {
+        apiKeyStatus.textContent = '⚠️ No API key set. Operating with Heuristic Tactical Fallback.';
+        apiKeyStatus.style.color = 'var(--warning-color)';
+      }
+    });
+  }
+
+  function closeApiKeyModal() {
+    if (apiKeyModal) apiKeyModal.style.display = 'none';
+    if (inputApiKey) inputApiKey.value = '';
+  }
+  if (btnCloseApiKey) btnCloseApiKey.addEventListener('click', closeApiKeyModal);
+
+  if (btnSaveApiKey) {
+    btnSaveApiKey.addEventListener('click', async () => {
+      const keyVal = inputApiKey ? inputApiKey.value.trim() : '';
+      if (!keyVal) {
+        apiKeyStatus.textContent = 'Please enter a valid Gemini API Key.';
+        apiKeyStatus.style.color = 'var(--danger-color)';
+        return;
+      }
+      btnSaveApiKey.disabled = true;
+      btnSaveApiKey.textContent = 'Saving...';
+      const res = await api('/api/agent/set-key', 'POST', { api_key: keyVal });
+      btnSaveApiKey.disabled = false;
+      btnSaveApiKey.textContent = 'Save Key';
+      if (res && res.status === 'ok') {
+        apiKeyStatus.textContent = '✓ Gemini API Key saved successfully!';
+        apiKeyStatus.style.color = 'var(--success-color)';
+        setTimeout(closeApiKeyModal, 800);
+        await pollAgentState();
+      } else {
+        apiKeyStatus.textContent = 'Failed to save API key on server.';
+        apiKeyStatus.style.color = 'var(--danger-color)';
+      }
+    });
+  }
+
+  if (btnClearApiKey) {
+    btnClearApiKey.addEventListener('click', async () => {
+      btnClearApiKey.disabled = true;
+      const res = await api('/api/agent/set-key', 'POST', { api_key: '' });
+      btnClearApiKey.disabled = false;
+      if (res && res.status === 'cleared') {
+        apiKeyStatus.textContent = 'API Key cleared. Running on Heuristic Fallback.';
+        apiKeyStatus.style.color = 'var(--text-muted)';
+        setTimeout(closeApiKeyModal, 800);
+        await pollAgentState();
+      }
+    });
+  }
+
+  // Close modals on overlay background click
+  window.addEventListener('click', (e) => {
+    if (e.target === skillsModal) closeSkillsModal();
+    if (e.target === apiKeyModal) closeApiKeyModal();
   });
 
   // Start polling on boot

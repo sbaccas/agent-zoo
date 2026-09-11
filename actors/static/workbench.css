@@ -750,3 +750,136 @@ body {
   color: var(--success-color) !important;
   border-color: #86efac !important;
 }
+
+/* Engine Badges */
+.engine-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 9999px;
+  margin-left: 8px;
+  vertical-align: middle;
+}
+
+.engine-badge.adk {
+  background: linear-gradient(135deg, #f3e8ff 0%, #ede9fe 100%);
+  color: #6b21a8;
+  border: 1px solid #c084fc;
+  box-shadow: 0 1px 2px rgba(107, 33, 168, 0.1);
+}
+
+.engine-badge.fallback {
+  background-color: #f1f5f9;
+  color: #475569;
+  border: 1px solid #cbd5e1;
+}
+
+.brain-meta-row {
+  margin-bottom: 12px;
+}
+
+/* History Source Badge - ADK Gemini */
+.history-source-badge.adk-gemini {
+  background: linear-gradient(135deg, #faf5ff 0%, #f3e8ff 100%);
+  color: #7e22ce;
+  border: 1px solid #d8b4fe;
+  font-weight: 700;
+}
+
+/* Lunge Badges */
+.badge-state.badge-lunge {
+  background-color: #fef3c7;
+  color: #b45309;
+  border: 1px solid #fde68a;
+}
+
+.history-action-badge.lunge {
+  background-color: #fef3c7;
+  color: #b45309;
+}
+
+/* Modal Dialogs */
+.wb-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(15, 23, 42, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  backdrop-filter: blur(2px);
+}
+
+.wb-modal-dialog {
+  background-color: #ffffff;
+  border-radius: 12px;
+  width: 90%;
+  max-width: 520px;
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--border-color);
+  animation: modalFadeIn 0.15s ease-out;
+}
+
+.wb-modal-dialog.modal-lg {
+  max-width: 780px;
+  max-height: 85vh;
+}
+
+@keyframes modalFadeIn {
+  from { opacity: 0; transform: scale(0.97); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+.wb-modal-header {
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--border-color);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background-color: var(--bg-subtle);
+}
+
+.wb-modal-title {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.wb-modal-body {
+  padding: 16px 20px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.wb-modal-footer {
+  padding: 12px 20px;
+  border-top: 1px solid var(--border-color);
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  background-color: var(--bg-subtle);
+}
+
+.skills-manual-viewer {
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  line-height: 1.5;
+  background-color: #0f172a;
+  color: #f8fafc;
+  padding: 14px;
+  border-radius: 8px;
+  max-height: 55vh;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}

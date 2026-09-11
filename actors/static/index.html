@@ -80,12 +80,22 @@
           <div class="wb-card-header">
             <div class="wb-card-title">
               <span>🧠 2. Brain Decision & Override</span>
+              <span id="engineBadge" class="engine-badge fallback" title="Active Reasoning Brain">🤖 Heuristic</span>
             </div>
             <div class="wb-card-actions">
+              <button id="btnViewSkills" class="btn btn-sm" title="View agent skills.md tactical manual">📖 Skills</button>
+              <button id="btnConfigKey" class="btn btn-sm" title="Configure Gemini API Key">🔑 API Key</button>
               <span id="badgeBrainState" class="badge-state badge-roaming">IDLE</span>
             </div>
           </div>
           <div class="wb-card-body">
+            <!-- Tactical Metadata Chips -->
+            <div class="chips-row brain-meta-row">
+              <span class="chip">Strategy: <strong id="tacticalStrategy">--</strong></span>
+              <span class="chip">Target: <strong id="tacticalTarget">None</strong></span>
+              <span class="chip">Engine: <strong id="tacticalEngine">Heuristic</strong></span>
+            </div>
+
             <!-- Autonomous thought stream -->
             <div class="thought-box">
               <div class="thought-label">Autonomous Rationale</div>
@@ -210,6 +220,50 @@
         </div>
       </section>
     </main>
+  </div>
+
+  <!-- Skills Manual Modal -->
+  <div id="skillsModal" class="wb-modal-overlay" style="display: none;">
+    <div class="wb-modal-dialog modal-lg">
+      <div class="wb-modal-header">
+        <div class="wb-modal-title">📖 Cat Agent Skills & Tactical Hunting Manual (skills.md)</div>
+        <button id="btnCloseSkills" class="btn btn-sm" title="Close modal">✕</button>
+      </div>
+      <div class="wb-modal-body">
+        <pre id="skillsManualContent" class="skills-manual-viewer">Loading skills manual...</pre>
+      </div>
+      <div class="wb-modal-footer">
+        <button id="btnCopySkills" class="btn btn-sm">📋 Copy Manual</button>
+        <button id="btnCloseSkillsFooter" class="btn btn-sm btn-primary">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- API Key Config Modal -->
+  <div id="apiKeyModal" class="wb-modal-overlay" style="display: none;">
+    <div class="wb-modal-dialog">
+      <div class="wb-modal-header">
+        <div class="wb-modal-title">🔑 Google Gemini API Key Configuration</div>
+        <button id="btnCloseApiKey" class="btn btn-sm" title="Close modal">✕</button>
+      </div>
+      <div class="wb-modal-body">
+        <p style="font-size: 0.82rem; color: var(--text-secondary); margin-bottom: 12px; line-height: 1.4;">
+          The Cat Agent uses <strong>Google ADK (gemini-2.5-flash)</strong> to reason about tactical moves from <code>actors/skills.md</code>.
+          Enter your Gemini API key below, or authenticate via Google Cloud CLI in your environment.
+        </p>
+        <div class="form-group" style="margin-bottom: 10px;">
+          <label for="inputApiKey" style="font-size: 0.8rem; font-weight: 600; display: block; margin-bottom: 6px;">Gemini API Key:</label>
+          <input type="password" id="inputApiKey" class="form-input" placeholder="AIzaSy..." autocomplete="off" style="width: 100%; padding: 8px 10px; border-radius: 6px; border: 1px solid var(--border-dark); font-family: var(--font-mono); font-size: 0.85rem;">
+        </div>
+        <div id="apiKeyStatus" style="font-size: 0.78rem; margin-top: 8px; color: var(--text-muted);">
+          Status: Checking...
+        </div>
+      </div>
+      <div class="wb-modal-footer">
+        <button id="btnClearApiKey" class="btn btn-sm btn-danger-outline">Clear Key</button>
+        <button id="btnSaveApiKey" class="btn btn-sm btn-primary">Save Key</button>
+      </div>
+    </div>
   </div>
 
   <script src="/static/workbench.js"></script>

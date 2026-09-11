@@ -150,3 +150,87 @@ def test_workbench_lunge_override():
     assert len(data["history"]) == 1
     assert data["history"][0]["response"]["resulting_posture"]["position"] == {"x": 12, "y": 10}
     assert data["history"][0]["response"]["resulting_posture"]["facing"] == "east"
+
+
+def test_skills_manual_endpoint():
+    client = TestClient(app)
+    resp = client.get("/api/agent/skills")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "content" in data
+    assert "skills.md" in data["path"]
+    assert "Cat and Mouse" in data["content"]
+    assert "lunge" in data["content"]
+    assert "attack" in data["content"]
+
+
+def test_set_api_key_endpoint():
+    import os
+    client = TestClient(app)
+
+    # Set key
+    resp = client.post("/api/agent/set-key", json={"api_key": "test-gemini-key-12345"})
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "ok"
+    assert resp.json()["has_api_key"] is True
+    assert os.environ.get("GEMINI_API_KEY") == "test-gemini-key-12345"
+
+    # State reflects key
+    st_resp = client.get("/api/agent/state")
+    assert st_resp.json()["has_api_key"] is True
+
+    # Clear key
+    resp_clear = client.post("/api/agent/set-key", json={"api_key": ""})
+    assert resp_clear.status_code == 200
+    assert resp_clear.json()["status"] == "cleared"
+    assert resp_clear.json()["has_api_key"] is False
+    assert "GEMINI_API_KEY" not in os.environ
+
+
+def test_adk_agent_configuration():
+    from actors.cat_agent import adk_agent, CatTacticalDecision
+    assert adk_agent.name == "cat_tactician"
+    assert adk_agent.model == "gemini-2.5-flash"
+    assert adk_agent.output_schema == CatTacticalDecision
+    assert adk_agent.output_key == "decision"
+    assert "Cat and Mouse" in adk_agent.instruction
+
+
+def test_act_adk_decision_mocked():
+    from unittest.mock import patch
+    from actors.cat_agent import CatTacticalDecision
+    client = TestClient(app)
+
+    mock_decision = CatTacticalDecision(
+        action="lunge",
+        thought="Mouse aligned 3 tiles ahead in corridor! Lunging forward!",
+        target_mouse_id="mouse-1",
+        strategy="LUNGE",
+    )
+
+    cat_obs = {
+        "tick": 7,
+        "round": 1,
+        "self": {"id": "cat-1", "position": {"x": 5, "y": 5}, "facing": "east", "hp": 100},
+        "visible_entities": [{"id": "mouse-1", "type": "mouse", "position": {"x": 8, "y": 5}}],
+        "legal_actions": ["stay", "north", "south", "east", "west", "attack", "lunge"],
+    }
+
+    with patch("actors.cat_agent.query_adk_gemini", return_value=mock_decision):
+        with patch.dict("os.environ", {"GEMINI_API_KEY": "fake-key"}):
+            resp = client.post("/act", json=cat_obs)
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["action"] == "lunge"
+            assert "Lunging forward" in data["thought"]
+
+            # Verify history recorded adk_gemini as source
+            st = client.get("/api/agent/state").json()
+            assert len(st["history"]) == 1
+            last_entry = st["history"][0]
+            assert last_entry["source"] == "adk_gemini"
+            assert last_entry["response"]["action"] == "lunge"
+            assert last_entry["response"]["resulting_posture"]["position"] == {"x": 7, "y": 5}
+            assert last_entry["autonomous_decision"]["meta"]["engine"] == "adk_gemini"
+            assert last_entry["autonomous_decision"]["meta"]["phase"] == "LUNGE"
+
