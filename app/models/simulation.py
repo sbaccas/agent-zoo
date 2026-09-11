@@ -1,7 +1,7 @@
 from enum import Enum
 from typing import Dict, List, Optional
 from pydantic import BaseModel, Field
-from app.models.entity import Entity
+from app.models.entity import Entity, Position
 
 
 class SimulationStatus(str, Enum):
@@ -38,6 +38,16 @@ class SimulationConfig(BaseModel):
     tick_rate: float = Field(default=5.0, gt=0, le=100.0)
 
 
+class GameEvent(BaseModel):
+    tick: int
+    round: int
+    event_type: str
+    actor_id: str
+    target_id: Optional[str] = None
+    position: Optional[Position] = None
+    message: str
+
+
 class SimulationStateResponse(BaseModel):
     simulation_id: str
     status: SimulationStatus
@@ -51,6 +61,8 @@ class SimulationStateResponse(BaseModel):
     mouse_count: int
     captures: int
     entities: List[Entity]
+    recent_events: List[GameEvent] = []
+    can_step_back: bool = False
 
 
 class UpdateTickRateRequest(BaseModel):

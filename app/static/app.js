@@ -1,4 +1,4 @@
-// Cat & Mouse Simulation Frontend Controller (Light Mode + Orientation)
+// Cat & Mouse Simulation Frontend Controller (Light Mode + Orientation + Step Back + Event Feed)
 
 (function () {
   'use strict';
@@ -15,6 +15,7 @@
 
   const btnStart = document.getElementById('btnStart');
   const btnPause = document.getElementById('btnPause');
+  const btnStepBack = document.getElementById('btnStepBack');
   const btnStep = document.getElementById('btnStep');
   const btnStop = document.getElementById('btnStop');
   const btnReset = document.getElementById('btnReset');
@@ -25,6 +26,9 @@
   const btnAddMouse10 = document.getElementById('btnAddMouse10');
   const btnAddMouse50 = document.getElementById('btnAddMouse50');
   const btnRemMouse10 = document.getElementById('btnRemMouse10');
+
+  const eventFeedList = document.getElementById('eventFeedList');
+  const eventCount = document.getElementById('eventCount');
 
   const canvas = document.getElementById('boardCanvas');
   const ctx = canvas.getContext('2d');
@@ -96,6 +100,23 @@
       ctx.stroke();
     }
 
+    // Render Recent Capture Markers
+    if (state.recent_events) {
+      for (const ev of state.recent_events) {
+        if (ev.event_type === 'capture' && ev.position && ev.tick >= (state.tick - 1)) {
+          const cx = ev.position.x * cellW + cellW / 2;
+          const cy = ev.position.y * cellH + cellH / 2;
+          ctx.save();
+          ctx.strokeStyle = '#ef4444';
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.arc(cx, cy, Math.max(10, cellW * 1.5), 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.restore();
+        }
+      }
+    }
+
     // Render Entities
     const entities = state.entities || [];
     const fontSize = Math.max(10, Math.floor(cellW * 1.3));
@@ -143,6 +164,43 @@
     }
   }
 
+  function renderEventFeed(events) {
+    if (!eventFeedList) return;
+    eventFeedList.replaceChildren();
+
+    if (!events || events.length === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'event-empty';
+      empty.textContent = 'No events yet. Click Start or Step!';
+      eventFeedList.appendChild(empty);
+      if (eventCount) eventCount.textContent = '0 events';
+      return;
+    }
+
+    if (eventCount) {
+      eventCount.textContent = `${events.length} events`;
+    }
+
+    // Show newest first
+    const reversed = [...events].reverse();
+    for (const ev of reversed) {
+      const item = document.createElement('div');
+      item.className = `event-item event-${ev.event_type}`;
+
+      const pill = document.createElement('span');
+      pill.className = `event-pill pill-${ev.event_type}`;
+      pill.textContent = ev.event_type.toUpperCase();
+
+      const text = document.createElement('span');
+      text.className = 'event-text';
+      text.textContent = ev.message;
+
+      item.appendChild(pill);
+      item.appendChild(text);
+      eventFeedList.appendChild(item);
+    }
+  }
+
   function updateUI(state) {
     currentState = state;
 
@@ -158,6 +216,12 @@
       statusBadge.classList.add('status-stopped');
     }
 
+    // Update Step Back button state
+    if (btnStepBack) {
+      btnStepBack.disabled = !state.can_step_back;
+      btnStepBack.style.opacity = state.can_step_back ? '1' : '0.5';
+    }
+
     // Update Metrics safely with textContent
     metricTick.textContent = String(state.tick || 0);
     metricRound.textContent = String(state.round || 0);
@@ -167,6 +231,7 @@
     metricDimensions.textContent = `${state.width || 100} × ${state.height || 100}`;
 
     renderBoard(state);
+    renderEventFeed(state.recent_events);
   }
 
   async function apiCall(endpoint, method = 'POST', body = null) {
@@ -194,7 +259,6 @@
       updateUI(data);
     }
 
-    // If running, poll rapidly (150ms); if paused/stopped, sleep longer (2000ms) to avoid log spam
     const delay = (currentState && currentState.status === 'running') ? 150 : 2000;
     pollTimeout = setTimeout(pollLoop, delay);
   }
@@ -204,7 +268,6 @@
     if (data) {
       updateUI(data);
     }
-    // If state changed, wake up polling loop immediately
     if (pollTimeout) clearTimeout(pollTimeout);
     pollLoop();
   }
@@ -212,6 +275,9 @@
   // Event Listeners
   btnStart.addEventListener('click', () => triggerAction(`/api/simulations/${currentSimId}/start`));
   btnPause.addEventListener('click', () => triggerAction(`/api/simulations/${currentSimId}/pause`));
+  if (btnStepBack) {
+    btnStepBack.addEventListener('click', () => triggerAction(`/api/simulations/${currentSimId}/step_back`));
+  }
   btnStep.addEventListener('click', () => triggerAction(`/api/simulations/${currentSimId}/step`));
   btnStop.addEventListener('click', () => triggerAction(`/api/simulations/${currentSimId}/stop`));
   btnReset.addEventListener('click', () => triggerAction(`/api/simulations/${currentSimId}/reset`));

@@ -26,7 +26,8 @@
           <div class="btn-group">
             <button id="btnStart" class="btn btn-primary">Start</button>
             <button id="btnPause" class="btn btn-warning">Pause</button>
-            <button id="btnStep" class="btn btn-secondary">Step (1 Tick)</button>
+            <button id="btnStepBack" class="btn btn-secondary" title="Rewind 1 tick">⟵ Step Back</button>
+            <button id="btnStep" class="btn btn-secondary" title="Advance 1 tick">Step ⟶</button>
             <button id="btnStop" class="btn btn-danger">Stop</button>
             <button id="btnReset" class="btn btn-outline">Reset</button>
           </div>
@@ -91,6 +92,16 @@
               <button id="btnAddMouse50" class="btn btn-sm btn-mouse">+50</button>
               <button id="btnRemMouse10" class="btn btn-sm btn-outline">-10</button>
             </div>
+          </div>
+        </section>
+
+        <section class="panel-section event-feed-section">
+          <div class="event-feed-header">
+            <h2>Live Event Feed</h2>
+            <span class="event-count-badge" id="eventCount">0 events</span>
+          </div>
+          <div class="event-feed-list" id="eventFeedList">
+            <div class="event-empty">No events yet. Click Start or Step!</div>
           </div>
         </section>
       </aside>

@@ -88,3 +88,27 @@ async def test_cat_slash_attack_captures_mouse():
     assert res.accepted
     assert mouse.id in res.affected_entities
     assert not mouse.alive
+
+
+@pytest.mark.asyncio
+async def test_step_back_time_travel():
+    sim = Simulation()
+    assert sim.tick == 0
+    state_0 = sim.get_state()
+    initial_positions = {e.id: (e.position.x, e.position.y) for e in state_0.entities}
+
+    # Step forward 2 ticks
+    await sim.step()
+    assert sim.tick == 1
+    await sim.step()
+    assert sim.tick == 2
+
+    # Step back 1 tick
+    state_1 = await sim.step_back()
+    assert state_1.tick == 1
+
+    # Step back to 0
+    state_restored_0 = await sim.step_back()
+    assert state_restored_0.tick == 0
+    restored_positions = {e.id: (e.position.x, e.position.y) for e in state_restored_0.entities}
+    assert restored_positions == initial_positions

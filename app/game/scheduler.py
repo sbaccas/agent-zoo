@@ -1,3 +1,4 @@
+import logging
 import math
 import random
 from typing import List, Optional
@@ -6,6 +7,9 @@ from app.game.entities import EntityManager
 from app.game.world import World
 from app.models.action import ActionType
 from app.models.entity import Direction, Entity, EntityType, Position
+from app.models.simulation import GameEvent
+
+logger = logging.getLogger("simulation.events")
 
 
 class Scheduler:
@@ -16,6 +20,7 @@ class Scheduler:
         self.tick: int = 0
         self.round: int = 0
         self.captures: int = 0
+        self.events: List[GameEvent] = []
 
     def step_logical_clock(self) -> int:
         self.tick += 1
@@ -98,6 +103,21 @@ class Scheduler:
                 # Issue frontal slash attack!
                 result = self.action_handler.apply_action(cat, ActionType.ATTACK, self.tick)
                 self.captures += len(result.affected_entities)
+                for victim_id in result.affected_entities:
+                    victim = self.entity_manager.entities.get(victim_id)
+                    v_pos = f"({victim.position.x}, {victim.position.y})" if victim else "?"
+                    msg = f"💥 [TICK {self.tick} | R{self.round}] CAPTURE: {cat.id} at ({cat.position.x}, {cat.position.y}) facing {cat.facing.value.upper()} slashed and captured {victim_id} at {v_pos}! (Total captures: {self.captures})"
+                    logger.info(msg)
+                    print(msg, flush=True)
+                    self.events.append(GameEvent(
+                        tick=self.tick,
+                        round=self.round,
+                        event_type="capture",
+                        actor_id=cat.id,
+                        target_id=victim_id,
+                        position=victim.position if victim else cat.position,
+                        message=msg,
+                    ))
                 continue
 
             # Check forward FoV (4 tiles ahead)
@@ -165,7 +185,20 @@ class Scheduler:
                 if c.type == EntityType.CAT and c.position.x == mouse.position.x and c.position.y == mouse.position.y
             ]
             if overlapping_cats:
-                # Heavier cat wins tile; mouse is bounced/displaced 1-2 tiles away
+                cat_threat = overlapping_cats[0]
+                old_x, old_y = mouse.position.x, mouse.position.y
                 self.entity_manager.displace_entity(mouse, bounce_dist=2)
+                msg = f"🔄 [TICK {self.tick} | R{self.round}] BUMP: {mouse.id} collided with {cat_threat.id} at ({old_x}, {old_y}) -> bounced to ({mouse.position.x}, {mouse.position.y}) (facing {mouse.facing.value.upper()})"
+                logger.info(msg)
+                print(msg, flush=True)
+                self.events.append(GameEvent(
+                    tick=self.tick,
+                    round=self.round,
+                    event_type="bump",
+                    actor_id=mouse.id,
+                    target_id=cat_threat.id,
+                    position=mouse.position,
+                    message=msg,
+                ))
 
         return self.tick

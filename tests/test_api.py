@@ -36,3 +36,19 @@ async def test_security_headers():
         assert res.headers.get("X-Content-Type-Options") == "nosniff"
         assert res.headers.get("X-Frame-Options") == "DENY"
         assert "Content-Security-Policy" in res.headers
+
+
+@pytest.mark.asyncio
+async def test_step_back_api():
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        # Step forward
+        res1 = await client.post("/api/simulations/active/step")
+        assert res1.status_code == 200
+        tick1 = res1.json()["tick"]
+
+        # Step back
+        res2 = await client.post("/api/simulations/active/step_back")
+        assert res2.status_code == 200
+        tick2 = res2.json()["tick"]
+        assert tick2 == tick1 - 1

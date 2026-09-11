@@ -77,6 +77,12 @@ async def step_simulation(sim_id: str):
     return await sim.step()
 
 
+@router.post("/{sim_id}/step_back", response_model=SimulationStateResponse)
+async def step_back_simulation(sim_id: str):
+    sim = get_simulation_or_404(sim_id)
+    return await sim.step_back()
+
+
 @router.post("/{sim_id}/stop", response_model=SimulationStateResponse)
 async def stop_simulation(sim_id: str):
     sim = get_simulation_or_404(sim_id)
