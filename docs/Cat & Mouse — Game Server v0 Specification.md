@@ -318,11 +318,13 @@ Example conceptual model:
 {
   "mouse": {
     "vision_radius": 4,
-    "action_budget": 1
+    "action_budget": 1,
+    "weight": 1
   },
   "cat": {
     "vision_radius": 8,
-    "action_budget": 2
+    "action_budget": 2,
+    "weight": 10
   }
 }
 ```
@@ -501,38 +503,35 @@ Exact balancing is experimental and should therefore be configurable rather than
 
 ---
 
-# 13. Capture
+# 13. Conflict Resolution, Collision & Displacement
 
-For v0, capture occurs when a cat legally moves onto a square occupied by a mouse.
-
-Example:
+When multiple entities attempt to occupy the same square or enter a contested tile, resolution is governed by species **weight**:
 
 ```text
-Cat   = (42, 19)
-Mouse = (43, 19)
-
-Cat chooses EAST.
-
-Cat   → (43, 19)
-
-Mouse captured.
+cat.weight   = 10
+mouse.weight = 1
 ```
 
-No explicit `kill()` operation is necessary in the first version.
+### Resolution Rules:
 
-Later versions may introduce:
+1. **Heavier Entity Wins**: When a heavier animal (Cat) moves onto or contests a tile with a lighter animal (Mouse), the Cat claims the tile.
+2. **Displacement / Bounce**:
+   - Rather than instantaneous capture on contact, the lighter animal (Mouse) is bounced / displaced 1–2 squares away into an adjacent valid, unblocked tile.
+   - This prevents instantaneous collapse and immediately initiates an evasive chase/pursuit dynamic (the mouse attempts to dash away while the cat initiates pursuit or attack).
+3. **Same-Weight Conflict**:
+   - If two entities of equal weight (e.g. Mouse vs. Mouse, or Cat vs. Cat) contest the same tile, the movement is blocked or both entities remain in / bounce back to their prior positions.
+
+Future versions will build upon this foundation to introduce:
 
 ```text
 attack
+radius of effect (AoE)
+dash / evasion burst
 swipe
 pounce
 health
 damage
-attack duration
-miss probability
 ```
-
-Do not implement those yet.
 
 ---
 
@@ -625,24 +624,41 @@ The agent-facing API must not need to change when these are introduced.
 
 ---
 
-# 16. Agent API
+# 16. Agent Architecture & Turn Orchestration
 
-The game server must not care how an actor chooses its action.
+Turn orchestration uses an **engine-driven RPC model (Option C)**:
 
-An agent performs:
+- Agents run in independent containers hosting lightweight HTTP servers.
+- When an animal is scheduled to act in a tick, the **game engine** drives the turn by sending an HTTP request containing the current entity observation directly to the agent's container.
+- The agent container evaluates the observation and returns its chosen action synchronously.
+- The server validates the action, resolves movement/collisions, updates world state, and advances the clock.
 
-```python
-observation = get_observation()
+This architecture eliminates aggressive polling loops and synchronization races while keeping agent decisions decoupled from game mechanics. (Future versions can upgrade this transport to WebSockets without changing the core payload contract).
 
-action = decide(observation)
+Agent flow:
 
-submit_action(action)
+```text
+Game Engine (Scheduler)
+        │
+        ▼ (POST /act with observation)
+Agent Container Service (Cat / Mouse)
+        │
+        │ decide(observation)
+        ▼
+Action Response ({"action": "east"})
+        │
+        ▼
+Game Engine validates & mutates state
 ```
 
 Initial test implementation:
 
 ```python
-action = random.choice(observation["legal_actions"])
+# random_cat or random_mouse agent server endpoint:
+@app.post("/act")
+def act(observation: Observation) -> ActionResponse:
+    action = random.choice(observation.legal_actions)
+    return ActionResponse(action=action)
 ```
 
 Future implementation:
@@ -650,30 +666,62 @@ Future implementation:
 ```text
 observation
     ↓
-Gemini / ADK
+Gemini / ADK (hosted in agent container)
     ↓
 decision
     ↓
-game API
+ActionResponse
 ```
 
 ---
 
-# 17. Minimum Agent Endpoints
+# 17. Minimum Agent Endpoints & Interface Contract
 
-## Get Observation
+## 1. Engine-to-Agent Invocation (Turn Dispatch)
 
-```http
-GET /simulations/{simulation_id}/agents/{agent_id}/observation
-```
-
-## Submit Action
+When it is an entity's turn, the game engine calls the agent's configured endpoint:
 
 ```http
-POST /simulations/{simulation_id}/agents/{agent_id}/actions
+POST {agent_service_url}/act
+Content-Type: application/json
 ```
 
-Request:
+Request (Engine → Agent):
+
+```json
+{
+  "simulation_id": "sim-123",
+  "tick": 482,
+  "round": 241,
+  "self": {
+    "id": "mouse-1",
+    "type": "mouse",
+    "position": {
+      "x": 37,
+      "y": 61
+    }
+  },
+  "visible_entities": [
+    {
+      "id": "cat-3",
+      "type": "cat",
+      "position": {
+        "x": 40,
+        "y": 60
+      }
+    }
+  ],
+  "legal_actions": [
+    "north",
+    "south",
+    "east",
+    "west",
+    "stay"
+  ]
+}
+```
+
+Response (Agent → Engine):
 
 ```json
 {
@@ -681,23 +729,18 @@ Request:
 }
 ```
 
-Response:
+## 2. Server Direct Fallback Endpoints (Manual / Testing)
 
-```json
-{
-  "accepted": true,
-  "tick": 483,
-  "result": {
-    "previous_position": {
-      "x": 37,
-      "y": 61
-    },
-    "new_position": {
-      "x": 38,
-      "y": 61
-    }
-  }
-}
+For manual testing, interactive stepping, or non-service actors:
+
+### Get Observation
+```http
+GET /simulations/{simulation_id}/agents/{agent_id}/observation
+```
+
+### Submit Action
+```http
+POST /simulations/{simulation_id}/agents/{agent_id}/actions
 ```
 
 ---
@@ -953,9 +996,14 @@ For example:
 
 As simulation ticks resolve, entities visibly move across the board.
 
-For large grids such as 100×100, use a compact grid/canvas representation rather than literal large text if necessary.
+### Rendering Technology: HTML5 `<canvas>`
 
-The display should remain conceptually grid-based.
+For performant, responsive rendering of large grids (such as 100×100 = 10,000 cells):
+
+- An **HTML5 `<canvas>`** element must be used rather than thousands of DOM `<div>` nodes or preformatted text blocks.
+- The canvas will automatically adapt and scale responsively to fit the browser viewport or panel container.
+- High-performance 2D context redraws (sub-millisecond) will render the grid background, cats (orange/red `C`), and mice (blue/gray `M`).
+- The display remains strictly grid-based and crisp at any scale.
 
 ---
 
@@ -1479,14 +1527,14 @@ v0 is complete when all of the following work:
 15. Legal movement is validated by the server.
 16. Entities can move north, south, east, west, or stay.
 17. Cat and Mouse action budgets can differ.
-18. Cats capture mice by occupying their square.
+18. Weight-based conflict resolution: heavier animals (Cat) claim contested squares, displacing lighter animals (Mouse) 1–2 tiles.
 19. Population counts can be changed administratively while running.
-20. The browser displays the current game board.
+20. The browser displays the current game board rendered using a responsive HTML5 `<canvas>`.
 21. Cats appear as `C`.
 22. Mice appear as `M`.
 23. The board visibly evolves while the simulation runs.
 24. The UI displays tick, round, population, and capture information.
-25. Two simple Python actor implementations can run without Gemini.
+25. Two simple Python actor server implementations (random_cat and random_mouse) receive engine-driven RPC calls and return decisions without Gemini.
 26. Basic events and metrics are recorded.
 27. The application has automated tests for core game rules.
 28. The server can be containerized.
