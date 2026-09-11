@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cat & Mouse — Simulation Control</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <div class="app-layout">
+    <header class="app-header">
+      <div class="header-title">
+        <h1>Cat &amp; Mouse</h1>
+        <span class="subtitle">Multi-Agent Simulation v0</span>
+      </div>
+      <div class="header-status">
+        <span class="badge" id="statusBadge">CREATED</span>
+      </div>
+    </header>
+
+    <main class="main-content">
+      <!-- Control Panel -->
+      <aside class="control-panel">
+        <section class="panel-section">
+          <h2>Simulation Controls</h2>
+          <div class="btn-group">
+            <button id="btnStart" class="btn btn-primary">Start</button>
+            <button id="btnPause" class="btn btn-warning">Pause</button>
+            <button id="btnStep" class="btn btn-secondary">Step (1 Tick)</button>
+            <button id="btnStop" class="btn btn-danger">Stop</button>
+            <button id="btnReset" class="btn btn-outline">Reset</button>
+          </div>
+        </section>
+
+        <section class="panel-section">
+          <h2>Execution Speed</h2>
+          <div class="speed-controls">
+            <label for="speedSelect">Tick Rate:</label>
+            <select id="speedSelect" class="form-select">
+              <option value="1">1 tick / sec</option>
+              <option value="5">5 ticks / sec</option>
+              <option value="10" selected>10 ticks / sec</option>
+              <option value="25">25 ticks / sec</option>
+              <option value="50">50 ticks / sec</option>
+            </select>
+          </div>
+        </section>
+
+        <section class="panel-section">
+          <h2>Telemetry &amp; Metrics</h2>
+          <div class="metrics-grid">
+            <div class="metric-card">
+              <div class="metric-label">Tick</div>
+              <div class="metric-value" id="metricTick">0</div>
+            </div>
+            <div class="metric-card">
+              <div class="metric-label">Round</div>
+              <div class="metric-value" id="metricRound">0</div>
+            </div>
+            <div class="metric-card cat-card">
+              <div class="metric-label">Cats (C)</div>
+              <div class="metric-value" id="metricCats">0</div>
+            </div>
+            <div class="metric-card mouse-card">
+              <div class="metric-label">Mice (M)</div>
+              <div class="metric-value" id="metricMice">0</div>
+            </div>
+            <div class="metric-card">
+              <div class="metric-label">Captures</div>
+              <div class="metric-value" id="metricCaptures">0</div>
+            </div>
+            <div class="metric-card">
+              <div class="metric-label">Dimensions</div>
+              <div class="metric-value" id="metricDimensions">100 × 100</div>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel-section">
+          <h2>Runtime Population</h2>
+          <div class="population-controls">
+            <div class="pop-row">
+              <span class="pop-title">Cats:</span>
+              <button id="btnAddCat1" class="btn btn-sm btn-cat">+1</button>
+              <button id="btnAddCat10" class="btn btn-sm btn-cat">+10</button>
+              <button id="btnRemCat1" class="btn btn-sm btn-outline">-1</button>
+            </div>
+            <div class="pop-row">
+              <span class="pop-title">Mice:</span>
+              <button id="btnAddMouse10" class="btn btn-sm btn-mouse">+10</button>
+              <button id="btnAddMouse50" class="btn btn-sm btn-mouse">+50</button>
+              <button id="btnRemMouse10" class="btn btn-sm btn-outline">-10</button>
+            </div>
+          </div>
+        </section>
+      </aside>
+
+      <!-- Board Visualization Area -->
+      <section class="board-container">
+        <div class="board-header">
+          <h2>Live Board Canvas</h2>
+          <div class="legend">
+            <span class="legend-item"><span class="legend-box legend-cat"></span> Cat (C)</span>
+            <span class="legend-item"><span class="legend-box legend-mouse"></span> Mouse (M)</span>
+          </div>
+        </div>
+        <div class="canvas-wrapper" id="canvasWrapper">
+          <canvas id="boardCanvas" width="800" height="800"></canvas>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
