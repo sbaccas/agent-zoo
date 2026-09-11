@@ -112,3 +112,17 @@ async def test_step_back_time_travel():
     assert state_restored_0.tick == 0
     restored_positions = {e.id: (e.position.x, e.position.y) for e in state_restored_0.entities}
     assert restored_positions == initial_positions
+
+
+@pytest.mark.asyncio
+async def test_manual_agent_skips_auto_movement():
+    from app.models.entity import Direction, EntityType, Position
+    sim = Simulation(config=SimulationConfig(populations={"cats": 0, "mice": 0}))
+    cat = sim.entity_manager.spawn_entity(EntityType.CAT, pos=Position(x=10, y=10), facing=Direction.EAST)
+    sim.entity_manager.set_agent_mode(cat.id, "manual")
+
+    # In manual mode, scheduler should not move cat during step
+    await sim.step()
+    assert cat.position.x == 10
+    assert cat.position.y == 10
+

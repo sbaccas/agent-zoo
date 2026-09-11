@@ -34,9 +34,32 @@
   const ctx = canvas.getContext('2d');
   const canvasWrapper = document.getElementById('canvasWrapper');
 
+  // Agent Inspector & Play Controls
+  const agentSelect = document.getElementById('agentSelect');
+  const btnModeAuto = document.getElementById('btnModeAuto');
+  const btnModeManual = document.getElementById('btnModeManual');
+  const btnModeHttp = document.getElementById('btnModeHttp');
+  const httpUrlBox = document.getElementById('httpUrlBox');
+  const agentUrlInput = document.getElementById('agentUrlInput');
+  const btnApplyHttpUrl = document.getElementById('btnApplyHttpUrl');
+  const agentHud = document.getElementById('agentHud');
+  const hudAgentId = document.getElementById('hudAgentId');
+  const hudAgentFacing = document.getElementById('hudAgentFacing');
+  const hudVisionList = document.getElementById('hudVisionList');
+  const dpadUp = document.getElementById('dpadUp');
+  const dpadDown = document.getElementById('dpadDown');
+  const dpadLeft = document.getElementById('dpadLeft');
+  const dpadRight = document.getElementById('dpadRight');
+  const dpadStay = document.getElementById('dpadStay');
+  const btnAttack = document.getElementById('btnAttack');
+
   let currentSimId = 'active';
   let pollTimeout = null;
   let currentState = null;
+  let selectedAgentId = null;
+  let selectedAgentMode = 'auto';
+  let isFetchingObs = false;
+
 
   // Light mode colors
   const COLOR_BG = '#ffffff';
@@ -160,9 +183,22 @@
       ctx.textBaseline = 'middle';
       ctx.fillText(isCat ? 'C' : 'M', 0, 1);
 
+      // Focus ring for selected agent
+      if (e.id === selectedAgentId) {
+        ctx.save();
+        ctx.strokeStyle = '#2563eb';
+        ctx.lineWidth = 2.5;
+        ctx.setLineDash([3, 2]);
+        ctx.beginPath();
+        ctx.arc(0, 0, bgRadius + 4, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+      }
+
       ctx.restore();
     }
   }
+
 
   let lastEventSignature = '';
   function renderEventFeed(events) {
@@ -242,7 +278,163 @@
 
     renderBoard(state);
     renderEventFeed(state.recent_events);
+
+    // Sync Agent Inspector
+    syncAgentSelect(state.entities || []);
+    if (selectedAgentId) {
+      refreshAgentHUD();
+    }
   }
+
+  // Agent Inspector Logic
+  function syncAgentSelect(entities) {
+    if (!agentSelect) return;
+    const living = entities.filter(e => e.alive);
+    const existingVal = agentSelect.value || selectedAgentId;
+
+    // Check if options match
+    const currentOptions = Array.from(agentSelect.options).map(o => o.value).filter(Boolean);
+    const livingIds = living.map(e => e.id);
+    const isSame = (currentOptions.length === livingIds.length) && currentOptions.every((id, idx) => id === livingIds[idx]);
+
+    if (!isSame) {
+      agentSelect.replaceChildren();
+      const defaultOpt = document.createElement('option');
+      defaultOpt.value = '';
+      defaultOpt.textContent = living.length > 0 ? '-- Choose Agent to Play / Inspect --' : '-- No Living Animals --';
+      agentSelect.appendChild(defaultOpt);
+
+      for (const ent of living) {
+        const opt = document.createElement('option');
+        opt.value = ent.id;
+        opt.textContent = `${ent.id} (${ent.type.toUpperCase()}) at (${ent.position.x}, ${ent.position.y})`;
+        agentSelect.appendChild(opt);
+      }
+
+      if (existingVal && livingIds.includes(existingVal)) {
+        agentSelect.value = existingVal;
+      }
+    }
+  }
+
+  function updateModeButtons(mode) {
+    selectedAgentMode = mode;
+    btnModeAuto.className = mode === 'auto' ? 'btn btn-primary' : 'btn btn-outline';
+    btnModeManual.className = mode === 'manual' ? 'btn btn-primary' : 'btn btn-outline';
+    btnModeHttp.className = mode === 'http' ? 'btn btn-primary' : 'btn btn-outline';
+    httpUrlBox.style.display = mode === 'http' ? 'flex' : 'none';
+  }
+
+  async function setAgentMode(mode, url = null) {
+    if (!selectedAgentId) return;
+    const body = { mode: mode, agent_url: url };
+    const res = await apiCall(`/api/simulations/${currentSimId}/agents/${selectedAgentId}/register`, 'POST', body);
+    if (res) {
+      updateModeButtons(mode);
+      if (mode === 'manual' && currentState && currentState.status === 'running') {
+        const pauseRes = await apiCall(`/api/simulations/${currentSimId}/pause`, 'POST');
+        if (pauseRes) updateUI(pauseRes);
+      }
+      refreshAgentHUD();
+    }
+  }
+
+  async function selectAgent(agentId) {
+    selectedAgentId = agentId;
+    if (!agentId) {
+      if (agentHud) agentHud.style.display = 'none';
+      if (currentState) renderBoard(currentState);
+      return;
+    }
+
+    if (agentSelect) agentSelect.value = agentId;
+    if (agentHud) agentHud.style.display = 'block';
+
+    // Immediately set to manual mode & pause continuous timer so player controls the turns
+    await setAgentMode('manual');
+    if (currentState && currentState.status === 'running') {
+      const pauseRes = await apiCall(`/api/simulations/${currentSimId}/pause`, 'POST');
+      if (pauseRes) updateUI(pauseRes);
+    }
+
+    refreshAgentHUD();
+    if (currentState) renderBoard(currentState);
+  }
+
+  async function refreshAgentHUD() {
+    if (!selectedAgentId || isFetchingObs) return;
+    isFetchingObs = true;
+    const obs = await apiCall(`/api/simulations/${currentSimId}/agents/${selectedAgentId}/observation`, 'GET');
+    isFetchingObs = false;
+
+    if (!obs || !obs.self) {
+      hudAgentId.textContent = `${selectedAgentId}`;
+      hudAgentFacing.textContent = '💀 CAPTURED / INACTIVE';
+      hudVisionList.replaceChildren();
+      const deadItem = document.createElement('div');
+      deadItem.className = 'vision-item';
+      deadItem.textContent = 'Agent is no longer alive in simulation.';
+      hudVisionList.appendChild(deadItem);
+      btnAttack.disabled = true;
+      return;
+    }
+
+    const self = obs.self;
+    hudAgentId.textContent = `${self.id} (${self.type.toUpperCase()}) @ (${self.position.x}, ${self.position.y})`;
+    hudAgentFacing.textContent = `Facing: ⬆ ${self.facing.toUpperCase()}`;
+
+    // Vision list
+    hudVisionList.replaceChildren();
+    const visible = obs.visible_entities || [];
+    if (visible.length === 0) {
+      const item = document.createElement('div');
+      item.className = 'vision-item';
+      item.textContent = 'No entities in field of view.';
+      hudVisionList.appendChild(item);
+    } else {
+      for (const ent of visible) {
+        const item = document.createElement('div');
+        const isCat = (ent.type === 'cat');
+        item.className = `vision-item ${isCat ? 'threat-cat' : 'target-mouse'}`;
+
+        const dx = ent.position.x - self.position.x;
+        const dy = ent.position.y - self.position.y;
+        const dist = Math.sqrt(dx * dx + dy * dy).toFixed(1);
+
+        item.textContent = `${isCat ? '🐱 CAT' : '🐭 MOUSE'}: ${ent.id} @ (${ent.position.x}, ${ent.position.y}) [Dist: ${dist}]`;
+        hudVisionList.appendChild(item);
+      }
+    }
+
+    // Slash Attack Button
+    const legal = obs.legal_actions || [];
+    if (self.type === 'cat') {
+      btnAttack.style.display = 'block';
+      if (legal.includes('attack')) {
+        btnAttack.disabled = false;
+        btnAttack.textContent = '⚔️ Slash Attack (Ready!)';
+      } else {
+        btnAttack.disabled = true;
+        btnAttack.textContent = '⚔️ Slash Attack (No target ahead)';
+      }
+    } else {
+      btnAttack.style.display = 'none';
+    }
+  }
+
+  async function sendAgentAction(action) {
+    if (!selectedAgentId) return;
+    const res = await apiCall(`/api/simulations/${currentSimId}/agents/${selectedAgentId}/actions?step=true`, 'POST', { action: action });
+    if (res && res.accepted) {
+      // Step simulation visually or refresh state
+      const newState = await apiCall(`/api/simulations/${currentSimId}/state`, 'GET');
+      if (newState) {
+        updateUI(newState);
+      }
+      refreshAgentHUD();
+    }
+  }
+
 
   async function apiCall(endpoint, method = 'POST', body = null) {
     try {
@@ -282,7 +474,85 @@
     pollLoop();
   }
 
-  // Event Listeners
+  // Canvas Click to Select Entity
+  canvas.addEventListener('click', (ev) => {
+    if (!currentState || !currentState.entities) return;
+    const rect = canvas.getBoundingClientRect();
+    const clickX = ev.clientX - rect.left;
+    const clickY = ev.clientY - rect.top;
+    const cellW = canvas.width / (currentState.width || 100);
+    const cellH = canvas.height / (currentState.height || 100);
+    const gridX = Math.floor(clickX / cellW);
+    const gridY = Math.floor(clickY / cellH);
+
+    let closest = null;
+    let minD = Infinity;
+    for (const ent of currentState.entities) {
+      if (!ent.alive) continue;
+      const d = Math.abs(ent.position.x - gridX) + Math.abs(ent.position.y - gridY);
+      if (d < minD && d <= 4) {
+        closest = ent;
+        minD = d;
+      }
+    }
+    if (closest) {
+      selectAgent(closest.id);
+    }
+  });
+
+  // Agent Inspector Listeners
+  if (agentSelect) {
+    agentSelect.addEventListener('change', () => selectAgent(agentSelect.value));
+  }
+  if (btnModeAuto) {
+    btnModeAuto.addEventListener('click', () => setAgentMode('auto'));
+  }
+  if (btnModeManual) {
+    btnModeManual.addEventListener('click', () => setAgentMode('manual'));
+  }
+  if (btnModeHttp) {
+    btnModeHttp.addEventListener('click', () => {
+      updateModeButtons('http');
+      if (agentUrlInput && !agentUrlInput.value) {
+        agentUrlInput.value = 'http://127.0.0.1:8001/act';
+      }
+    });
+  }
+  if (btnApplyHttpUrl) {
+    btnApplyHttpUrl.addEventListener('click', () => {
+      const url = agentUrlInput ? agentUrlInput.value.trim() : '';
+      if (url) setAgentMode('http', url);
+    });
+  }
+
+  // D-Pad and Attack Buttons
+  if (dpadUp) dpadUp.addEventListener('click', () => sendAgentAction('north'));
+  if (dpadDown) dpadDown.addEventListener('click', () => sendAgentAction('south'));
+  if (dpadLeft) dpadLeft.addEventListener('click', () => sendAgentAction('west'));
+  if (dpadRight) dpadRight.addEventListener('click', () => sendAgentAction('east'));
+  if (dpadStay) dpadStay.addEventListener('click', () => sendAgentAction('stay'));
+  if (btnAttack) btnAttack.addEventListener('click', () => sendAgentAction('attack'));
+
+  // Keyboard Controls (WASD / Arrows / Spacebar)
+  window.addEventListener('keydown', (e) => {
+    if (!selectedAgentId || selectedAgentMode !== 'manual') return;
+    if (document.activeElement && document.activeElement.tagName === 'INPUT') return;
+
+    let action = null;
+    if (e.key === 'ArrowUp' || e.key === 'w' || e.key === 'W') action = 'north';
+    else if (e.key === 'ArrowDown' || e.key === 's' || e.key === 'S') action = 'south';
+    else if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') action = 'west';
+    else if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') action = 'east';
+    else if (e.key === ' ') action = 'attack';
+    else if (e.key === '.' || e.key === 'x') action = 'stay';
+
+    if (action) {
+      e.preventDefault();
+      sendAgentAction(action);
+    }
+  });
+
+  // Event Listeners for Simulation Administration
   btnStart.addEventListener('click', () => triggerAction(`/api/simulations/${currentSimId}/start`));
   btnPause.addEventListener('click', () => triggerAction(`/api/simulations/${currentSimId}/pause`));
   if (btnStepBack) {
@@ -309,3 +579,4 @@
   resizeCanvas();
   pollLoop();
 })();
+

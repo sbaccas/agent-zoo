@@ -11,6 +11,21 @@ class EntityManager:
         self.species_config = species_config
         self.entities: Dict[str, Entity] = {}
         self._next_id: Dict[str, int] = {"cat": 1, "mouse": 1}
+        self.agent_modes: Dict[str, str] = {}
+        self.agent_urls: Dict[str, str] = {}
+
+    def set_agent_mode(self, entity_id: str, mode: str, agent_url: Optional[str] = None):
+        self.agent_modes[entity_id] = mode
+        if agent_url:
+            self.agent_urls[entity_id] = agent_url
+        elif mode != "http":
+            self.agent_urls.pop(entity_id, None)
+
+    def get_agent_mode(self, entity_id: str) -> str:
+        return self.agent_modes.get(entity_id, "auto")
+
+    def get_agent_url(self, entity_id: str) -> Optional[str]:
+        return self.agent_urls.get(entity_id)
 
     def spawn_entity(
         self,

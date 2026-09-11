@@ -95,8 +95,60 @@
           </div>
         </section>
 
+        <!-- Play / Inspect Agent Section -->
+        <section class="panel-section agent-control-section">
+          <h2>Play / Inspect Agent</h2>
+          <div class="agent-select-row">
+            <label for="agentSelect">Select Animal:</label>
+            <select id="agentSelect" class="form-select">
+              <option value="">-- Choose Agent --</option>
+            </select>
+          </div>
+
+          <div class="agent-mode-row">
+            <span class="pop-title">Mode:</span>
+            <div class="btn-group-sm">
+              <button id="btnModeAuto" class="btn btn-outline" title="Internal AI heuristic">Auto</button>
+              <button id="btnModeManual" class="btn btn-primary" title="You control this animal!">Play</button>
+              <button id="btnModeHttp" class="btn btn-outline" title="Connect external microservice">HTTP</button>
+            </div>
+            <div id="httpUrlBox" class="http-url-box" style="display: none;">
+              <input id="agentUrlInput" type="text" class="form-input" placeholder="http://127.0.0.1:8001/act">
+              <button id="btnApplyHttpUrl" class="btn btn-sm btn-secondary">Connect</button>
+            </div>
+          </div>
+
+          <div id="agentHud" class="agent-hud" style="display: none;">
+            <div class="hud-header">
+              <span id="hudAgentId" class="hud-id">cat-1</span>
+              <span id="hudAgentFacing" class="hud-facing">⬆ NORTH</span>
+            </div>
+            <div class="hud-obs">
+              <div class="hud-obs-title">Vision / Senses:</div>
+              <div id="hudVisionList" class="hud-vision-list">
+                <div class="vision-item">Nothing in sight</div>
+              </div>
+            </div>
+            <div class="dpad-container">
+              <div class="dpad-row">
+                <button id="dpadUp" class="dpad-btn" title="North (W / Up Arrow)">⬆</button>
+              </div>
+              <div class="dpad-row">
+                <button id="dpadLeft" class="dpad-btn" title="West (A / Left Arrow)">⬅</button>
+                <button id="dpadStay" class="dpad-btn" title="Stay (S / Space)">•</button>
+                <button id="dpadRight" class="dpad-btn" title="East (D / Right Arrow)">➡</button>
+              </div>
+              <div class="dpad-row">
+                <button id="dpadDown" class="dpad-btn" title="South (S / Down Arrow)">⬇</button>
+              </div>
+              <button id="btnAttack" class="btn-attack" title="Slash Attack (Spacebar)">⚔️ Slash Attack</button>
+            </div>
+          </div>
+        </section>
+
         <section class="panel-section event-feed-section">
           <div class="event-feed-header">
+
             <h2>Live Event Feed</h2>
             <span class="event-count-badge" id="eventCount">0 events</span>
           </div>

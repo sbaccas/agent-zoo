@@ -95,7 +95,7 @@ class Simulation:
         try:
             while self.status == SimulationStatus.RUNNING:
                 self._save_snapshot()
-                self.scheduler.execute_simulation_step()
+                await self.scheduler.execute_simulation_step()
                 sleep_sec = 1.0 / max(0.1, self.config.tick_rate)
                 await asyncio.sleep(sleep_sec)
         except asyncio.CancelledError:
@@ -127,7 +127,7 @@ class Simulation:
         async with self._lock:
             if self.status != SimulationStatus.RUNNING:
                 self._save_snapshot()
-                self.scheduler.execute_simulation_step()
+                await self.scheduler.execute_simulation_step()
         return self.get_state()
 
     async def step_back(self) -> SimulationStateResponse:

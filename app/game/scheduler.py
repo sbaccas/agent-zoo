@@ -2,6 +2,9 @@ import logging
 import math
 import random
 from typing import List, Optional
+import httpx
+from actors.cat_agent import act as cat_agent_act, Observation as CatObservation
+from actors.mouse_agent import act as mouse_agent_act, Observation as MouseObservation
 from app.game.actions import ActionHandler
 from app.game.entities import EntityManager
 from app.game.world import World
@@ -31,57 +34,55 @@ class Scheduler:
             self.round = self.tick // 10
         return self.tick
 
-    def _get_best_move_towards(self, current: Position, target: Position) -> ActionType:
-        dx = target.x - current.x
-        dy = target.y - current.y
-        legal = self.world.get_legal_actions(current)
+    def _build_observation_payload(self, entity: Entity) -> dict:
+        species_key = entity.type.value
+        vision_radius = 4
+        if species_key in self.entity_manager.species_config:
+            vision_radius = self.entity_manager.species_config[species_key].vision_radius
 
-        moves = []
-        if abs(dx) >= abs(dy):
-            if dx > 0 and ActionType.EAST in legal:
-                moves.append(ActionType.EAST)
-            elif dx < 0 and ActionType.WEST in legal:
-                moves.append(ActionType.WEST)
-            if dy > 0 and ActionType.SOUTH in legal:
-                moves.append(ActionType.SOUTH)
-            elif dy < 0 and ActionType.NORTH in legal:
-                moves.append(ActionType.NORTH)
+        visible = []
+        if entity.type == EntityType.CAT:
+            fov_tiles = set(self.world.get_forward_fov_tiles(entity.position, entity.facing, distance=vision_radius))
+            for other in self.entity_manager.get_alive_entities():
+                if other.id != entity.id and (other.position.x, other.position.y) in fov_tiles:
+                    visible.append({
+                        "id": other.id,
+                        "type": other.type.value,
+                        "position": {"x": other.position.x, "y": other.position.y},
+                        "facing": other.facing.value,
+                    })
         else:
-            if dy > 0 and ActionType.SOUTH in legal:
-                moves.append(ActionType.SOUTH)
-            elif dy < 0 and ActionType.NORTH in legal:
-                moves.append(ActionType.NORTH)
-            if dx > 0 and ActionType.EAST in legal:
-                moves.append(ActionType.EAST)
-            elif dx < 0 and ActionType.WEST in legal:
-                moves.append(ActionType.WEST)
+            for other in self.entity_manager.get_alive_entities():
+                if other.id == entity.id:
+                    continue
+                dist_sq = (other.position.x - entity.position.x)**2 + (other.position.y - entity.position.y)**2
+                if dist_sq <= vision_radius**2:
+                    visible.append({
+                        "id": other.id,
+                        "type": other.type.value,
+                        "position": {"x": other.position.x, "y": other.position.y},
+                        "facing": other.facing.value,
+                    })
 
-        return moves[0] if moves else random.choice(legal)
+        allow_attack = (entity.type == EntityType.CAT)
+        legal_actions = [a.value for a in self.world.get_legal_actions(entity.position, allow_attack=allow_attack)]
+        return {
+            "tick": self.tick,
+            "round": self.round,
+            "self": {
+                "id": entity.id,
+                "type": entity.type.value,
+                "position": {"x": entity.position.x, "y": entity.position.y},
+                "facing": entity.facing.value,
+            },
+            "visible_entities": visible,
+            "legal_actions": legal_actions,
+        }
 
-    def _get_best_move_away_from(self, current: Position, threat: Position) -> ActionType:
-        dx = current.x - threat.x
-        dy = current.y - threat.y
-        legal = self.world.get_legal_actions(current)
-
-        moves = []
-        if abs(dx) >= abs(dy):
-            if dx > 0 and ActionType.EAST in legal:
-                moves.append(ActionType.EAST)
-            elif dx < 0 and ActionType.WEST in legal:
-                moves.append(ActionType.WEST)
-        else:
-            if dy > 0 and ActionType.SOUTH in legal:
-                moves.append(ActionType.SOUTH)
-            elif dy < 0 and ActionType.NORTH in legal:
-                moves.append(ActionType.NORTH)
-
-        return moves[0] if moves else random.choice(legal)
-
-    def execute_simulation_step(self) -> int:
+    async def execute_simulation_step(self) -> int:
         self.step_logical_clock()
 
         entities = self.entity_manager.get_alive_entities()
-        # Cats act first, then mice, with internal shuffle
         cats = [e for e in entities if e.type == EntityType.CAT and e.alive]
         mice = [e for e in entities if e.type == EntityType.MOUSE and e.alive]
         random.shuffle(cats)
@@ -92,92 +93,83 @@ class Scheduler:
             if not cat.alive:
                 continue
 
-            # Check directional slash AoE (front of face)
-            aoe_tiles = self.world.get_slash_aoe_tiles(cat.position, cat.facing, range_tiles=2)
-            mice_in_slash_range = [
-                m for m in self.entity_manager.get_alive_entities()
-                if m.type == EntityType.MOUSE and (m.position.x, m.position.y) in aoe_tiles
-            ]
-
-            if mice_in_slash_range:
-                # Issue frontal slash attack!
-                result = self.action_handler.apply_action(cat, ActionType.ATTACK, self.tick)
-                self.captures += len(result.affected_entities)
-                for victim_id in result.affected_entities:
-                    victim = self.entity_manager.entities.get(victim_id)
-                    v_pos = f"({victim.position.x}, {victim.position.y})" if victim else "?"
-                    msg = f"💥 [TICK {self.tick} | R{self.round}] CAPTURE: {cat.id} at ({cat.position.x}, {cat.position.y}) facing {cat.facing.value.upper()} slashed and captured {victim_id} at {v_pos}! (Total captures: {self.captures})"
-                    logger.info(msg)
-                    print(msg, flush=True)
-                    self.events.append(GameEvent(
-                        tick=self.tick,
-                        round=self.round,
-                        event_type="capture",
-                        actor_id=cat.id,
-                        target_id=victim_id,
-                        position=victim.position if victim else cat.position,
-                        message=msg,
-                    ))
+            mode = self.entity_manager.get_agent_mode(cat.id)
+            if mode == "manual":
+                # Controlled manually by human player via UI / HTTP
                 continue
 
-            # Check forward FoV (4 tiles ahead)
-            fov_tiles = self.world.get_forward_fov_tiles(cat.position, cat.facing, distance=4)
-            mice_in_fov = [
-                m for m in self.entity_manager.get_alive_entities()
-                if m.type == EntityType.MOUSE and (m.position.x, m.position.y) in fov_tiles
-            ]
+            action_val = None
+            if mode == "http":
+                agent_url = self.entity_manager.get_agent_url(cat.id)
+                if agent_url:
+                    try:
+                        obs = self._build_observation_payload(cat)
+                        async with httpx.AsyncClient(timeout=1.5) as client:
+                            resp = await client.post(agent_url, json=obs)
+                            if resp.status_code == 200:
+                                action_val = resp.json().get("action")
+                    except Exception as err:
+                        logger.warning("HTTP agent dispatch error for %s to %s: %s", cat.id, agent_url, err)
 
-            if mice_in_fov:
-                # Target nearest visible mouse and advance
-                target_mouse = min(
-                    mice_in_fov,
-                    key=lambda m: (m.position.x - cat.position.x)**2 + (m.position.y - cat.position.y)**2
-                )
-                move = self._get_best_move_towards(cat.position, target_mouse.position)
-                self.action_handler.apply_action(cat, move, self.tick)
-            else:
-                # Stalk / wander: bias towards continuing facing direction
-                f_delta = self.world.get_forward_delta(cat.facing)
-                ahead_pos = (cat.position.x + f_delta[0], cat.position.y + f_delta[1])
-                legal = self.world.get_legal_actions(cat.position)
+            # In auto mode (or if HTTP fallback needed), execute cat_agent brain
+            if not action_val:
+                obs_payload = self._build_observation_payload(cat)
+                cat_obs = CatObservation(**obs_payload)
+                act_res = cat_agent_act(cat_obs)
+                action_val = act_res.action
 
-                # 60% chance to keep moving forward if legal
-                if random.random() < 0.6 and self.world.is_in_bounds(*ahead_pos):
-                    act = None
-                    if cat.facing == Direction.NORTH and ActionType.NORTH in legal:
-                        act = ActionType.NORTH
-                    elif cat.facing == Direction.SOUTH and ActionType.SOUTH in legal:
-                        act = ActionType.SOUTH
-                    elif cat.facing == Direction.EAST and ActionType.EAST in legal:
-                        act = ActionType.EAST
-                    elif cat.facing == Direction.WEST and ActionType.WEST in legal:
-                        act = ActionType.WEST
-                    if act:
-                        self.action_handler.apply_action(cat, act, self.tick)
-                        continue
-
-                chosen = random.choice(legal)
-                self.action_handler.apply_action(cat, chosen, self.tick)
+            if action_val in [a.value for a in ActionType]:
+                res = self.action_handler.apply_action(cat, ActionType(action_val), self.tick)
+                if res.action == ActionType.ATTACK and res.affected_entities:
+                    self.captures += len(res.affected_entities)
+                    for victim_id in res.affected_entities:
+                        victim = self.entity_manager.entities.get(victim_id)
+                        v_pos = f"({victim.position.x}, {victim.position.y})" if victim else "?"
+                        msg = f"💥 [TICK {self.tick} | R{self.round}] CAPTURE: {cat.id} at ({cat.position.x}, {cat.position.y}) facing {cat.facing.value.upper()} attacked and captured {victim_id} at {v_pos}! (Total captures: {self.captures})"
+                        logger.info(msg)
+                        print(msg, flush=True)
+                        self.events.append(GameEvent(
+                            tick=self.tick,
+                            round=self.round,
+                            event_type="capture",
+                            actor_id=cat.id,
+                            target_id=victim_id,
+                            position=victim.position if victim else cat.position,
+                            message=msg,
+                        ))
 
         # 2. Mice turn
         for mouse in mice:
             if not mouse.alive:
                 continue
 
-            # Check if any Cat is close (<= 3 tiles)
-            nearby_cats = [
-                c for c in self.entity_manager.get_alive_entities()
-                if c.type == EntityType.CAT and abs(c.position.x - mouse.position.x) <= 3 and abs(c.position.y - mouse.position.y) <= 3
-            ]
+            mode = self.entity_manager.get_agent_mode(mouse.id)
+            if mode == "manual":
+                # Controlled manually by human player via UI / HTTP
+                continue
 
-            if nearby_cats:
-                threat = nearby_cats[0]
-                flee_move = self._get_best_move_away_from(mouse.position, threat.position)
-                self.action_handler.apply_action(mouse, flee_move, self.tick)
-            else:
-                legal = self.world.get_legal_actions(mouse.position)
-                chosen = random.choice(legal)
-                self.action_handler.apply_action(mouse, chosen, self.tick)
+            action_val = None
+            if mode == "http":
+                agent_url = self.entity_manager.get_agent_url(mouse.id)
+                if agent_url:
+                    try:
+                        obs = self._build_observation_payload(mouse)
+                        async with httpx.AsyncClient(timeout=1.5) as client:
+                            resp = await client.post(agent_url, json=obs)
+                            if resp.status_code == 200:
+                                action_val = resp.json().get("action")
+                    except Exception as err:
+                        logger.warning("HTTP agent dispatch error for %s to %s: %s", mouse.id, agent_url, err)
+
+            # In auto mode (or if HTTP fallback needed), execute mouse_agent brain
+            if not action_val:
+                obs_payload = self._build_observation_payload(mouse)
+                mouse_obs = MouseObservation(**obs_payload)
+                act_res = mouse_agent_act(mouse_obs)
+                action_val = act_res.action
+
+            if action_val in [a.value for a in ActionType]:
+                self.action_handler.apply_action(mouse, ActionType(action_val), self.tick)
 
             # Check for bump / displacement collision with Cats
             overlapping_cats = [
