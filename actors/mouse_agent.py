@@ -61,7 +61,9 @@ def act(obs: Observation) -> ActionResponse:
 
     # Roam/forage
     choice = random.choice(legal) if legal else "stay"
+    print(f"[{my_id} @ Tick {obs.tick}] Foraging -> {choice}", flush=True)
     return ActionResponse(action=choice, thought="Foraging peacefully")
+
 
 
 if __name__ == "__main__":

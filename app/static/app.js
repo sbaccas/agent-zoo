@@ -513,11 +513,13 @@
   if (btnModeHttp) {
     btnModeHttp.addEventListener('click', () => {
       updateModeButtons('http');
-      if (agentUrlInput && !agentUrlInput.value) {
-        agentUrlInput.value = 'http://127.0.0.1:8001/act';
+      if (agentUrlInput) {
+        const isCat = selectedAgentId && selectedAgentId.startsWith('cat');
+        agentUrlInput.value = isCat ? 'http://127.0.0.1:8001/act' : 'http://127.0.0.1:8002/act';
       }
     });
   }
+
   if (btnApplyHttpUrl) {
     btnApplyHttpUrl.addEventListener('click', () => {
       const url = agentUrlInput ? agentUrlInput.value.trim() : '';

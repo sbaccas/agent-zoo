@@ -107,9 +107,12 @@ class Scheduler:
                         async with httpx.AsyncClient(timeout=1.5) as client:
                             resp = await client.post(agent_url, json=obs)
                             if resp.status_code == 200:
-                                action_val = resp.json().get("action")
+                                data = resp.json()
+                                action_val = data.get("action")
+                                thought = data.get("thought", "")
+                                print(f"🤖 [HTTP AGENT {cat.id} @ Tick {self.tick}] -> {action_val} | Thought: \"{thought}\"", flush=True)
                     except Exception as err:
-                        logger.warning("HTTP agent dispatch error for %s to %s: %s", cat.id, agent_url, err)
+                        print(f"⚠️ [HTTP AGENT {cat.id}] Error contacting {agent_url}: {err}", flush=True)
 
             # In auto mode (or if HTTP fallback needed), execute cat_agent brain
             if not action_val:
@@ -157,9 +160,12 @@ class Scheduler:
                         async with httpx.AsyncClient(timeout=1.5) as client:
                             resp = await client.post(agent_url, json=obs)
                             if resp.status_code == 200:
-                                action_val = resp.json().get("action")
+                                data = resp.json()
+                                action_val = data.get("action")
+                                thought = data.get("thought", "")
+                                print(f"🤖 [HTTP AGENT {mouse.id} @ Tick {self.tick}] -> {action_val} | Thought: \"{thought}\"", flush=True)
                     except Exception as err:
-                        logger.warning("HTTP agent dispatch error for %s to %s: %s", mouse.id, agent_url, err)
+                        print(f"⚠️ [HTTP AGENT {mouse.id}] Error contacting {agent_url}: {err}", flush=True)
 
             # In auto mode (or if HTTP fallback needed), execute mouse_agent brain
             if not action_val:
@@ -167,6 +173,7 @@ class Scheduler:
                 mouse_obs = MouseObservation(**obs_payload)
                 act_res = mouse_agent_act(mouse_obs)
                 action_val = act_res.action
+
 
             if action_val in [a.value for a in ActionType]:
                 self.action_handler.apply_action(mouse, ActionType(action_val), self.tick)

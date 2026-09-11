@@ -126,3 +126,21 @@ async def test_manual_agent_skips_auto_movement():
     assert cat.position.x == 10
     assert cat.position.y == 10
 
+
+@pytest.mark.asyncio
+async def test_http_agent_dispatch_live():
+    from unittest.mock import AsyncMock, patch
+    from app.models.entity import Direction, EntityType, Position
+    sim = Simulation(config=SimulationConfig(populations={"cats": 0, "mice": 0}))
+    cat = sim.entity_manager.spawn_entity(EntityType.CAT, pos=Position(x=10, y=10), facing=Direction.EAST)
+    sim.entity_manager.set_agent_mode(cat.id, "http", "http://127.0.0.1:8001/act")
+
+    mock_resp = AsyncMock()
+    mock_resp.status_code = 200
+    mock_resp.json = lambda: {"action": "north", "thought": "Hunting northward"}
+
+    with patch("httpx.AsyncClient.post", new=AsyncMock(return_value=mock_resp)):
+        await sim.step()
+        assert cat.position.y == 9  # moved north
+
+
