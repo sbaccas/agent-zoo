@@ -98,6 +98,9 @@ adk_agent = LlmAgent(
     instruction=get_skills_instruction(),
     output_schema=CatTacticalDecision,
     output_key="decision",
+    generate_content_config=types.GenerateContentConfig(
+        thinking_config=types.ThinkingConfig(thinking_budget=0)
+    ),
 )
 session_service = InMemorySessionService()
 adk_runner = Runner(
@@ -105,6 +108,24 @@ adk_runner = Runner(
     app_name="cat_agent_app",
     session_service=session_service,
 )
+_llm_lock = asyncio.Lock()
+
+
+def has_gemini_credentials() -> bool:
+    return bool(
+        os.environ.get("GEMINI_API_KEY")
+        or os.environ.get("GOOGLE_API_KEY")
+        or os.environ.get("GOOGLE_CLOUD_PROJECT")
+        or os.environ.get("GOOGLE_GENAI_USE_VERTEXAI")
+    )
+
+
+def get_gemini_auth_mode() -> str:
+    if os.environ.get("GOOGLE_CLOUD_PROJECT") or os.environ.get("GOOGLE_GENAI_USE_VERTEXAI"):
+        return "vertex_ai"
+    if os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY"):
+        return "api_key"
+    return "none"
 
 
 class AgentWorkbenchState:
@@ -123,8 +144,9 @@ class AgentWorkbenchState:
         # ADK Gemini Engine state
         self.brain_engine: str = "Google ADK (gemini-2.5-flash)"
         self.skills_file: str = str(SKILLS_PATH)
-        self.last_engine_source: str = "heuristic_fallback"
+        self.last_engine_source: str = "adk_gemini" if has_gemini_credentials() else "heuristic_fallback"
         self.last_engine_error: Optional[str] = None
+        self.last_evaluated_tick: Optional[int] = None
 
 
 # Singleton in-memory state
@@ -313,98 +335,116 @@ async def query_adk_gemini(obs: Observation) -> Optional[CatTacticalDecision]:
         state.last_engine_source = "heuristic_fallback"
         return None
 
-    has_env_key = bool(os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY"))
-    has_cloud_auth = bool(os.environ.get("GOOGLE_CLOUD_PROJECT") or os.environ.get("GOOGLE_GENAI_USE_VERTEXAI"))
-
-    if not (has_env_key or has_cloud_auth):
+    if not has_gemini_credentials():
         state.last_engine_source = "heuristic_fallback"
         return None
 
     user_id = "cat_commander"
     session_id = f"session_{state.agent_id}"
 
-    try:
-        session = await session_service.get_session(
-            app_name="cat_agent_app", user_id=user_id, session_id=session_id
-        )
-        if session is None:
+    async with _llm_lock:
+        try:
+            # Refresh session to prevent conversation history accumulation across ticks
+            try:
+                await session_service.delete_session(
+                    app_name="cat_agent_app", user_id=user_id, session_id=session_id
+                )
+            except Exception:
+                pass
             session = await session_service.create_session(
                 app_name="cat_agent_app", user_id=user_id, session_id=session_id
             )
 
-        pos = obs.self.get("position", {})
-        facing = obs.self.get("facing", "north")
-        hp = obs.self.get("hp", 100)
-        entities = obs.visible_entities
-        legal = obs.legal_actions or ["stay", "north", "south", "east", "west"]
+            pos = obs.self.get("position", {})
+            facing = obs.self.get("facing", "north")
+            hp = obs.self.get("hp", 100)
+            entities = obs.visible_entities
+            legal = obs.legal_actions or ["stay", "north", "south", "east", "west"]
 
-        prompt = (
-            f"--- OBSERVATION (Tick {obs.tick}, Round {obs.round}) ---\n"
-            f"Agent ID: {obs.self.get('id', state.agent_id)}\n"
-            f"Current Position: (x={pos.get('x', 0)}, y={pos.get('y', 0)})\n"
-            f"Current Facing: {facing}\n"
-            f"Current HP: {hp}\n"
-            f"Visible Entities in 90° Vision Cone: {entities}\n"
-            f"Legal Actions this tick: {legal}\n"
-            f"Consult your skills manual and choose the single best tactical action. "
-            f"Your action MUST strictly be one of {legal}."
-        )
+            # Build exact 3-tick context window: last 3 moves and the context/thoughts that motivated them
+            history_lines = []
+            for h in (state.history[-3:] if state.history else []):
+                h_tick = h.get("tick", "?")
+                h_self = h.get("observation", {}).get("self", {})
+                h_pos = h_self.get("position", {})
+                h_facing = h_self.get("facing", "north")
+                h_vis = h.get("observation", {}).get("visible_entities", [])
+                h_resp = h.get("response", {})
+                h_act = (h_resp.get("action") or "stay").upper()
+                h_thought = h_resp.get("thought", "")
+                vis_info = f"{len(h_vis)} visible ({[m.get('id') for m in h_vis]})" if h_vis else "0 visible"
+                history_lines.append(
+                    f"  • Tick {h_tick}: Pos ({h_pos.get('x',0)}, {h_pos.get('y',0)}) facing {h_facing}. "
+                    f"Context: {vis_info}. Move: {h_act} (Reason: \"{h_thought}\")"
+                )
 
-        msg = types.Content(role="user", parts=[types.Part.from_text(text=prompt)])
-        decision = None
+            history_context = ""
+            if history_lines:
+                history_context = "--- RECENT TACTICAL CONTEXT (Last 3 Ticks) ---\n" + "\n".join(history_lines) + "\n\n"
 
-        async with asyncio.timeout(5.0):
-            agen = adk_runner.run_async(user_id=user_id, session_id=session_id, new_message=msg)
-            try:
-                while True:
-                    event = await agen.__anext__()
-                    if event.error_code or event.error_message:
-                        raise RuntimeError(f"ADK Error: {event.error_code} - {event.error_message}")
-                    if event.actions and event.actions.state_delta and "decision" in event.actions.state_delta:
-                        decision = event.actions.state_delta["decision"]
-                    elif event.content and event.content.parts:
-                        for p in event.content.parts:
-                            if p.text and not getattr(p, "thought", False):
-                                try:
-                                    decision = CatTacticalDecision.model_validate_json(p.text)
-                                except Exception:
-                                    pass
-            except StopAsyncIteration:
-                pass
+            prompt = (
+                f"{history_context}"
+                f"--- CURRENT OBSERVATION (Tick {obs.tick}, Round {obs.round}) ---\n"
+                f"Agent ID: {obs.self.get('id', state.agent_id)}\n"
+                f"Current Position: (x={pos.get('x', 0)}, y={pos.get('y', 0)})\n"
+                f"Current Facing: {facing}\n"
+                f"Current HP: {hp}\n"
+                f"Visible Entities in 90° Vision Cone: {entities}\n"
+                f"Legal Actions this tick: {legal}\n"
+                f"Consult your skills manual and choose the single best tactical action strictly from legal actions."
+            )
 
-        if isinstance(decision, dict):
-            decision = CatTacticalDecision(**decision)
+            msg = types.Content(role="user", parts=[types.Part.from_text(text=prompt)])
+            decision = None
 
-        if decision and decision.action:
-            chosen_clean = decision.action.strip().lower()
-            if chosen_clean in legal:
-                decision.action = chosen_clean
-                state.last_engine_source = "adk_gemini"
-                state.last_engine_error = None
-                return decision
-            else:
-                print(f"[ADK Warning] Model selected '{chosen_clean}' which is not in {legal}", flush=True)
+            async with asyncio.timeout(8.0):
+                agen = adk_runner.run_async(user_id=user_id, session_id=session_id, new_message=msg)
+                try:
+                    while True:
+                        event = await agen.__anext__()
+                        if event.error_code or event.error_message:
+                            raise RuntimeError(f"ADK Error: {event.error_code} - {event.error_message}")
+                        if event.actions and event.actions.state_delta and "decision" in event.actions.state_delta:
+                            decision = event.actions.state_delta["decision"]
+                        elif event.content and event.content.parts:
+                            for p in event.content.parts:
+                                if p.text and not getattr(p, "thought", False):
+                                    try:
+                                        decision = CatTacticalDecision.model_validate_json(p.text)
+                                    except Exception:
+                                        pass
+                except StopAsyncIteration:
+                    pass
 
-    except Exception as exc:
-        err_msg = str(exc)
-        state.last_engine_source = "heuristic_fallback"
-        state.last_engine_error = err_msg
-        print(f"[ADK Fallback] {type(exc).__name__}: {err_msg[:100]} -> using heuristic brain", flush=True)
+            if isinstance(decision, dict):
+                decision = CatTacticalDecision(**decision)
+
+            if decision and decision.action:
+                chosen_clean = decision.action.strip().lower()
+                if chosen_clean in legal:
+                    decision.action = chosen_clean
+                    state.last_engine_source = "adk_gemini"
+                    state.last_engine_error = None
+                    return decision
+                else:
+                    print(f"[ADK Warning] Model selected '{chosen_clean}' which is not in {legal}", flush=True)
+
+        except Exception as exc:
+            err_msg = str(exc)
+            state.last_engine_source = "heuristic_fallback"
+            state.last_engine_error = err_msg
+            print(f"[ADK Fallback] {type(exc).__name__}: {err_msg[:100]} -> using heuristic brain", flush=True)
 
     return None
 
 
-@app.post("/act", response_model=ActionResponse)
-@app.post("/", response_model=ActionResponse)
-def act(obs: Observation) -> ActionResponse:
+async def act_async(obs: Observation) -> ActionResponse:
     my_id = obs.self.get("id", "cat")
 
     # 1. Evaluate ADK Gemini decision if credentials exist
     adk_decision = None
-    has_env_key = bool(os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY"))
-    has_cloud_auth = bool(os.environ.get("GOOGLE_CLOUD_PROJECT") or os.environ.get("GOOGLE_GENAI_USE_VERTEXAI"))
-    if has_env_key or has_cloud_auth:
-        adk_decision = run_sync(query_adk_gemini(obs))
+    if has_gemini_credentials():
+        adk_decision = await query_adk_gemini(obs)
 
     if adk_decision:
         auto_action = adk_decision.action
@@ -480,6 +520,7 @@ def act(obs: Observation) -> ActionResponse:
     state.latest_response = exchange["response"]
     state.latest_autonomous = exchange["autonomous_decision"]
     state.active_tick = obs.tick
+    state.last_evaluated_tick = obs.tick
     state.total_ticks_processed += 1
 
     state.history.append(exchange)
@@ -489,13 +530,26 @@ def act(obs: Observation) -> ActionResponse:
     return ActionResponse(action=chosen_action, thought=chosen_thought)
 
 
+@app.post("/act", response_model=ActionResponse)
+@app.post("/", response_model=ActionResponse)
+async def act_endpoint(obs: Observation) -> ActionResponse:
+    return await act_async(obs)
+
+
+def act(obs: Observation, use_llm: bool = True) -> ActionResponse:
+    if not use_llm:
+        action, thought, _ = compute_autonomous_decision(obs)
+        return ActionResponse(action=action, thought=thought)
+    return run_sync(act_async(obs))
+
+
 GAME_SERVER_URL = "http://127.0.0.1:8000"
 
 
 async def sync_live_observation(agent_id: Optional[str] = None) -> bool:
     target_id = agent_id or state.agent_id or "cat-1"
     try:
-        async with httpx.AsyncClient(timeout=0.35) as client:
+        async with httpx.AsyncClient(timeout=0.5) as client:
             resp = await client.get(f"{GAME_SERVER_URL}/api/simulations/active/agents/{target_id}/observation")
             if resp.status_code == 200:
                 data = resp.json()
@@ -506,6 +560,7 @@ async def sync_live_observation(agent_id: Optional[str] = None) -> bool:
                 if state.simulation_id and sim_id and state.simulation_id != sim_id:
                     state.history.clear()
                     state.total_ticks_processed = 0
+                    state.last_evaluated_tick = None
                     await reset_adk_session(target_id)
                 state.simulation_id = sim_id
 
@@ -513,6 +568,7 @@ async def sync_live_observation(agent_id: Optional[str] = None) -> bool:
                 if server_tick < last_history_tick:
                     state.history.clear()
                     state.total_ticks_processed = 0
+                    state.last_evaluated_tick = None
                     last_history_tick = 0
                     await reset_adk_session(target_id)
 
@@ -524,6 +580,15 @@ async def sync_live_observation(agent_id: Optional[str] = None) -> bool:
                     upcoming_tick = 1
                 else:
                     upcoming_tick = server_tick
+
+                # If already up to date with this upcoming tick and proposal is present, skip!
+                if (
+                    state.latest_observation is not None
+                    and state.active_tick == upcoming_tick
+                    and state.latest_autonomous is not None
+                    and state.last_evaluated_tick == upcoming_tick
+                ):
+                    return True
 
                 self_info = data.get("self", {})
                 live_obs = {
@@ -544,27 +609,17 @@ async def sync_live_observation(agent_id: Optional[str] = None) -> bool:
                 state.latest_observation = live_obs
                 state.active_tick = upcoming_tick
 
-                # Evaluate proposed autonomous action for this live observation
-                live_obs_obj = Observation(**live_obs)
-                adk_dec = await query_adk_gemini(live_obs_obj)
-                if adk_dec:
-                    state.latest_autonomous = {
-                        "action": adk_dec.action,
-                        "thought": adk_dec.thought,
-                        "meta": {
-                            "phase": adk_dec.strategy or "TACTICAL",
-                            "target_id": adk_dec.target_mouse_id or None,
-                            "engine": "adk_gemini",
-                        },
-                    }
-                else:
+                # If no autonomous preview exists yet (e.g. initial boot before game starts), compute instant heuristic preview
+                if state.latest_autonomous is None:
+                    live_obs_obj = Observation(**live_obs)
                     auto_action, auto_thought, auto_meta = compute_autonomous_decision(live_obs_obj)
-                    auto_meta["engine"] = "heuristic_fallback"
+                    auto_meta["engine"] = "heuristic_preview"
                     state.latest_autonomous = {
                         "action": auto_action,
                         "thought": auto_thought,
                         "meta": auto_meta,
                     }
+                    state.last_evaluated_tick = upcoming_tick
                 return True
     except Exception:
         pass
@@ -576,7 +631,11 @@ async def get_agent_state(sync: bool = False, agent_id: Optional[str] = None) ->
     if sync:
         await sync_live_observation(agent_id)
 
-    has_key = bool(os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY"))
+    has_env_key = bool(os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY"))
+    has_vertex_auth = bool(os.environ.get("GOOGLE_CLOUD_PROJECT") or os.environ.get("GOOGLE_GENAI_USE_VERTEXAI"))
+    has_auth = has_env_key or has_vertex_auth
+    auth_mode = "vertex_ai" if has_vertex_auth else ("api_key" if has_env_key else "none")
+
     return {
         "connected": state.latest_observation is not None,
         "agent_id": state.agent_id,
@@ -590,7 +649,11 @@ async def get_agent_state(sync: bool = False, agent_id: Optional[str] = None) ->
         "history": state.history,
         "brain_engine": state.brain_engine,
         "skills_file": state.skills_file,
-        "has_api_key": has_key,
+        "has_api_key": has_env_key,
+        "has_vertex_auth": has_vertex_auth,
+        "has_auth": has_auth,
+        "auth_mode": auth_mode,
+        "gcp_project": os.environ.get("GOOGLE_CLOUD_PROJECT", ""),
         "last_engine_source": state.last_engine_source,
         "last_engine_error": state.last_engine_error,
     }
@@ -602,9 +665,12 @@ def set_api_key(req: ApiKeyRequest) -> Dict[str, Any]:
     if key:
         os.environ["GEMINI_API_KEY"] = key
         state.last_engine_error = None
+        state.last_engine_source = "adk_gemini"
         return {"status": "ok", "has_api_key": True}
     else:
         os.environ.pop("GEMINI_API_KEY", None)
+        if not has_gemini_credentials():
+            state.last_engine_source = "heuristic_fallback"
         return {"status": "cleared", "has_api_key": False}
 
 

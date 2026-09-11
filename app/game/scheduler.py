@@ -24,6 +24,7 @@ class Scheduler:
         self.round: int = 0
         self.captures: int = 0
         self.events: List[GameEvent] = []
+        self.consecutive_http_errors: dict = {}
 
     def step_logical_clock(self) -> int:
         self.tick += 1
@@ -101,24 +102,29 @@ class Scheduler:
             action_val = None
             if mode == "http":
                 agent_url = self.entity_manager.get_agent_url(cat.id)
-                if agent_url:
+                err_count = self.consecutive_http_errors.get(cat.id, 0)
+                # If agent has failed consecutively, back off and retry every 5 ticks to avoid stalling the simulation loop
+                should_call = (err_count < 2) or (self.tick % 5 == 0)
+                if agent_url and should_call:
                     try:
                         obs = self._build_observation_payload(cat)
-                        async with httpx.AsyncClient(timeout=1.5) as client:
+                        async with httpx.AsyncClient(timeout=3.0) as client:
                             resp = await client.post(agent_url, json=obs)
                             if resp.status_code == 200:
                                 data = resp.json()
                                 action_val = data.get("action")
                                 thought = data.get("thought", "")
+                                self.consecutive_http_errors[cat.id] = 0
                                 print(f"🤖 [HTTP AGENT {cat.id} @ Tick {self.tick}] -> {action_val} | Thought: \"{thought}\"", flush=True)
                     except Exception as err:
-                        print(f"⚠️ [HTTP AGENT {cat.id}] Error contacting {agent_url}: {err}", flush=True)
+                        self.consecutive_http_errors[cat.id] = err_count + 1
+                        print(f"⚠️ [HTTP AGENT {cat.id}] Error contacting {agent_url}: {err} (falling back to fast heuristic)", flush=True)
 
-            # In auto mode (or if HTTP fallback needed), execute cat_agent brain
+            # In auto mode (or if HTTP fallback needed), execute fast in-memory heuristic brain
             if not action_val:
                 obs_payload = self._build_observation_payload(cat)
                 cat_obs = CatObservation(**obs_payload)
-                act_res = cat_agent_act(cat_obs)
+                act_res = cat_agent_act(cat_obs, use_llm=False)
                 action_val = act_res.action
 
             if action_val in [a.value for a in ActionType]:
@@ -154,17 +160,21 @@ class Scheduler:
             action_val = None
             if mode == "http":
                 agent_url = self.entity_manager.get_agent_url(mouse.id)
-                if agent_url:
+                err_count = self.consecutive_http_errors.get(mouse.id, 0)
+                should_call = (err_count < 2) or (self.tick % 5 == 0)
+                if agent_url and should_call:
                     try:
                         obs = self._build_observation_payload(mouse)
-                        async with httpx.AsyncClient(timeout=1.5) as client:
+                        async with httpx.AsyncClient(timeout=3.0) as client:
                             resp = await client.post(agent_url, json=obs)
                             if resp.status_code == 200:
                                 data = resp.json()
                                 action_val = data.get("action")
                                 thought = data.get("thought", "")
+                                self.consecutive_http_errors[mouse.id] = 0
                                 print(f"🤖 [HTTP AGENT {mouse.id} @ Tick {self.tick}] -> {action_val} | Thought: \"{thought}\"", flush=True)
                     except Exception as err:
+                        self.consecutive_http_errors[mouse.id] = err_count + 1
                         print(f"⚠️ [HTTP AGENT {mouse.id}] Error contacting {agent_url}: {err}", flush=True)
 
             # In auto mode (or if HTTP fallback needed), execute mouse_agent brain

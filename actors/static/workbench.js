@@ -176,17 +176,20 @@
       autoDecisionLabel.textContent = `Proposed Auto Action for Tick #${currentTick}:`;
     }
 
-    const hasKey = Boolean(state.has_api_key);
+    const hasAuth = Boolean(state.has_auth || state.has_api_key);
+    const isVertex = state.auth_mode === 'vertex_ai';
     const lastSource = state.last_engine_source;
     if (engineBadge) {
-      if (lastSource === 'adk_gemini' || hasKey) {
-        engineBadge.textContent = '✨ ADK Gemini';
+      if (lastSource === 'adk_gemini' || hasAuth) {
+        engineBadge.textContent = isVertex ? '✨ ADK Gemini (Vertex AI)' : '✨ ADK Gemini';
         engineBadge.className = 'engine-badge adk';
-        engineBadge.title = 'Google ADK Active (gemini-2.5-flash)';
+        engineBadge.title = isVertex
+          ? `Google ADK Active via Vertex AI ADC (${state.brain_engine || 'gemini-2.5-flash'})`
+          : `Google ADK Active (${state.brain_engine || 'gemini-2.5-flash'})`;
       } else {
         engineBadge.textContent = '🤖 Heuristic';
         engineBadge.className = 'engine-badge fallback';
-        engineBadge.title = 'Autonomous Heuristic Brain (Awaiting Gemini API Key)';
+        engineBadge.title = 'Autonomous Heuristic Brain (Awaiting Gemini Credentials)';
       }
     }
 
@@ -216,7 +219,13 @@
       if (tacticalStrategy) tacticalStrategy.textContent = phase;
       if (tacticalTarget) tacticalTarget.textContent = meta.target_id || 'None';
       if (tacticalEngine) {
-        tacticalEngine.textContent = meta.engine === 'adk_gemini' ? 'ADK Gemini' : 'Heuristic';
+        if (meta.engine === 'adk_gemini' || (hasAuth && meta.engine !== 'heuristic_fallback')) {
+          tacticalEngine.textContent = isVertex ? 'ADK Gemini (Vertex AI)' : 'ADK Gemini';
+        } else if (hasAuth && lastSource === 'adk_gemini') {
+          tacticalEngine.textContent = isVertex ? 'ADK Gemini (Vertex AI)' : 'ADK Gemini';
+        } else {
+          tacticalEngine.textContent = 'Heuristic';
+        }
       }
     } else {
       autonomousThought.textContent = 'Standing by for tick...';
@@ -226,7 +235,7 @@
       badgeBrainState.className = 'badge-state badge-roaming';
       if (tacticalStrategy) tacticalStrategy.textContent = '--';
       if (tacticalTarget) tacticalTarget.textContent = 'None';
-      if (tacticalEngine) tacticalEngine.textContent = hasKey ? 'ADK Gemini' : 'Heuristic';
+      if (tacticalEngine) tacticalEngine.textContent = hasAuth ? (isVertex ? 'ADK Gemini (Vertex AI)' : 'ADK Gemini') : 'Heuristic';
     }
 
     // Override mode toggles
@@ -694,12 +703,18 @@
   if (btnConfigKey && apiKeyModal) {
     btnConfigKey.addEventListener('click', () => {
       apiKeyModal.style.display = 'flex';
-      const hasKey = Boolean(cachedState && cachedState.has_api_key);
-      if (hasKey) {
+      const hasAuth = Boolean(cachedState && (cachedState.has_auth || cachedState.has_api_key));
+      const isVertex = cachedState && cachedState.auth_mode === 'vertex_ai';
+      const proj = (cachedState && cachedState.gcp_project) ? ` (Project: ${cachedState.gcp_project})` : '';
+
+      if (isVertex) {
+        apiKeyStatus.textContent = `✓ Active Vertex AI ADC credentials detected${proj}.`;
+        apiKeyStatus.style.color = 'var(--success-color)';
+      } else if (hasAuth) {
         apiKeyStatus.textContent = '✓ Active Gemini API Key detected on agent server.';
         apiKeyStatus.style.color = 'var(--success-color)';
       } else {
-        apiKeyStatus.textContent = '⚠️ No API key set. Operating with Heuristic Tactical Fallback.';
+        apiKeyStatus.textContent = '⚠️ No Gemini credentials set. Operating with Heuristic Tactical Fallback.';
         apiKeyStatus.style.color = 'var(--warning-color)';
       }
     });
