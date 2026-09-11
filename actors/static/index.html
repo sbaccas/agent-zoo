@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cat Agent Workbench (Port 8001)</title>
+  <link rel="stylesheet" href="/static/workbench.css">
+</head>
+<body>
+  <div class="workbench-layout">
+    <!-- Header -->
+    <header class="wb-header">
+      <div class="wb-header-left">
+        <div class="wb-title">
+          <span>🐱 Cat Agent Workbench</span>
+          <span class="wb-port-pill">:8001</span>
+        </div>
+        <div id="statusBadge" class="wb-status-badge waiting">
+          <span class="status-dot"></span>
+          <span id="statusText">Waiting for Game Server</span>
+        </div>
+        <a href="http://127.0.0.1:8000" target="_blank" rel="noreferrer" class="wb-server-link" title="Open Game Server Dashboard">
+          Authoritative Server (:8000) ↗
+        </a>
+      </div>
+
+      <div class="wb-header-right">
+        <div class="pill-metric">
+          Active Tick: <strong id="headerTick">--</strong>
+        </div>
+        <div class="pill-metric">
+          Cycles Processed: <strong id="headerCycles">0</strong>
+        </div>
+        <button id="btnTogglePolling" class="btn btn-sm" title="Toggle automatic polling">
+          <span id="pollingDot" class="status-dot" style="background-color: #16a34a;"></span>
+          <span id="pollingText">Live Polling</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- Past Inspection Banner -->
+    <div id="inspectionBanner" class="inspection-banner">
+      <div>
+        <span>🔍 Inspecting Historical <strong>Tick #<span id="inspectingTickNumber">--</span></strong></span>
+        <span style="font-size: 0.75rem; margin-left: 8px; opacity: 0.85;">(Viewing recorded payload; live updates paused)</span>
+      </div>
+      <button id="btnReturnLive" class="btn btn-sm btn-primary">◀ Return to Live Stream</button>
+    </div>
+
+    <!-- Main Container -->
+    <main class="wb-container">
+      <!-- 3-Box Upper Grid -->
+      <section class="wb-grid-3">
+        <!-- Box 1: Incoming Observation -->
+        <article class="wb-card">
+          <div class="wb-card-header">
+            <div class="wb-card-title">
+              <span>📥 1. Incoming Observation</span>
+              <span class="chip" style="font-size: 0.7rem;">Server ➔ Cat</span>
+            </div>
+            <div class="wb-card-actions">
+              <button id="btnCopyObs" class="btn btn-sm" title="Copy raw Observation JSON">📋 Copy JSON</button>
+            </div>
+          </div>
+          <div class="wb-card-body">
+            <div id="obsChips" class="chips-row">
+              <span class="chip">Position: <strong id="chipPos">--</strong></span>
+              <span class="chip">Facing: <strong id="chipFacing">--</strong></span>
+              <span class="chip">HP: <strong id="chipHp">--</strong></span>
+              <span class="chip">Visible: <strong id="chipVisible">--</strong></span>
+            </div>
+            <div class="code-viewer-container">
+              <pre id="obsJsonViewer" class="code-viewer">// Waiting for observations from simulation server...</pre>
+            </div>
+          </div>
+        </article>
+
+        <!-- Box 2: Brain Decision & Override -->
+        <article class="wb-card">
+          <div class="wb-card-header">
+            <div class="wb-card-title">
+              <span>🧠 2. Brain Decision & Override</span>
+            </div>
+            <div class="wb-card-actions">
+              <span id="badgeBrainState" class="badge-state badge-roaming">IDLE</span>
+            </div>
+          </div>
+          <div class="wb-card-body">
+            <!-- Autonomous thought stream -->
+            <div class="thought-box">
+              <div class="thought-label">Autonomous Rationale</div>
+              <div id="autonomousThought" class="thought-text">Standing by for tick...</div>
+            </div>
+
+            <div class="autonomous-decision-row">
+              <div class="autonomous-decision-label">Proposed Auto Action:</div>
+              <div id="autoActionPill" class="action-pill-lg">--</div>
+            </div>
+
+            <!-- Manual Override Controls -->
+            <div class="override-section">
+              <div class="override-header">
+                <span class="override-title">Manual Override for Next Tick</span>
+                <div class="override-mode-toggles">
+                  <button id="btnModeOnce" class="mode-toggle-btn active" title="Override triggers once on next tick, then clears">One-Shot</button>
+                  <button id="btnModeSticky" class="mode-toggle-btn" title="Override repeats every tick until manually cleared">Sticky</button>
+                </div>
+              </div>
+
+              <!-- D-Pad Grid -->
+              <div class="dpad-container">
+                <div class="dpad-grid">
+                  <div></div>
+                  <button id="btnDpadNorth" class="dpad-btn" data-action="north" title="North (W / Up)">
+                    ▲<span class="btn-sub">N (W)</span>
+                  </button>
+                  <div></div>
+                  <button id="btnDpadWest" class="dpad-btn" data-action="west" title="West (A / Left)">
+                    ◀<span class="btn-sub">W (A)</span>
+                  </button>
+                  <button id="btnDpadStay" class="dpad-btn" data-action="stay" title="Stay (S)">
+                    ●<span class="btn-sub">STAY</span>
+                  </button>
+                  <button id="btnDpadEast" class="dpad-btn" data-action="east" title="East (D / Right)">
+                    ▶<span class="btn-sub">E (D)</span>
+                  </button>
+                  <div></div>
+                  <button id="btnDpadSouth" class="dpad-btn" data-action="south" title="South (Z / Down)">
+                    ▼<span class="btn-sub">S (Z)</span>
+                  </button>
+                  <div></div>
+                </div>
+                <button id="btnAttackOverride" class="btn-attack-override" data-action="attack" title="Slash Attack (Spacebar)">
+                  ⚔️ Slash Attack (Space)
+                </button>
+              </div>
+
+              <!-- Override status feedback -->
+              <div id="overrideStatusBox" class="override-status-box">
+                <span id="overrideStatusText">Autonomous AI in control</span>
+                <button id="btnClearOverride" class="btn btn-sm btn-danger-outline" style="display: none;">✕ Clear</button>
+              </div>
+            </div>
+          </div>
+        </article>
+
+        <!-- Box 3: Outgoing Action Payload -->
+        <article class="wb-card">
+          <div class="wb-card-header">
+            <div class="wb-card-title">
+              <span>📤 3. Outgoing Action</span>
+              <span class="chip" style="font-size: 0.7rem;">Cat ➔ Server</span>
+            </div>
+            <div class="wb-card-actions">
+              <button id="btnCopyResp" class="btn btn-sm" title="Copy raw ActionResponse JSON">📋 Copy JSON</button>
+            </div>
+          </div>
+          <div class="wb-card-body">
+            <div id="actionSummaryCard" class="action-summary-card">
+              <div class="action-card-header">
+                <div id="responseActionPill" class="action-pill-lg">--</div>
+                <span id="responseSourceBadge" class="history-source-badge auto">Auto</span>
+              </div>
+              <div id="responseThought" class="action-thought-display">No actions returned yet</div>
+            </div>
+            <div class="code-viewer-container">
+              <pre id="respJsonViewer" class="code-viewer">// Waiting to send action response...</pre>
+            </div>
+          </div>
+        </article>
+      </section>
+
+      <!-- Box 4: Trajectory Conversation History (Bottom Full-Width) -->
+      <section class="wb-card history-card">
+        <div class="wb-card-header">
+          <div class="wb-card-title">
+            <span>📜 4. Trajectory Conversation History</span>
+            <span id="historyCountPill" class="chip">0 ticks</span>
+          </div>
+          <div class="wb-card-actions">
+            <button id="btnClearHistory" class="btn btn-sm btn-danger-outline" title="Clear recorded history on agent server">🗑️ Clear History</button>
+            <button id="btnExportJson" class="btn btn-sm" title="Export trajectory history as JSON file">📥 Export JSON</button>
+          </div>
+        </div>
+        <div class="wb-card-body" style="padding: 0;">
+          <div class="table-wrapper">
+            <table class="history-table">
+              <thead>
+                <tr>
+                  <th style="width: 70px;">Tick</th>
+                  <th style="width: 90px;">Time</th>
+                  <th style="width: 100px;">Source</th>
+                  <th style="width: 100px;">Action</th>
+                  <th>Perception & Rationale</th>
+                  <th style="width: 80px; text-align: center;">Inspect</th>
+                </tr>
+              </thead>
+              <tbody id="historyTableBody">
+                <tr>
+                  <td colspan="6" style="text-align: center; color: var(--text-muted); padding: 24px;">
+                    No conversation history recorded yet. Connect cat-1 on the Game Server and advance ticks to stream events.
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="/static/workbench.js"></script>
+</body>
+</html>

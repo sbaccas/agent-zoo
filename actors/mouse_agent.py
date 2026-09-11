@@ -68,4 +68,6 @@ def act(obs: Observation) -> ActionResponse:
 
 if __name__ == "__main__":
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8002
+    print(f"🐭 Mouse Agent Service running on http://127.0.0.1:{port} (waiting for observations on /act)...", flush=True)
     uvicorn.run(app, host="127.0.0.1", port=port, log_level="warning")
+

@@ -44,8 +44,10 @@
   const btnApplyHttpUrl = document.getElementById('btnApplyHttpUrl');
   const agentHud = document.getElementById('agentHud');
   const hudAgentId = document.getElementById('hudAgentId');
+  const btnDeselectAgent = document.getElementById('btnDeselectAgent');
   const hudAgentFacing = document.getElementById('hudAgentFacing');
   const hudVisionList = document.getElementById('hudVisionList');
+
   const dpadUp = document.getElementById('dpadUp');
   const dpadDown = document.getElementById('dpadDown');
   const dpadLeft = document.getElementById('dpadLeft');
@@ -340,14 +342,25 @@
   }
 
   async function selectAgent(agentId) {
-    selectedAgentId = agentId;
-    if (!agentId) {
+    const prevAgentId = selectedAgentId;
+    const prevMode = selectedAgentMode;
+
+    // If there was a previously selected animal and it was in manual mode, revert it to auto
+    if (prevAgentId && prevAgentId !== agentId && prevMode === 'manual') {
+      await apiCall(`/api/simulations/${currentSimId}/agents/${prevAgentId}/register`, 'POST', { mode: 'auto' });
+    }
+
+    selectedAgentId = agentId || null;
+
+    if (!selectedAgentId) {
+      selectedAgentMode = 'auto';
+      if (agentSelect) agentSelect.value = '';
       if (agentHud) agentHud.style.display = 'none';
       if (currentState) renderBoard(currentState);
       return;
     }
 
-    if (agentSelect) agentSelect.value = agentId;
+    if (agentSelect) agentSelect.value = selectedAgentId;
     if (agentHud) agentHud.style.display = 'block';
 
     // Immediately set to manual mode & pause continuous timer so player controls the turns
@@ -360,6 +373,7 @@
     refreshAgentHUD();
     if (currentState) renderBoard(currentState);
   }
+
 
   async function refreshAgentHUD() {
     if (!selectedAgentId || isFetchingObs) return;
@@ -497,12 +511,18 @@
     }
     if (closest) {
       selectAgent(closest.id);
+    } else if (selectedAgentId) {
+      // Clicked on empty space: deselect current animal and release to auto
+      selectAgent(null);
     }
   });
 
   // Agent Inspector Listeners
   if (agentSelect) {
     agentSelect.addEventListener('change', () => selectAgent(agentSelect.value));
+  }
+  if (btnDeselectAgent) {
+    btnDeselectAgent.addEventListener('click', () => selectAgent(null));
   }
   if (btnModeAuto) {
     btnModeAuto.addEventListener('click', () => setAgentMode('auto'));
@@ -555,8 +575,14 @@
   });
 
   // Event Listeners for Simulation Administration
-  btnStart.addEventListener('click', () => triggerAction(`/api/simulations/${currentSimId}/start`));
+  btnStart.addEventListener('click', async () => {
+    if (selectedAgentId && selectedAgentMode === 'manual') {
+      await setAgentMode('auto');
+    }
+    triggerAction(`/api/simulations/${currentSimId}/start`);
+  });
   btnPause.addEventListener('click', () => triggerAction(`/api/simulations/${currentSimId}/pause`));
+
   if (btnStepBack) {
     btnStepBack.addEventListener('click', () => triggerAction(`/api/simulations/${currentSimId}/step_back`));
   }
