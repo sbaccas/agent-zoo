@@ -100,17 +100,17 @@
       ctx.stroke();
     }
 
-    // Render Recent Capture Markers
+    // Render Recent Capture Marker (only on the exact tick it occurs)
     if (state.recent_events) {
       for (const ev of state.recent_events) {
-        if (ev.event_type === 'capture' && ev.position && ev.tick >= (state.tick - 1)) {
+        if (ev.event_type === 'capture' && ev.position && ev.tick === state.tick) {
           const cx = ev.position.x * cellW + cellW / 2;
           const cy = ev.position.y * cellH + cellH / 2;
           ctx.save();
-          ctx.strokeStyle = '#ef4444';
+          ctx.strokeStyle = '#dc2626';
           ctx.lineWidth = 2;
           ctx.beginPath();
-          ctx.arc(cx, cy, Math.max(10, cellW * 1.5), 0, Math.PI * 2);
+          ctx.arc(cx, cy, Math.max(8, cellW * 1.2), 0, Math.PI * 2);
           ctx.stroke();
           ctx.restore();
         }
@@ -164,11 +164,14 @@
     }
   }
 
+  let lastEventSignature = '';
   function renderEventFeed(events) {
     if (!eventFeedList) return;
-    eventFeedList.replaceChildren();
 
     if (!events || events.length === 0) {
+      if (lastEventSignature === 'empty') return;
+      lastEventSignature = 'empty';
+      eventFeedList.replaceChildren();
       const empty = document.createElement('div');
       empty.className = 'event-empty';
       empty.textContent = 'No events yet. Click Start or Step!';
@@ -177,6 +180,13 @@
       return;
     }
 
+    const sig = events.map(e => `${e.tick}:${e.actor_id}:${e.event_type}`).join('|');
+    if (sig === lastEventSignature) {
+      return; // Do not touch DOM if events have not changed
+    }
+    lastEventSignature = sig;
+
+    eventFeedList.replaceChildren();
     if (eventCount) {
       eventCount.textContent = `${events.length} events`;
     }

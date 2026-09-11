@@ -374,12 +374,6 @@ body {
   line-height: 1.35;
   background-color: #f8fafc;
   border: 1px solid var(--border-color);
-  animation: fadeIn 0.2s ease-in;
-}
-
-@keyframes fadeIn {
-  from { opacity: 0; transform: translateY(-4px); }
-  to { opacity: 1; transform: translateY(0); }
 }
 
 .event-item.event-capture {
