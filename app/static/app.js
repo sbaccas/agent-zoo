@@ -1,4 +1,4 @@
-// Cat & Mouse Simulation Frontend Controller
+// Cat & Mouse Simulation Frontend Controller (Light Mode + Orientation)
 
 (function () {
   'use strict';
@@ -31,23 +31,26 @@
   const canvasWrapper = document.getElementById('canvasWrapper');
 
   let currentSimId = 'active';
-  let pollInterval = null;
+  let pollTimeout = null;
   let currentState = null;
 
-  // Render colors
-  const COLOR_BG = '#0c0e12';
-  const COLOR_GRID_LINE = 'rgba(255, 255, 255, 0.04)';
-  const COLOR_CAT = '#ff6b4a';
-  const COLOR_MOUSE = '#00d2ff';
+  // Light mode colors
+  const COLOR_BG = '#ffffff';
+  const COLOR_GRID_LINE = 'rgba(203, 213, 225, 0.4)';
+  const COLOR_CAT = '#dc2626';       // Crimson Red
+  const COLOR_MOUSE = '#0284c7';     // Sky Blue
+  const COLOR_CAT_BG = 'rgba(220, 38, 38, 0.12)';
+  const COLOR_MOUSE_BG = 'rgba(2, 132, 199, 0.12)';
+  const COLOR_POINTER_CAT = '#b91c1c';
+  const COLOR_POINTER_MOUSE = '#0369a1';
 
-  // Resize canvas to match wrapper bounds maintaining aspect ratio
   function resizeCanvas() {
     if (!canvasWrapper) return;
     const rect = canvasWrapper.getBoundingClientRect();
-    const size = Math.min(rect.width - 20, rect.height - 20, 1000);
+    const size = Math.min(rect.width - 24, rect.height - 24, 1000);
     if (size > 100) {
-      canvas.width = size;
-      canvas.height = size;
+      canvas.width = Math.floor(size);
+      canvas.height = Math.floor(size);
       if (currentState) {
         renderBoard(currentState);
       }
@@ -55,6 +58,16 @@
   }
 
   window.addEventListener('resize', resizeCanvas);
+
+  function getFacingAngle(facing) {
+    switch (facing) {
+      case 'north': return -Math.PI / 2;
+      case 'south': return Math.PI / 2;
+      case 'east': return 0;
+      case 'west': return Math.PI;
+      default: return 0;
+    }
+  }
 
   function renderBoard(state) {
     const width = state.width || 100;
@@ -66,7 +79,7 @@
     ctx.fillStyle = COLOR_BG;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    // Subtle grid lines (every 10 tiles for 100x100)
+    // Grid lines
     ctx.strokeStyle = COLOR_GRID_LINE;
     ctx.lineWidth = 1;
     const step = width <= 20 ? 1 : 10;
@@ -85,28 +98,48 @@
 
     // Render Entities
     const entities = state.entities || [];
+    const fontSize = Math.max(10, Math.floor(cellW * 1.3));
+
     for (let i = 0; i < entities.length; i++) {
       const e = entities[i];
       if (!e.alive) continue;
 
-      const px = e.position.x * cellW;
-      const py = e.position.y * cellH;
+      const cx = e.position.x * cellW + cellW / 2;
+      const cy = e.position.y * cellH + cellH / 2;
+      const isCat = (e.type === 'cat');
+      const angle = getFacingAngle(e.facing || 'north');
 
-      if (e.type === 'cat') {
-        ctx.fillStyle = COLOR_CAT;
-        // Draw slightly larger marker for Cat
-        const radius = Math.max(2.5, cellW * 0.7);
-        ctx.beginPath();
-        ctx.arc(px + cellW / 2, py + cellH / 2, radius, 0, Math.PI * 2);
-        ctx.fill();
-      } else {
-        ctx.fillStyle = COLOR_MOUSE;
-        // Draw marker for Mouse
-        const radius = Math.max(1.5, cellW * 0.45);
-        ctx.beginPath();
-        ctx.arc(px + cellW / 2, py + cellH / 2, radius, 0, Math.PI * 2);
-        ctx.fill();
-      }
+      ctx.save();
+      ctx.translate(cx, cy);
+
+      // Subtle background glow disc
+      ctx.fillStyle = isCat ? COLOR_CAT_BG : COLOR_MOUSE_BG;
+      const bgRadius = isCat ? Math.max(7, cellW * 0.9) : Math.max(5, cellW * 0.7);
+      ctx.beginPath();
+      ctx.arc(0, 0, bgRadius, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Directional pointer / nose indicator
+      ctx.save();
+      ctx.rotate(angle);
+      ctx.fillStyle = isCat ? COLOR_POINTER_CAT : COLOR_POINTER_MOUSE;
+      const pointerDist = bgRadius + 2;
+      ctx.beginPath();
+      ctx.moveTo(pointerDist + 3, 0);
+      ctx.lineTo(pointerDist - 3, -3);
+      ctx.lineTo(pointerDist - 3, 3);
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+
+      // Draw ASCII Character 'C' or 'M'
+      ctx.fillStyle = isCat ? COLOR_CAT : COLOR_MOUSE;
+      ctx.font = `bold ${fontSize}px monospace`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(isCat ? 'C' : 'M', 0, 1);
+
+      ctx.restore();
     }
   }
 
@@ -140,18 +173,13 @@
     try {
       const options = {
         method: method,
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
       };
       if (body) {
         options.body = JSON.stringify(body);
       }
       const res = await fetch(endpoint, options);
-      if (!res.ok) {
-        console.error('API call failed', res.status, res.statusText);
-        return null;
-      }
+      if (!res.ok) return null;
       return await res.json();
     } catch (err) {
       console.error('API error:', err);
@@ -159,77 +187,49 @@
     }
   }
 
-  async function fetchState() {
+  // Smart adaptive polling
+  async function pollLoop() {
     const data = await apiCall(`/api/simulations/${currentSimId}/state`, 'GET');
     if (data) {
       updateUI(data);
     }
+
+    // If running, poll rapidly (150ms); if paused/stopped, sleep longer (2000ms) to avoid log spam
+    const delay = (currentState && currentState.status === 'running') ? 150 : 2000;
+    pollTimeout = setTimeout(pollLoop, delay);
+  }
+
+  async function triggerAction(endpoint, body = null) {
+    const data = await apiCall(endpoint, 'POST', body);
+    if (data) {
+      updateUI(data);
+    }
+    // If state changed, wake up polling loop immediately
+    if (pollTimeout) clearTimeout(pollTimeout);
+    pollLoop();
   }
 
   // Event Listeners
-  btnStart.addEventListener('click', async () => {
-    const data = await apiCall(`/api/simulations/${currentSimId}/start`);
-    if (data) updateUI(data);
-  });
-
-  btnPause.addEventListener('click', async () => {
-    const data = await apiCall(`/api/simulations/${currentSimId}/pause`);
-    if (data) updateUI(data);
-  });
-
-  btnStep.addEventListener('click', async () => {
-    const data = await apiCall(`/api/simulations/${currentSimId}/step`);
-    if (data) updateUI(data);
-  });
-
-  btnStop.addEventListener('click', async () => {
-    const data = await apiCall(`/api/simulations/${currentSimId}/stop`);
-    if (data) updateUI(data);
-  });
-
-  btnReset.addEventListener('click', async () => {
-    const data = await apiCall(`/api/simulations/${currentSimId}/reset`);
-    if (data) updateUI(data);
-  });
+  btnStart.addEventListener('click', () => triggerAction(`/api/simulations/${currentSimId}/start`));
+  btnPause.addEventListener('click', () => triggerAction(`/api/simulations/${currentSimId}/pause`));
+  btnStep.addEventListener('click', () => triggerAction(`/api/simulations/${currentSimId}/step`));
+  btnStop.addEventListener('click', () => triggerAction(`/api/simulations/${currentSimId}/stop`));
+  btnReset.addEventListener('click', () => triggerAction(`/api/simulations/${currentSimId}/reset`));
 
   speedSelect.addEventListener('change', async () => {
     const rate = parseFloat(speedSelect.value);
-    await apiCall(`/api/simulations/${currentSimId}/tick_rate`, 'POST', { tick_rate: rate });
+    await triggerAction(`/api/simulations/${currentSimId}/tick_rate`, { tick_rate: rate });
   });
 
-  btnAddCat1.addEventListener('click', async () => {
-    await apiCall(`/api/simulations/${currentSimId}/entities`, 'POST', { species: 'cat', delta: 1 });
-    await fetchState();
-  });
+  btnAddCat1.addEventListener('click', () => triggerAction(`/api/simulations/${currentSimId}/entities`, { species: 'cat', delta: 1 }));
+  btnAddCat10.addEventListener('click', () => triggerAction(`/api/simulations/${currentSimId}/entities`, { species: 'cat', delta: 10 }));
+  btnRemCat1.addEventListener('click', () => triggerAction(`/api/simulations/${currentSimId}/entities`, { species: 'cat', delta: -1 }));
 
-  btnAddCat10.addEventListener('click', async () => {
-    await apiCall(`/api/simulations/${currentSimId}/entities`, 'POST', { species: 'cat', delta: 10 });
-    await fetchState();
-  });
-
-  btnRemCat1.addEventListener('click', async () => {
-    await apiCall(`/api/simulations/${currentSimId}/entities`, 'POST', { species: 'cat', delta: -1 });
-    await fetchState();
-  });
-
-  btnAddMouse10.addEventListener('click', async () => {
-    await apiCall(`/api/simulations/${currentSimId}/entities`, 'POST', { species: 'mouse', delta: 10 });
-    await fetchState();
-  });
-
-  btnAddMouse50.addEventListener('click', async () => {
-    await apiCall(`/api/simulations/${currentSimId}/entities`, 'POST', { species: 'mouse', delta: 50 });
-    await fetchState();
-  });
-
-  btnRemMouse10.addEventListener('click', async () => {
-    await apiCall(`/api/simulations/${currentSimId}/entities`, 'POST', { species: 'mouse', delta: -10 });
-    await fetchState();
-  });
+  btnAddMouse10.addEventListener('click', () => triggerAction(`/api/simulations/${currentSimId}/entities`, { species: 'mouse', delta: 10 }));
+  btnAddMouse50.addEventListener('click', () => triggerAction(`/api/simulations/${currentSimId}/entities`, { species: 'mouse', delta: 50 }));
+  btnRemMouse10.addEventListener('click', () => triggerAction(`/api/simulations/${currentSimId}/entities`, { species: 'mouse', delta: -10 }));
 
   // Init
   resizeCanvas();
-  fetchState();
-  // Poll state every 150ms for responsive updates
-  pollInterval = setInterval(fetchState, 150);
+  pollLoop();
 })();

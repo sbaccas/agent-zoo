@@ -1,7 +1,7 @@
 import pytest
 from app.game.world import World
 from app.models.action import ActionType
-from app.models.entity import Position
+from app.models.entity import Direction, Position
 from app.models.simulation import Topology
 
 
@@ -37,3 +37,25 @@ def test_torus_topology_wrapping():
     next_pos = world.get_next_position(Position(x=0, y=50), ActionType.WEST)
     assert next_pos.x == 99
     assert next_pos.y == 50
+
+
+def test_directional_fov():
+    world = World(width=50, height=50, topology=Topology.BOUNDED)
+    pos = Position(x=10, y=10)
+    # Looking East: forward tiles should have x > 10 and not x < 10
+    fov = world.get_forward_fov_tiles(pos, Direction.EAST, distance=4)
+    assert len(fov) > 0
+    for tx, ty in fov:
+        assert tx > 10, f"FoV tile ({tx}, {ty}) should be in front (x > 10)"
+        assert tx <= 14, f"FoV tile ({tx}, {ty}) should be within 4 tiles"
+
+
+def test_slash_aoe():
+    world = World(width=50, height=50, topology=Topology.BOUNDED)
+    pos = Position(x=10, y=10)
+    # Looking North: forward tiles should have y < 10, strictly in front
+    aoe = world.get_slash_aoe_tiles(pos, Direction.NORTH, range_tiles=2)
+    assert len(aoe) > 0
+    for tx, ty in aoe:
+        assert ty < 10, f"Slash AoE tile ({tx}, {ty}) should be in front (y < 10)"
+        assert ty >= 8, f"Slash AoE tile ({tx}, {ty}) should be within reach of 2 tiles"

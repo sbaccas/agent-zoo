@@ -1,6 +1,6 @@
 import random
-from typing import Dict, List, Optional
-from app.models.entity import Entity, EntityType, Position
+from typing import Dict, List, Optional, Tuple
+from app.models.entity import Direction, Entity, EntityType, Position
 from app.models.simulation import SpeciesConfig
 from app.game.world import World
 
@@ -16,6 +16,7 @@ class EntityManager:
         self,
         entity_type: EntityType,
         pos: Optional[Position] = None,
+        facing: Optional[Direction] = None,
     ) -> Entity:
         type_key = entity_type.value
         seq = self._next_id.get(type_key, 1)
@@ -28,6 +29,9 @@ class EntityManager:
                 y=random.randint(0, self.world.height - 1),
             )
 
+        if facing is None:
+            facing = random.choice([Direction.NORTH, Direction.SOUTH, Direction.EAST, Direction.WEST])
+
         weight = 1
         if type_key in self.species_config:
             weight = self.species_config[type_key].weight
@@ -36,6 +40,7 @@ class EntityManager:
             id=entity_id,
             type=entity_type,
             position=pos,
+            facing=facing,
             alive=True,
             weight=weight,
         )
@@ -66,3 +71,34 @@ class EntityManager:
 
     def count_by_type(self, entity_type: EntityType) -> int:
         return sum(1 for e in self.entities.values() if e.type == entity_type and e.alive)
+
+    def get_entities_at(self, x: int, y: int) -> List[Entity]:
+        return [e for e in self.entities.values() if e.alive and e.position.x == x and e.position.y == y]
+
+    def displace_entity(self, entity: Entity, bounce_dist: int = 2) -> Position:
+        """
+        Displaces / bounces an entity away by 1-2 tiles into a valid open adjacent direction.
+        Updates entity position and facing.
+        """
+        dirs = [
+            (Direction.NORTH, 0, -bounce_dist),
+            (Direction.SOUTH, 0, bounce_dist),
+            (Direction.EAST, bounce_dist, 0),
+            (Direction.WEST, -bounce_dist, 0),
+            (Direction.NORTH, 0, -1),
+            (Direction.SOUTH, 0, 1),
+            (Direction.EAST, 1, 0),
+            (Direction.WEST, -1, 0),
+        ]
+        random.shuffle(dirs)
+
+        for facing, dx, dy in dirs:
+            nx = entity.position.x + dx
+            ny = entity.position.y + dy
+            if self.world.is_in_bounds(nx, ny):
+                entity.position = Position(x=nx, y=ny)
+                entity.facing = facing
+                return entity.position
+
+        # If trapped or on border, attempt standard 1-step move
+        return entity.position

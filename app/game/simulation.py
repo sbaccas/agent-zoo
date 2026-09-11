@@ -29,17 +29,16 @@ class Simulation:
             world=self.world,
             species_config=self.config.species,
         )
-        self.action_handler = ActionHandler(self.world)
-        self.scheduler = Scheduler(self.world, self.entity_manager)
+        self.action_handler = ActionHandler(self.world, self.entity_manager)
+        self.scheduler = Scheduler(self.world, self.entity_manager, self.action_handler)
 
         self.status = SimulationStatus.CREATED
-        self.captures = 0
         self._loop_task: Optional[asyncio.Task] = None
         self._lock = asyncio.Lock()
 
         # Initialize initial populations
-        cats = self.config.populations.get("cats", 10)
-        mice = self.config.populations.get("mice", 100)
+        cats = self.config.populations.get("cats", 2)
+        mice = self.config.populations.get("mice", 10)
         self.entity_manager.spawn_population(EntityType.CAT, cats)
         self.entity_manager.spawn_population(EntityType.MOUSE, mice)
 
@@ -63,7 +62,7 @@ class Simulation:
             tick_rate=self.config.tick_rate,
             cat_count=self.entity_manager.count_by_type(EntityType.CAT),
             mouse_count=self.entity_manager.count_by_type(EntityType.MOUSE),
-            captures=self.captures,
+            captures=self.scheduler.captures,
             entities=self.entity_manager.get_alive_entities(),
         )
 
@@ -118,15 +117,17 @@ class Simulation:
 
             self.scheduler.tick = 0
             self.scheduler.round = 0
-            self.captures = 0
+            self.scheduler.captures = 0
             self.status = SimulationStatus.CREATED
 
             # Reset entity manager
             self.entity_manager = EntityManager(self.world, self.config.species)
+            self.action_handler = ActionHandler(self.world, self.entity_manager)
             self.scheduler.entity_manager = self.entity_manager
+            self.scheduler.action_handler = self.action_handler
 
-            cats = self.config.populations.get("cats", 10)
-            mice = self.config.populations.get("mice", 100)
+            cats = self.config.populations.get("cats", 2)
+            mice = self.config.populations.get("mice", 10)
             self.entity_manager.spawn_population(EntityType.CAT, cats)
             self.entity_manager.spawn_population(EntityType.MOUSE, mice)
 
