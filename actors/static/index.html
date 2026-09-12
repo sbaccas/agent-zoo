@@ -15,12 +15,25 @@
           <span>🐱 Cat Agent Workbench</span>
           <span class="wb-port-pill">:8001</span>
         </div>
-        <div id="statusBadge" class="wb-status-badge waiting">
+        <div id="statusBadge" class="wb-status-badge waiting" title="Game Server Connection Status">
           <span class="status-dot"></span>
-          <span id="statusText">Waiting for Game Server</span>
+          <span id="statusText">Disconnected</span>
         </div>
-        <a href="http://127.0.0.1:8000" target="_blank" rel="noreferrer" class="wb-server-link" title="Open Game Server Dashboard">
-          Authoritative Server (:8000) ↗
+        <div class="cat-select-wrapper" style="display: flex; align-items: center; gap: 4px;" title="Select Cat Entity to bind to">
+          <label for="selectCatEntity" style="font-size: 0.75rem; color: var(--text-muted); font-weight: 600;">Cat:</label>
+          <select id="selectCatEntity" class="form-input" style="padding: 4px 8px; font-size: 0.8rem; font-family: var(--font-mono); border-radius: 6px; background: var(--bg-card); color: var(--text-main); border: 1px solid var(--border-dark); cursor: pointer;">
+            <option value="cat-1">cat-1</option>
+            <option value="cat-2">cat-2</option>
+          </select>
+        </div>
+        <button id="btnConnectServer" class="btn btn-sm btn-primary" title="Connect / Disconnect WebSocket connection to Game Server">
+          <span id="connectBtnIcon">🔌</span> <span id="connectBtnText">Connect</span>
+        </button>
+        <button id="btnChooseServer" class="btn btn-sm" title="Choose or enter Game Server URL">
+          🌐 <span id="currentServerLabel">127.0.0.1:8000</span> ▾
+        </button>
+        <a id="serverLink" href="http://127.0.0.1:8000" target="_blank" rel="noreferrer" class="wb-server-link" title="Open Game Server Dashboard">
+          Server (:8000) ↗
         </a>
       </div>
 
@@ -262,6 +275,61 @@
       <div class="wb-modal-footer">
         <button id="btnClearApiKey" class="btn btn-sm btn-danger-outline">Clear Key</button>
         <button id="btnSaveApiKey" class="btn btn-sm btn-primary">Save Key</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Server Selection Modal -->
+  <div id="serverModal" class="wb-modal-overlay" style="display: none;">
+    <div class="wb-modal-dialog">
+      <div class="wb-modal-header">
+        <div class="wb-modal-title">🌐 Choose Game Server (WebSocket)</div>
+        <button id="btnCloseServer" class="btn btn-sm" title="Close modal">✕</button>
+      </div>
+      <div class="wb-modal-body">
+        <p style="font-size: 0.82rem; color: var(--text-secondary); margin-bottom: 12px; line-height: 1.4;">
+          The Cat Agent connects outbound to the Game Server via WebSockets to receive observations and stream moves in real-time.
+        </p>
+
+        <!-- Quick Presets -->
+        <div style="margin-bottom: 14px;">
+          <label style="font-size: 0.8rem; font-weight: 600; display: block; margin-bottom: 6px;">Quick Presets:</label>
+          <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+            <button type="button" id="btnPresetLocal" class="btn btn-sm">Local Server (:8000)</button>
+            <button type="button" id="btnPresetLocalhost" class="btn btn-sm">Localhost (:8000)</button>
+          </div>
+        </div>
+
+        <!-- Server URL input -->
+        <div class="form-group" style="margin-bottom: 12px;">
+          <label for="inputServerUrl" style="font-size: 0.8rem; font-weight: 600; display: block; margin-bottom: 6px;">Game Server Address / WebSocket URL:</label>
+          <input type="text" id="inputServerUrl" class="form-input" placeholder="ws://127.0.0.1:8000/ws/agents" style="width: 100%; padding: 8px 10px; border-radius: 6px; border: 1px solid var(--border-dark); font-family: var(--font-mono); font-size: 0.85rem;">
+          <span style="font-size: 0.72rem; color: var(--text-muted); display: block; margin-top: 4px;">
+            Supports <code>ws://host:port/ws/agents</code>, <code>http://host:port</code>, or plain <code>host:port</code>.
+          </span>
+        </div>
+
+        <!-- Target Cat Entity Selection -->
+        <div class="form-group" style="margin-bottom: 12px;">
+          <label for="modalSelectCatEntity" style="font-size: 0.8rem; font-weight: 600; display: block; margin-bottom: 6px;">Target Cat Entity:</label>
+          <select id="modalSelectCatEntity" class="form-input" style="width: 100%; padding: 8px 10px; border-radius: 6px; border: 1px solid var(--border-dark); font-family: var(--font-mono); font-size: 0.85rem; background: var(--bg-card); color: var(--text-main); cursor: pointer;">
+            <option value="cat-1">cat-1</option>
+            <option value="cat-2">cat-2</option>
+          </select>
+          <span style="font-size: 0.72rem; color: var(--text-muted); display: block; margin-top: 4px;">
+            Select which cat in the live game simulation this workbench will control.
+          </span>
+        </div>
+
+        <!-- Connection details & status -->
+        <div class="chips-row" style="margin-top: 12px;">
+          <span class="chip">Status: <strong id="modalConnStatus">Disconnected</strong></span>
+          <span class="chip">Entity: <strong id="modalConnEntity">--</strong></span>
+        </div>
+      </div>
+      <div class="wb-modal-footer">
+        <button id="btnModalDisconnect" class="btn btn-sm btn-danger-outline">Disconnect</button>
+        <button id="btnModalConnect" class="btn btn-sm btn-primary">Connect Now</button>
       </div>
     </div>
   </div>

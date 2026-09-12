@@ -7,6 +7,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 from app.api.admin import router as admin_router
 from app.api.agents import router as agents_router
+from app.api.ws import router as ws_router
 
 
 class PollingLogFilter(logging.Filter):
@@ -63,7 +64,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             "script-src 'self'; "
             "style-src 'self' 'unsafe-inline'; "
             "img-src 'self' data:; "
-            "connect-src 'self';"
+            "connect-src 'self' ws: wss:;"
         )
         return response
 
@@ -73,6 +74,7 @@ app.add_middleware(SecurityHeadersMiddleware)
 # Include API routers
 app.include_router(admin_router)
 app.include_router(agents_router)
+app.include_router(ws_router)
 
 # Mount static files
 static_dir = Path(__file__).parent / "static"

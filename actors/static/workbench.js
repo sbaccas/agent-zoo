@@ -20,6 +20,26 @@
   const pollingDot = document.getElementById('pollingDot');
   const pollingText = document.getElementById('pollingText');
 
+  // DOM Elements - Server Connection & Selection
+  const selectCatEntity = document.getElementById('selectCatEntity');
+  const modalSelectCatEntity = document.getElementById('modalSelectCatEntity');
+  const btnConnectServer = document.getElementById('btnConnectServer');
+  const connectBtnIcon = document.getElementById('connectBtnIcon');
+  const connectBtnText = document.getElementById('connectBtnText');
+  const btnChooseServer = document.getElementById('btnChooseServer');
+  const currentServerLabel = document.getElementById('currentServerLabel');
+  const serverLink = document.getElementById('serverLink');
+
+  const serverModal = document.getElementById('serverModal');
+  const btnCloseServer = document.getElementById('btnCloseServer');
+  const btnPresetLocal = document.getElementById('btnPresetLocal');
+  const btnPresetLocalhost = document.getElementById('btnPresetLocalhost');
+  const inputServerUrl = document.getElementById('inputServerUrl');
+  const modalConnStatus = document.getElementById('modalConnStatus');
+  const modalConnEntity = document.getElementById('modalConnEntity');
+  const btnModalDisconnect = document.getElementById('btnModalDisconnect');
+  const btnModalConnect = document.getElementById('btnModalConnect');
+
   // DOM Elements - Past Inspection Banner
   const inspectionBanner = document.getElementById('inspectionBanner');
   const inspectingTickNumber = document.getElementById('inspectingTickNumber');
@@ -501,12 +521,69 @@
     }
     headerCycles.textContent = state.total_ticks_processed || '0';
 
-    if (state.connected) {
+    const conn = state.server_connection || {};
+    const isWsConnected = Boolean(state.server_connected || conn.connected);
+    const isConnecting = Boolean(conn.connecting);
+
+    if (isWsConnected) {
       statusBadge.className = 'wb-status-badge online';
-      statusText.textContent = `Active • Cat ${state.agent_id || 'cat-1'}`;
-    } else {
+      statusText.textContent = `WS Connected • ${conn.assigned_id || state.agent_id || 'cat-1'}`;
+      if (btnConnectServer) {
+        btnConnectServer.className = 'btn btn-sm btn-danger-outline';
+        if (connectBtnIcon) connectBtnIcon.textContent = '✕';
+        if (connectBtnText) connectBtnText.textContent = 'Disconnect';
+        btnConnectServer.title = 'Disconnect from Game Server WebSocket';
+      }
+    } else if (isConnecting) {
       statusBadge.className = 'wb-status-badge waiting';
-      statusText.textContent = 'Waiting for Game Server';
+      statusText.textContent = 'Connecting...';
+      if (btnConnectServer) {
+        btnConnectServer.className = 'btn btn-sm btn-primary';
+        if (connectBtnIcon) connectBtnIcon.textContent = '◌';
+        if (connectBtnText) connectBtnText.textContent = 'Connecting...';
+        btnConnectServer.title = 'Attempting connection...';
+      }
+    } else {
+      statusBadge.className = 'wb-status-badge disconnected';
+      statusText.textContent = 'Disconnected';
+      if (btnConnectServer) {
+        btnConnectServer.className = 'btn btn-sm btn-primary';
+        if (connectBtnIcon) connectBtnIcon.textContent = '🔌';
+        if (connectBtnText) connectBtnText.textContent = 'Connect';
+        btnConnectServer.title = 'Connect to Game Server WebSocket';
+      }
+    }
+
+    if (conn.server_url) {
+      let host = conn.server_url;
+      try {
+        const parsed = new URL(conn.server_url);
+        host = parsed.host;
+      } catch (e) {
+        host = conn.server_url.replace(/^(ws|wss|http|https):\/\//, '').split('/')[0];
+      }
+      if (currentServerLabel) currentServerLabel.textContent = host;
+      if (serverLink) serverLink.href = `http://${host}`;
+      if (inputServerUrl && !inputServerUrl.dataset.userEdited) {
+        inputServerUrl.value = conn.server_url;
+      }
+    }
+
+    if (modalConnStatus) {
+      modalConnStatus.textContent = isWsConnected ? 'Connected' : (isConnecting ? 'Connecting...' : 'Disconnected');
+    }
+    if (modalConnEntity) {
+      modalConnEntity.textContent = conn.assigned_id || state.agent_id || '--';
+    }
+
+    const activeCatId = conn.assigned_id || state.agent_id;
+    if (activeCatId) {
+      if (selectCatEntity && document.activeElement !== selectCatEntity && selectCatEntity.value !== activeCatId) {
+        selectCatEntity.value = activeCatId;
+      }
+      if (modalSelectCatEntity && document.activeElement !== modalSelectCatEntity && modalSelectCatEntity.value !== activeCatId) {
+        modalSelectCatEntity.value = activeCatId;
+      }
     }
 
     // If currently inspecting a past tick, don't overwrite boxes 1-3 with live data
@@ -523,8 +600,40 @@
     renderHistory(state.history || []);
   }
 
+  let pollCount = 0;
+  let knownCats = ['cat-1', 'cat-2'];
+
+  async function fetchAvailableCats() {
+    const res = await api('/api/agent/server/cats');
+    if (res && Array.isArray(res.cats) && res.cats.length > 0) {
+      const catIds = res.cats.map((c) => c.id);
+      knownCats = catIds;
+      updateCatDropdowns(catIds, res.current);
+    }
+  }
+
+  function updateCatDropdowns(catIds, currentSelected) {
+    [selectCatEntity, modalSelectCatEntity].forEach((selectElem) => {
+      if (!selectElem) return;
+      const prevVal = currentSelected || selectElem.value || catIds[0];
+      const options = catIds.map((cid) => {
+        const opt = document.createElement('option');
+        opt.value = cid;
+        opt.textContent = cid;
+        if (cid === prevVal) opt.selected = true;
+        return opt;
+      });
+      selectElem.replaceChildren(...options);
+      selectElem.value = prevVal;
+    });
+  }
+
   // Fetch agent state with live board synchronization
   async function pollAgentState() {
+    pollCount++;
+    if (pollCount % 10 === 1) {
+      fetchAvailableCats();
+    }
     const data = await api('/api/agent/state?sync=1');
     if (data) {
       renderLiveState(data);
@@ -765,10 +874,121 @@
     });
   }
 
+  // Event Listeners - Server Selection & Connection
+  function openServerModal() {
+    if (serverModal) {
+      serverModal.style.display = 'flex';
+      fetchAvailableCats();
+      const conn = (cachedState && cachedState.server_connection) || {};
+      if (inputServerUrl && conn.server_url) {
+        inputServerUrl.value = conn.server_url;
+      }
+      if (modalConnStatus) {
+        modalConnStatus.textContent = (cachedState && (cachedState.server_connected || conn.connected))
+          ? 'Connected'
+          : (conn.connecting ? 'Connecting...' : 'Disconnected');
+      }
+      const activeCat = conn.assigned_id || (cachedState && cachedState.agent_id) || 'cat-1';
+      if (modalConnEntity) {
+        modalConnEntity.textContent = activeCat;
+      }
+      if (modalSelectCatEntity) {
+        modalSelectCatEntity.value = activeCat;
+      }
+    }
+  }
+
+  function closeServerModal() {
+    if (serverModal) serverModal.style.display = 'none';
+  }
+
+  if (btnChooseServer) btnChooseServer.addEventListener('click', openServerModal);
+  if (btnCloseServer) btnCloseServer.addEventListener('click', closeServerModal);
+
+  if (selectCatEntity) {
+    selectCatEntity.addEventListener('change', async () => {
+      const chosen = selectCatEntity.value;
+      if (modalSelectCatEntity) modalSelectCatEntity.value = chosen;
+      const isConnected = Boolean(cachedState && (cachedState.server_connected || (cachedState.server_connection && cachedState.server_connection.connected)));
+      if (isConnected) {
+        const url = (inputServerUrl && inputServerUrl.value.trim()) || 'ws://127.0.0.1:8000/ws/agents';
+        await api('/api/agent/server/connect', 'POST', { server_url: url, cat_id: chosen });
+        await pollAgentState();
+      }
+    });
+  }
+
+  if (modalSelectCatEntity) {
+    modalSelectCatEntity.addEventListener('change', () => {
+      if (selectCatEntity) selectCatEntity.value = modalSelectCatEntity.value;
+    });
+  }
+
+  if (inputServerUrl) {
+    inputServerUrl.addEventListener('input', () => {
+      inputServerUrl.dataset.userEdited = 'true';
+    });
+  }
+
+  if (btnPresetLocal && inputServerUrl) {
+    btnPresetLocal.addEventListener('click', () => {
+      inputServerUrl.value = 'ws://127.0.0.1:8000/ws/agents';
+      inputServerUrl.dataset.userEdited = 'true';
+    });
+  }
+
+  if (btnPresetLocalhost && inputServerUrl) {
+    btnPresetLocalhost.addEventListener('click', () => {
+      inputServerUrl.value = 'ws://localhost:8000/ws/agents';
+      inputServerUrl.dataset.userEdited = 'true';
+    });
+  }
+
+  if (btnModalConnect) {
+    btnModalConnect.addEventListener('click', async () => {
+      const url = inputServerUrl ? inputServerUrl.value.trim() : '';
+      const catId = (modalSelectCatEntity && modalSelectCatEntity.value) || (selectCatEntity && selectCatEntity.value) || 'cat-1';
+      btnModalConnect.disabled = true;
+      btnModalConnect.textContent = 'Connecting...';
+      await api('/api/agent/server/connect', 'POST', { server_url: url, cat_id: catId });
+      btnModalConnect.disabled = false;
+      btnModalConnect.textContent = 'Connect Now';
+      closeServerModal();
+      await pollAgentState();
+    });
+  }
+
+  if (btnModalDisconnect) {
+    btnModalDisconnect.addEventListener('click', async () => {
+      btnModalDisconnect.disabled = true;
+      await api('/api/agent/server/disconnect', 'POST');
+      btnModalDisconnect.disabled = false;
+      closeServerModal();
+      await pollAgentState();
+    });
+  }
+
+  if (btnConnectServer) {
+    btnConnectServer.addEventListener('click', async () => {
+      const isConnected = Boolean(cachedState && (cachedState.server_connected || (cachedState.server_connection && cachedState.server_connection.connected)));
+      btnConnectServer.disabled = true;
+      if (isConnected) {
+        await api('/api/agent/server/disconnect', 'POST');
+      } else {
+        const url = (inputServerUrl && inputServerUrl.value.trim()) || 'ws://127.0.0.1:8000/ws/agents';
+        const catId = (selectCatEntity && selectCatEntity.value) || (modalSelectCatEntity && modalSelectCatEntity.value) || 'cat-1';
+        await api('/api/agent/server/connect', 'POST', { server_url: url, cat_id: catId });
+      }
+      btnConnectServer.disabled = false;
+      await pollAgentState();
+    });
+  }
+
   // Close modals on overlay background click
   window.addEventListener('click', (e) => {
     if (e.target === skillsModal) closeSkillsModal();
     if (e.target === apiKeyModal) closeApiKeyModal();
+    if (e.target === serverModal) closeServerModal();
   });
 
   // Start polling on boot

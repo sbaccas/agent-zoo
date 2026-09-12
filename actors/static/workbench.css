@@ -108,6 +108,12 @@ body {
   color: var(--warning-color);
 }
 
+.wb-status-badge.disconnected {
+  background-color: #fef2f2;
+  border-color: #fca5a5;
+  color: #b91c1c;
+}
+
 .status-dot {
   width: 8px;
   height: 8px;

@@ -15,7 +15,7 @@ A living backlog tracking architectural initiatives, gameplay mechanics, and age
 ## 🌐 Web Features
 
 ### `WEB-01`: WebSocket Duplex Communication Architecture
-- **Status**: 📋 Backlog (High Priority)
+- **Status**: ✅ Completed (In Review)
 - **Target**: Game Server & Agent Clients
 - **Description**: Invert connection polarity so agent clients (such as the Cat Agent) connect outbound to the Game Server via WebSockets (`ws://127.0.0.1:8000/ws/agent`) rather than the Game Server making inbound HTTP calls to the agent.
 - **Key Capabilities**:

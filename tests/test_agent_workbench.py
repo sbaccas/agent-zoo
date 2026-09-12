@@ -234,3 +234,36 @@ def test_act_adk_decision_mocked():
             assert last_entry["autonomous_decision"]["meta"]["engine"] == "adk_gemini"
             assert last_entry["autonomous_decision"]["meta"]["phase"] == "LUNGE"
 
+
+def test_workbench_server_connection_endpoints():
+    client = TestClient(app)
+    status_resp = client.get("/api/agent/server/status")
+    assert status_resp.status_code == 200
+    st = status_resp.json()
+    assert "server_url" in st
+    assert "connected" in st
+
+    # Disconnect
+    disc_resp = client.post("/api/agent/server/disconnect")
+    assert disc_resp.status_code == 200
+    assert disc_resp.json()["connected"] is False
+
+    # Connect with custom URL and cat_id
+    conn_resp = client.post("/api/agent/server/connect", json={
+        "server_url": "ws://127.0.0.1:8000/ws/agents",
+        "cat_id": "cat-2"
+    })
+    assert conn_resp.status_code == 200
+    conn_data = conn_resp.json()
+    assert "ws://127.0.0.1:8000/ws/agents" in conn_data["server_url"]
+    assert conn_data["requested_cat_id"] == "cat-2"
+
+    # Test /api/agent/server/cats
+    cats_resp = client.get("/api/agent/server/cats")
+    assert cats_resp.status_code == 200
+    assert "cats" in cats_resp.json()
+
+    # Clean up
+    client.post("/api/agent/server/disconnect")
+
+

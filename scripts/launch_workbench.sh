@@ -67,4 +67,5 @@ echo "   • Authoritative Game Server:  http://127.0.0.1:8000"
 echo "================================================================="
 echo ""
 
-exec python actors/cat_agent.py 8001
+exec python -m uvicorn actors.cat_agent:app --host 127.0.0.1 --port 8001 --reload
+

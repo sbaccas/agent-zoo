@@ -42,4 +42,4 @@ class ObservationResponse(BaseModel):
 
 class RegisterAgentRequest(BaseModel):
     agent_url: Optional[str] = None
-    mode: str = "auto"  # "auto", "manual", "http"
+    mode: str = "auto"  # "auto", "manual", "http", "ws"

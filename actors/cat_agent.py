@@ -1,134 +1,58 @@
+from contextlib import asynccontextmanager
 import asyncio
 from datetime import datetime
+import json
+import logging
 import os
 from pathlib import Path
-import random
 import sys
 from typing import Any, Dict, List, Optional
-from dotenv import load_dotenv
+import uvicorn
+import websockets
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
 from starlette.middleware.base import BaseHTTPMiddleware
 import httpx
-import uvicorn
 
-# Load local .env if present
-load_dotenv()
-
-# Ensure GOOGLE_CLOUD_LOCATION is populated from GOOGLE_CLOUD_REGION if present
-if "GOOGLE_CLOUD_REGION" in os.environ and "GOOGLE_CLOUD_LOCATION" not in os.environ:
-    os.environ["GOOGLE_CLOUD_LOCATION"] = os.environ["GOOGLE_CLOUD_REGION"]
-
-# Google Agent Development Kit (ADK) & GenAI
-from google.adk.agents import LlmAgent
-from google.adk import Runner
-from google.adk.sessions import InMemorySessionService
-from google.genai import types
-
-app = FastAPI(title="Cat Agent Service & Workbench")
-
-
-# Security Headers Middleware
-class SecurityHeadersMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request: Request, call_next):
-        response: Response = await call_next(request)
-        response.headers["X-Content-Type-Options"] = "nosniff"
-        response.headers["X-Frame-Options"] = "DENY"
-        response.headers["Content-Security-Policy"] = (
-            "default-src 'self'; "
-            "script-src 'self'; "
-            "style-src 'self' 'unsafe-inline'; "
-            "img-src 'self' data:; "
-            "connect-src 'self';"
-        )
-        return response
-
-
-app.add_middleware(SecurityHeadersMiddleware)
-
-
-class Observation(BaseModel):
-    tick: int
-    round: int
-    self: Dict[str, Any]
-    visible_entities: List[Dict[str, Any]] = []
-    legal_actions: List[str] = []
-
-
-class ActionResponse(BaseModel):
-    action: str
-    thought: str = ""
-
-
-class OverrideRequest(BaseModel):
-    action: Optional[str] = None
-    mode: Optional[str] = "once"
-
-
-class ApiKeyRequest(BaseModel):
-    api_key: str
-
-
-class CatTacticalDecision(BaseModel):
-    action: str = Field(description="The chosen action strictly from legal_actions")
-    thought: str = Field(description="Concise tactical reasoning based on game skills and rules")
-    target_mouse_id: Optional[str] = Field(default="", description="ID of targeted mouse or empty string if none")
-    strategy: str = Field(default="ROAMING", description="Tactical phase: ATTACK, LUNGE, STALKING, or ROAMING")
-
-
-# Skills manual path and loader
-SKILLS_PATH = Path(__file__).parent / "skills.md"
-
-
-def get_skills_instruction() -> str:
-    if SKILLS_PATH.exists():
-        return SKILLS_PATH.read_text(encoding="utf-8")
-    return (
-        "You are an expert tactical cat in a Cat and Mouse grid world. "
-        "Your mission is to hunt mice, close distance with lunges, and eliminate them with attacks."
-    )
-
-
-# Initialize ADK Agent and Runner
-adk_agent = LlmAgent(
-    name="cat_tactician",
-    model="gemini-2.5-flash",
-    instruction=get_skills_instruction(),
-    output_schema=CatTacticalDecision,
-    output_key="decision",
-    generate_content_config=types.GenerateContentConfig(
-        thinking_config=types.ThinkingConfig(thinking_budget=0)
-    ),
+# Shared models
+from actors.models import (
+    ActionResponse,
+    ApiKeyRequest,
+    CatTacticalDecision,
+    ConnectServerRequest,
+    Observation,
+    OverrideRequest,
 )
-session_service = InMemorySessionService()
-adk_runner = Runner(
-    agent=adk_agent,
-    app_name="cat_agent_app",
-    session_service=session_service,
+
+# Heuristic tactical engine
+from actors.cat_heuristic import (
+    compute_heuristic_decision,
+    compute_resulting_posture,
 )
-_llm_lock = asyncio.Lock()
 
+# Model / LLM tactical engine
+from actors.cat_model import (
+    SKILLS_PATH,
+    adk_agent,
+    adk_runner,
+    get_gemini_auth_mode,
+    get_skills_instruction,
+    has_gemini_credentials,
+    query_adk_gemini as model_query_adk_gemini,
+    reset_adk_session,
+    session_service,
+)
 
-def has_gemini_credentials() -> bool:
-    return bool(
-        os.environ.get("GEMINI_API_KEY")
-        or os.environ.get("GOOGLE_API_KEY")
-        or os.environ.get("GOOGLE_CLOUD_PROJECT")
-        or os.environ.get("GOOGLE_GENAI_USE_VERTEXAI")
-    )
+logger = logging.getLogger("cat_agent")
 
-
-def get_gemini_auth_mode() -> str:
-    if os.environ.get("GOOGLE_CLOUD_PROJECT") or os.environ.get("GOOGLE_GENAI_USE_VERTEXAI"):
-        return "vertex_ai"
-    if os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY"):
-        return "api_key"
-    return "none"
+# Backwards compatibility alias for heuristic decision function
+compute_autonomous_decision = compute_heuristic_decision
 
 
 class AgentWorkbenchState:
+    """In-memory state and history store for the Cat Agent."""
+
     def __init__(self, max_history: int = 50):
         self.max_history = max_history
         self.agent_id: str = "cat-1"
@@ -141,7 +65,6 @@ class AgentWorkbenchState:
         self.pending_override: Optional[str] = None
         self.override_mode: str = "once"  # "once" or "sticky"
         self.history: List[Dict[str, Any]] = []
-        # ADK Gemini Engine state
         self.brain_engine: str = "Google ADK (gemini-2.5-flash)"
         self.skills_file: str = str(SKILLS_PATH)
         self.last_engine_source: str = "adk_gemini" if has_gemini_credentials() else "heuristic_fallback"
@@ -153,156 +76,18 @@ class AgentWorkbenchState:
 state = AgentWorkbenchState()
 
 
-def compute_autonomous_decision(obs: Observation):
-    self_info = obs.self
-    my_id = self_info.get("id", "cat")
-    pos = self_info.get("position", {"x": 0, "y": 0})
-    facing = self_info.get("facing", "north")
-    legal = obs.legal_actions
-
-    # 1. Can we slash attack?
-    mice_seen = [e for e in obs.visible_entities if e.get("type") == "mouse"]
-
-    if "attack" in legal and mice_seen:
-        # Check if any mouse is directly ahead within distance <= 2
-        for m in mice_seen:
-            m_pos = m.get("position", {})
-            mx, my = m_pos.get("x", 0), m_pos.get("y", 0)
-            dx = mx - pos["x"]
-            dy = my - pos["y"]
-
-            in_front = False
-            if facing == "north" and dy < 0 and abs(dx) <= 1:
-                in_front = True
-            elif facing == "south" and dy > 0 and abs(dx) <= 1:
-                in_front = True
-            elif facing == "east" and dx > 0 and abs(dy) <= 1:
-                in_front = True
-            elif facing == "west" and dx < 0 and abs(dy) <= 1:
-                in_front = True
-
-            dist = abs(dx) + abs(dy)
-            if in_front and dist <= 2:
-                msg = f"Target {m.get('id')} in strike zone! Executing slash attack."
-                meta = {
-                    "phase": "ATTACK",
-                    "target_id": m.get("id"),
-                    "distance": dist,
-                    "target_pos": {"x": mx, "y": my},
-                }
-                return "attack", msg, meta
-
-    # 2. Can we lunge forward 2 squares to close distance on target?
-    if "lunge" in legal and mice_seen:
-        for m in mice_seen:
-            m_pos = m.get("position", {})
-            mx, my = m_pos.get("x", 0), m_pos.get("y", 0)
-            dx = mx - pos["x"]
-            dy = my - pos["y"]
-
-            directly_ahead = False
-            if facing == "north" and dy < 0 and dx == 0:
-                directly_ahead = True
-            elif facing == "south" and dy > 0 and dx == 0:
-                directly_ahead = True
-            elif facing == "east" and dx > 0 and dy == 0:
-                directly_ahead = True
-            elif facing == "west" and dx < 0 and dy == 0:
-                directly_ahead = True
-
-            dist = abs(dx) + abs(dy)
-            if directly_ahead and dist >= 3:
-                msg = f"Lunging 2 squares forward to close distance on {m.get('id')}!"
-                meta = {
-                    "phase": "LUNGE",
-                    "target_id": m.get("id"),
-                    "distance": dist,
-                    "target_pos": {"x": mx, "y": my},
-                }
-                return "lunge", msg, meta
-
-    # 3. Advance towards nearest seen mouse
-    if mice_seen:
-        target = min(
-            mice_seen,
-            key=lambda m: (m["position"]["x"] - pos["x"]) ** 2 + (m["position"]["y"] - pos["y"]) ** 2,
-        )
-        tx = target["position"]["x"]
-        ty = target["position"]["y"]
-        dx = tx - pos["x"]
-        dy = ty - pos["y"]
-        dist = abs(dx) + abs(dy)
-
-        moves = []
-        if abs(dx) >= abs(dy):
-            if dx > 0 and "east" in legal: moves.append("east")
-            elif dx < 0 and "west" in legal: moves.append("west")
-            if dy > 0 and "south" in legal: moves.append("south")
-            elif dy < 0 and "north" in legal: moves.append("north")
-        else:
-            if dy > 0 and "south" in legal: moves.append("south")
-            elif dy < 0 and "north" in legal: moves.append("north")
-            if dx > 0 and "east" in legal: moves.append("east")
-            elif dx < 0 and "west" in legal: moves.append("west")
-
-        if moves:
-            choice = moves[0]
-            msg = f"Advancing towards {target.get('id')}"
-            meta = {
-                "phase": "STALKING",
-                "target_id": target.get("id"),
-                "distance": dist,
-                "target_pos": {"x": tx, "y": ty},
-            }
-            return choice, msg, meta
-
-    # 4. Explore
-    movement_choices = [a for a in legal if a in ["north", "south", "east", "west", "stay"]]
-    choice = random.choice(movement_choices) if movement_choices else "stay"
-    meta = {
-        "phase": "ROAMING",
-        "target_id": None,
-        "distance": None,
-    }
-    return choice, "Exploring territory", meta
-
-
-def compute_resulting_posture(pos: Dict[str, Any], facing: str, action: str) -> Dict[str, Any]:
-    x = pos.get("x", 0)
-    y = pos.get("y", 0)
-    new_facing = facing
-    new_x, new_y = x, y
-
-    if action == "north":
-        new_facing = "north"
-        new_y = max(0, y - 1)
-    elif action == "south":
-        new_facing = "south"
-        new_y = y + 1
-    elif action == "east":
-        new_facing = "east"
-        new_x = x + 1
-    elif action == "west":
-        new_facing = "west"
-        new_x = max(0, x - 1)
-    elif action == "lunge":
-        if facing == "north":
-            new_y = max(0, y - 2)
-        elif facing == "south":
-            new_y = y + 2
-        elif facing == "east":
-            new_x = x + 2
-        elif facing == "west":
-            new_x = max(0, x - 2)
-
-    return {
-        "position": {"x": new_x, "y": new_y},
-        "facing": new_facing,
-    }
+async def query_adk_gemini(obs: Observation) -> Optional[CatTacticalDecision]:
+    """Wraps model execution, updating agent workbench diagnostic state."""
+    decision, source, err = await model_query_adk_gemini(
+        obs, history=state.history, agent_id=state.agent_id
+    )
+    state.last_engine_source = source
+    state.last_engine_error = err
+    return decision
 
 
 def run_sync(coro):
-    """Executes a coroutine synchronously, safely handling existing running event loops."""
+    """Executes a coroutine synchronously, handling existing running event loops."""
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
@@ -315,181 +100,49 @@ def run_sync(coro):
     return asyncio.run(coro)
 
 
-async def reset_adk_session(agent_id: str):
-    session_id = f"session_{agent_id}"
-    try:
-        await session_service.delete_session(
-            app_name="cat_agent_app", user_id="cat_commander", session_id=session_id
-        )
-    except Exception:
-        pass
-
-
-async def query_adk_gemini(obs: Observation) -> Optional[CatTacticalDecision]:
-    """Queries Gemini via Google ADK using the skills handbook.
-
-    Returns CatTacticalDecision if successful, or None to fall back to heuristics.
-    """
-    # Skip live network calls when running automated pytest suite unless explicitly enabled
-    if "PYTEST_CURRENT_TEST" in os.environ and not os.environ.get("ENABLE_LIVE_LLM_TESTS"):
-        state.last_engine_source = "heuristic_fallback"
-        return None
-
-    if not has_gemini_credentials():
-        state.last_engine_source = "heuristic_fallback"
-        return None
-
-    user_id = "cat_commander"
-    session_id = f"session_{state.agent_id}"
-
-    async with _llm_lock:
-        try:
-            # Refresh session to prevent conversation history accumulation across ticks
-            try:
-                await session_service.delete_session(
-                    app_name="cat_agent_app", user_id=user_id, session_id=session_id
-                )
-            except Exception:
-                pass
-            session = await session_service.create_session(
-                app_name="cat_agent_app", user_id=user_id, session_id=session_id
-            )
-
-            pos = obs.self.get("position", {})
-            facing = obs.self.get("facing", "north")
-            hp = obs.self.get("hp", 100)
-            entities = obs.visible_entities
-            legal = obs.legal_actions or ["stay", "north", "south", "east", "west"]
-
-            # Build exact 3-tick context window: last 3 moves and the context/thoughts that motivated them
-            history_lines = []
-            for h in (state.history[-3:] if state.history else []):
-                h_tick = h.get("tick", "?")
-                h_self = h.get("observation", {}).get("self", {})
-                h_pos = h_self.get("position", {})
-                h_facing = h_self.get("facing", "north")
-                h_vis = h.get("observation", {}).get("visible_entities", [])
-                h_resp = h.get("response", {})
-                h_act = (h_resp.get("action") or "stay").upper()
-                h_thought = h_resp.get("thought", "")
-                vis_info = f"{len(h_vis)} visible ({[m.get('id') for m in h_vis]})" if h_vis else "0 visible"
-                history_lines.append(
-                    f"  • Tick {h_tick}: Pos ({h_pos.get('x',0)}, {h_pos.get('y',0)}) facing {h_facing}. "
-                    f"Context: {vis_info}. Move: {h_act} (Reason: \"{h_thought}\")"
-                )
-
-            history_context = ""
-            if history_lines:
-                history_context = "--- RECENT TACTICAL CONTEXT (Last 3 Ticks) ---\n" + "\n".join(history_lines) + "\n\n"
-
-            prompt = (
-                f"{history_context}"
-                f"--- CURRENT OBSERVATION (Tick {obs.tick}, Round {obs.round}) ---\n"
-                f"Agent ID: {obs.self.get('id', state.agent_id)}\n"
-                f"Current Position: (x={pos.get('x', 0)}, y={pos.get('y', 0)})\n"
-                f"Current Facing: {facing}\n"
-                f"Current HP: {hp}\n"
-                f"Visible Entities in 90° Vision Cone: {entities}\n"
-                f"Legal Actions this tick: {legal}\n"
-                f"Consult your skills manual and choose the single best tactical action strictly from legal actions."
-            )
-
-            msg = types.Content(role="user", parts=[types.Part.from_text(text=prompt)])
-            decision = None
-
-            async with asyncio.timeout(8.0):
-                agen = adk_runner.run_async(user_id=user_id, session_id=session_id, new_message=msg)
-                try:
-                    while True:
-                        event = await agen.__anext__()
-                        if event.error_code or event.error_message:
-                            raise RuntimeError(f"ADK Error: {event.error_code} - {event.error_message}")
-                        if event.actions and event.actions.state_delta and "decision" in event.actions.state_delta:
-                            decision = event.actions.state_delta["decision"]
-                        elif event.content and event.content.parts:
-                            for p in event.content.parts:
-                                if p.text and not getattr(p, "thought", False):
-                                    try:
-                                        decision = CatTacticalDecision.model_validate_json(p.text)
-                                    except Exception:
-                                        pass
-                except StopAsyncIteration:
-                    pass
-
-            if isinstance(decision, dict):
-                decision = CatTacticalDecision(**decision)
-
-            if decision and decision.action:
-                chosen_clean = decision.action.strip().lower()
-                if chosen_clean in legal:
-                    decision.action = chosen_clean
-                    state.last_engine_source = "adk_gemini"
-                    state.last_engine_error = None
-                    return decision
-                else:
-                    print(f"[ADK Warning] Model selected '{chosen_clean}' which is not in {legal}", flush=True)
-
-        except Exception as exc:
-            err_msg = str(exc)
-            state.last_engine_source = "heuristic_fallback"
-            state.last_engine_error = err_msg
-            print(f"[ADK Fallback] {type(exc).__name__}: {err_msg[:100]} -> using heuristic brain", flush=True)
-
-    return None
-
-
 async def act_async(obs: Observation) -> ActionResponse:
-    my_id = obs.self.get("id", "cat")
-
-    # 1. Evaluate ADK Gemini decision if credentials exist
-    adk_decision = None
-    if has_gemini_credentials():
-        adk_decision = await query_adk_gemini(obs)
-
-    if adk_decision:
-        auto_action = adk_decision.action
-        auto_thought = adk_decision.thought
-        auto_meta = {
-            "phase": adk_decision.strategy or "TACTICAL",
-            "target_id": adk_decision.target_mouse_id or None,
-            "engine": "adk_gemini",
-        }
-        source_engine = "adk_gemini"
-    else:
-        auto_action, auto_thought, auto_meta = compute_autonomous_decision(obs)
-        auto_meta["engine"] = "heuristic_fallback"
-        source_engine = "heuristic_fallback"
-
-    # 2. Check for manual override
-    if state.pending_override and state.pending_override in (obs.legal_actions or ["north", "south", "east", "west", "stay", "attack", "lunge"]):
-        chosen_action = state.pending_override
-        chosen_thought = f"Manual override ({state.override_mode}): {chosen_action}"
-        source = "manual_override"
-        print(f"[{my_id} @ Tick {obs.tick}] MANUAL OVERRIDE -> {chosen_action}", flush=True)
-
-        if state.override_mode == "once":
-            state.pending_override = None
-    elif state.pending_override:
-        # Override requested action not in legal actions
-        chosen_action = auto_action
-        chosen_thought = f"Override '{state.pending_override}' illegal; reverted to {source_engine}: {auto_thought}"
-        source = source_engine
-        print(f"[{my_id} @ Tick {obs.tick}] Override illegal ({state.pending_override}) -> {auto_action}", flush=True)
-        if state.override_mode == "once":
-            state.pending_override = None
-    else:
-        chosen_action = auto_action
-        chosen_thought = auto_thought
-        source = source_engine
-        print(f"[{my_id} @ Tick {obs.tick}] [{source_engine.upper()}] {auto_meta.get('phase', 'MOVE')} -> {chosen_action}", flush=True)
-
-    # Record exchange with input observation and resulting posture
+    """Evaluates an observation, arbitrating between manual override, LLM, and heuristic."""
     obs_dict = obs.model_dump()
-    posture = compute_resulting_posture(
-        pos=obs.self.get("position", {"x": 0, "y": 0}),
-        facing=obs.self.get("facing", "north"),
-        action=chosen_action,
-    )
+    legal = obs.legal_actions or ["stay", "north", "south", "east", "west"]
+
+    # 1. Compute autonomous baseline heuristic
+    auto_action, auto_thought, auto_meta = compute_heuristic_decision(obs)
+    auto_meta["engine"] = "heuristic"
+
+    # 2. Consult Google ADK Gemini 2.5 Flash if credentials are present
+    if has_gemini_credentials():
+        llm_decision = await query_adk_gemini(obs)
+        if llm_decision and llm_decision.action in legal:
+            auto_action = llm_decision.action
+            auto_thought = llm_decision.thought
+            auto_meta["engine"] = "adk_gemini"
+            auto_meta["strategy"] = llm_decision.strategy
+            auto_meta["target_mouse_id"] = llm_decision.target_mouse_id
+            auto_meta["phase"] = llm_decision.strategy
+
+    # 3. Check for human manual override
+    chosen_action = auto_action
+    chosen_thought = auto_thought
+    source = auto_meta.get("engine", "auto")
+    if source == "heuristic":
+        source = "auto"
+
+    if state.pending_override:
+        override = state.pending_override.lower()
+        if override in legal:
+            chosen_action = override
+            chosen_thought = f"Manual override applied: {chosen_action}"
+            source = "manual_override"
+        else:
+            chosen_thought = f"Override '{override}' illegal this tick; executed autonomous move: {auto_action}"
+
+        if state.override_mode == "once":
+            state.pending_override = None
+
+    # Calculate posture resulting from chosen action
+    pos = obs.self.get("position", {"x": 0, "y": 0})
+    facing = obs.self.get("facing", "north")
+    posture = compute_resulting_posture(pos, facing, chosen_action)
 
     exchange = {
         "tick": obs.tick,
@@ -510,7 +163,7 @@ async def act_async(obs: Observation) -> ActionResponse:
         "source": source,
     }
 
-    # Update latest observation to capture the move that was just applied (prevents 1-tick delay)
+    # Update latest observation with resulting posture to eliminate 1-tick display lag
     current_obs = dict(obs_dict)
     current_obs["self"] = dict(obs_dict.get("self", {}))
     current_obs["self"]["position"] = posture["position"]
@@ -530,33 +183,185 @@ async def act_async(obs: Observation) -> ActionResponse:
     return ActionResponse(action=chosen_action, thought=chosen_thought)
 
 
-@app.post("/act", response_model=ActionResponse)
-@app.post("/", response_model=ActionResponse)
-async def act_endpoint(obs: Observation) -> ActionResponse:
-    return await act_async(obs)
-
-
 def act(obs: Observation, use_llm: bool = True) -> ActionResponse:
+    """Synchronous interface for scheduler fallback or direct testing."""
     if not use_llm:
-        action, thought, _ = compute_autonomous_decision(obs)
+        action, thought, _ = compute_heuristic_decision(obs)
         return ActionResponse(action=action, thought=thought)
     return run_sync(act_async(obs))
 
 
-GAME_SERVER_URL = "http://127.0.0.1:8000"
+class WsClientManager:
+    """Manages persistent outbound WebSocket connection to the Game Server."""
+
+    def __init__(self):
+        self.server_url: str = os.environ.get("GAME_SERVER_WS_URL", "ws://127.0.0.1:8000/ws/agents")
+        self.requested_cat_id: Optional[str] = None
+        self.connected: bool = False
+        self.connecting: bool = False
+        self.assigned_id: Optional[str] = None
+        self.last_error: Optional[str] = None
+        self.auto_reconnect: bool = True
+        self._ws = None
+        self._task: Optional[asyncio.Task] = None
+        self._stop_event = asyncio.Event()
+
+    def get_status(self) -> Dict[str, Any]:
+        return {
+            "connected": self.connected,
+            "connecting": self.connecting,
+            "server_url": self.server_url,
+            "assigned_id": self.assigned_id or state.agent_id or "cat-1",
+            "requested_cat_id": self.requested_cat_id,
+            "last_error": self.last_error,
+            "auto_reconnect": self.auto_reconnect,
+        }
+
+    async def connect(self, server_url: Optional[str] = None, cat_id: Optional[str] = None):
+        if server_url and server_url.strip():
+            url = server_url.strip()
+            if url.startswith("http://"):
+                url = "ws://" + url[7:]
+            elif url.startswith("https://"):
+                url = "wss://" + url[8:]
+            if not url.startswith("ws://") and not url.startswith("wss://"):
+                url = f"ws://{url}"
+            if "/ws/agents" not in url:
+                url = url.rstrip("/") + "/ws/agents"
+            self.server_url = url
+
+        if cat_id and cat_id.strip():
+            new_id = cat_id.strip()
+            if new_id != self.assigned_id:
+                state.history.clear()
+                state.total_ticks_processed = 0
+                state.latest_observation = None
+                state.latest_response = None
+                state.latest_autonomous = None
+            self.requested_cat_id = new_id
+            state.agent_id = new_id
+
+        self.auto_reconnect = True
+        self._stop_event.clear()
+
+        if self._ws:
+            try:
+                await self._ws.close()
+            except Exception:
+                pass
+            self._ws = None
+
+        if self._task and not self._task.done():
+            self._task.cancel()
+
+        self._task = asyncio.create_task(self._worker_loop())
+
+    async def disconnect(self):
+        self.auto_reconnect = False
+        self._stop_event.set()
+        if self._ws:
+            try:
+                await self._ws.close()
+            except Exception:
+                pass
+            self._ws = None
+        if self._task and not self._task.done():
+            self._task.cancel()
+        self.connected = False
+        self.connecting = False
+
+    async def _worker_loop(self):
+        while self.auto_reconnect and not self._stop_event.is_set():
+            self.connecting = True
+            self.connected = False
+            try:
+                print(f"🐾 [WS CLIENT] Connecting to Game Server at {self.server_url}...", flush=True)
+                async with websockets.connect(self.server_url, ping_interval=20, ping_timeout=10) as ws:
+                    self._ws = ws
+                    self.connecting = False
+                    self.connected = True
+                    self.last_error = None
+                    print(f"🐾 [WS CLIENT] Connected successfully to {self.server_url}", flush=True)
+
+                    reg_msg = {
+                        "type": "register",
+                        "role": "cat",
+                        "agent_name": "gemini-cat",
+                        "requested_id": self.requested_cat_id or state.agent_id or "cat-1",
+                    }
+                    await ws.send(json.dumps(reg_msg))
+
+                    async for raw_msg in ws:
+                        try:
+                            data = json.loads(raw_msg)
+                        except Exception:
+                            continue
+
+                        mtype = data.get("type")
+                        if mtype == "registered":
+                            self.assigned_id = data.get("agent_id", "cat-1")
+                            state.agent_id = self.assigned_id
+                            state.simulation_id = data.get("simulation_id")
+                            print(f"🐾 [WS CLIENT] Handshake complete! Bound to entity '{self.assigned_id}'", flush=True)
+                            init_obs = data.get("initial_observation")
+                            if init_obs and isinstance(init_obs, dict) and "self" in init_obs:
+                                try:
+                                    obs_obj = Observation(**init_obs)
+                                    await act_async(obs_obj)
+                                except Exception:
+                                    pass
+
+                        elif mtype == "observation":
+                            obs_dict = data.get("payload", {})
+                            try:
+                                obs_obj = Observation(**obs_dict)
+                                action_resp = await act_async(obs_obj)
+                                meta = state.latest_autonomous.get("meta", {}) if state.latest_autonomous else {}
+                                resp_msg = {
+                                    "type": "action",
+                                    "tick": obs_obj.tick,
+                                    "action": action_resp.action,
+                                    "thought": action_resp.thought,
+                                    "strategy": meta.get("strategy", "ROAMING"),
+                                    "target_mouse_id": meta.get("target_mouse_id", ""),
+                                }
+                                await ws.send(json.dumps(resp_msg))
+                            except Exception as err:
+                                print(f"⚠️ [WS CLIENT] Error computing action: {err}", flush=True)
+                                await ws.send(json.dumps({
+                                    "type": "action",
+                                    "tick": data.get("tick", 0),
+                                    "action": "stay",
+                                    "thought": "Fallback stay action",
+                                }))
+
+            except asyncio.CancelledError:
+                break
+            except Exception as exc:
+                self.last_error = str(exc)
+                self.connected = False
+                self.connecting = False
+                if self.auto_reconnect and not self._stop_event.is_set():
+                    await asyncio.sleep(2.0)
+                else:
+                    break
+
+
+ws_client = WsClientManager()
 
 
 async def sync_live_observation(agent_id: Optional[str] = None) -> bool:
+    """Fetches current observation from Game Server HTTP endpoint."""
     target_id = agent_id or state.agent_id or "cat-1"
+    game_server_url = "http://127.0.0.1:8000"
     try:
         async with httpx.AsyncClient(timeout=0.5) as client:
-            resp = await client.get(f"{GAME_SERVER_URL}/api/simulations/active/agents/{target_id}/observation")
+            resp = await client.get(f"{game_server_url}/api/simulations/active/agents/{target_id}/observation")
             if resp.status_code == 200:
                 data = resp.json()
                 sim_id = data.get("simulation_id")
                 server_tick = data.get("tick", 0)
 
-                # Reset history if simulation restarted or rewound
                 if state.simulation_id and sim_id and state.simulation_id != sim_id:
                     state.history.clear()
                     state.total_ticks_processed = 0
@@ -572,8 +377,6 @@ async def sync_live_observation(agent_id: Optional[str] = None) -> bool:
                     last_history_tick = 0
                     await reset_adk_session(target_id)
 
-                # Compute upcoming tick:
-                # If last history action matches or exceeds server_tick, board is ready for the upcoming tick
                 if state.history and last_history_tick >= server_tick:
                     upcoming_tick = last_history_tick + 1
                 elif server_tick == 0 and not state.history:
@@ -581,7 +384,6 @@ async def sync_live_observation(agent_id: Optional[str] = None) -> bool:
                 else:
                     upcoming_tick = server_tick
 
-                # If already up to date with this upcoming tick and proposal is present, skip!
                 if (
                     state.latest_observation is not None
                     and state.active_tick == upcoming_tick
@@ -609,10 +411,9 @@ async def sync_live_observation(agent_id: Optional[str] = None) -> bool:
                 state.latest_observation = live_obs
                 state.active_tick = upcoming_tick
 
-                # If no autonomous preview exists yet (e.g. initial boot before game starts), compute instant heuristic preview
                 if state.latest_autonomous is None:
                     live_obs_obj = Observation(**live_obs)
-                    auto_action, auto_thought, auto_meta = compute_autonomous_decision(live_obs_obj)
+                    auto_action, auto_thought, auto_meta = compute_heuristic_decision(live_obs_obj)
                     auto_meta["engine"] = "heuristic_preview"
                     state.latest_autonomous = {
                         "action": auto_action,
@@ -626,6 +427,42 @@ async def sync_live_observation(agent_id: Optional[str] = None) -> bool:
     return False
 
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Auto-connect WebSocket client in background if enabled
+    if os.environ.get("CAT_AGENT_AUTO_CONNECT", "1") != "0":
+        asyncio.create_task(ws_client.connect())
+    yield
+    await ws_client.disconnect()
+
+
+app = FastAPI(title="Cat Agent Service & Workbench", lifespan=lifespan)
+
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        response: Response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; "
+            "script-src 'self'; "
+            "style-src 'self' 'unsafe-inline'; "
+            "img-src 'self' data:; "
+            "connect-src 'self' ws: wss:;"
+        )
+        return response
+
+
+app.add_middleware(SecurityHeadersMiddleware)
+
+
+@app.post("/act", response_model=ActionResponse)
+@app.post("/", response_model=ActionResponse)
+async def act_endpoint(obs: Observation) -> ActionResponse:
+    return await act_async(obs)
+
+
 @app.get("/api/agent/state")
 async def get_agent_state(sync: bool = False, agent_id: Optional[str] = None) -> Dict[str, Any]:
     if sync:
@@ -637,7 +474,9 @@ async def get_agent_state(sync: bool = False, agent_id: Optional[str] = None) ->
     auth_mode = "vertex_ai" if has_vertex_auth else ("api_key" if has_env_key else "none")
 
     return {
-        "connected": state.latest_observation is not None,
+        "connected": (state.latest_observation is not None) or ws_client.connected,
+        "server_connected": ws_client.connected,
+        "server_connection": ws_client.get_status(),
         "agent_id": state.agent_id,
         "active_tick": state.active_tick,
         "total_ticks_processed": state.total_ticks_processed,
@@ -657,6 +496,40 @@ async def get_agent_state(sync: bool = False, agent_id: Optional[str] = None) ->
         "last_engine_source": state.last_engine_source,
         "last_engine_error": state.last_engine_error,
     }
+
+
+@app.get("/api/agent/server/status")
+def get_server_status() -> Dict[str, Any]:
+    return ws_client.get_status()
+
+
+@app.get("/api/agent/server/cats")
+async def list_server_cats() -> Dict[str, Any]:
+    server_http = ws_client.server_url.replace("wss://", "https://").replace("ws://", "http://").split("/ws/")[0]
+    cats = []
+    try:
+        async with httpx.AsyncClient(timeout=2.0) as client:
+            resp = await client.get(f"{server_http}/api/simulations/active/agents")
+            if resp.status_code == 200:
+                agents = resp.json()
+                cats = [a for a in agents if a.get("type") == "cat"]
+    except Exception as exc:
+        return {"cats": [], "error": str(exc), "current": ws_client.assigned_id or state.agent_id}
+    return {"cats": cats, "current": ws_client.assigned_id or state.agent_id}
+
+
+@app.post("/api/agent/server/connect")
+async def connect_to_server(req: Optional[ConnectServerRequest] = None) -> Dict[str, Any]:
+    url = req.server_url if req and req.server_url else None
+    cat_id = req.cat_id if req and req.cat_id else None
+    await ws_client.connect(url, cat_id=cat_id)
+    return ws_client.get_status()
+
+
+@app.post("/api/agent/server/disconnect")
+async def disconnect_from_server() -> Dict[str, Any]:
+    await ws_client.disconnect()
+    return ws_client.get_status()
 
 
 @app.post("/api/agent/set-key")
@@ -726,4 +599,4 @@ if __name__ == "__main__":
     print(f"   • Workbench Dashboard: http://127.0.0.1:{port}", flush=True)
     print(f"   • API Observation Endpoint: http://127.0.0.1:{port}/act", flush=True)
     print(f"=======================================================\n", flush=True)
-    uvicorn.run(app, host="127.0.0.1", port=port, log_level="warning")
+    uvicorn.run("actors.cat_agent:app", host="127.0.0.1", port=port, reload=True, log_level="warning")
