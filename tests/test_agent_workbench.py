@@ -267,3 +267,71 @@ def test_workbench_server_connection_endpoints():
     client.post("/api/agent/server/disconnect")
 
 
+def test_reflex_decision_and_target_lock():
+    from actors.cat_heuristic import compute_reflex_decision
+
+    # 1. Test immediate strike zone attack reflex
+    obs_strike = Observation(
+        tick=1,
+        round=0,
+        self={"id": "cat-1", "position": {"x": 5, "y": 5}, "facing": "north"},
+        visible_entities=[{"id": "mouse-1", "type": "mouse", "position": {"x": 5, "y": 4}}],
+        legal_actions=["north", "south", "east", "west", "stay", "attack", "lunge"],
+    )
+    act, thought, meta = compute_reflex_decision(obs_strike)
+    assert act == "attack"
+    assert "strike zone" in thought.lower()
+    assert meta["target_id"] == "mouse-1"
+
+    # 2. Test target-lock pursuit (RuneScape style follow)
+    obs_pursuit = Observation(
+        tick=2,
+        round=0,
+        self={"id": "cat-1", "position": {"x": 10, "y": 10}, "facing": "north"},
+        visible_entities=[
+            {"id": "mouse-1", "type": "mouse", "position": {"x": 10, "y": 2}}, # farther away
+            {"id": "mouse-2", "type": "mouse", "position": {"x": 15, "y": 10}}, # locked target to the east
+        ],
+        legal_actions=["north", "south", "east", "west", "stay"],
+    )
+    # Even though mouse-1 is north, target lock is on mouse-2 (east)
+    act2, thought2, meta2 = compute_reflex_decision(obs_pursuit, locked_target_id="mouse-2", strategy="PURSUIT")
+    assert act2 == "east"
+    assert "mouse-2" in thought2
+    assert meta2["target_id"] == "mouse-2"
+
+
+@pytest.mark.asyncio
+async def test_decoupled_act_async_execution():
+    from actors.cat_agent import act_async, state
+    from unittest.mock import patch, AsyncMock
+    from actors.models import CatTacticalDecision
+
+    obs = Observation(
+        tick=1,
+        round=0,
+        self={"id": "cat-1", "position": {"x": 10, "y": 10}, "facing": "north"},
+        visible_entities=[{"id": "mouse-1", "type": "mouse", "position": {"x": 12, "y": 10}}],
+        legal_actions=["north", "south", "east", "west", "stay", "attack"],
+    )
+
+    # In decoupled mode with credentials, it should respond reflexively in < 5ms without blocking
+    with patch.dict("os.environ", {"GEMINI_API_KEY": "test-key"}):
+        with patch("actors.cat_agent.model_query_adk_gemini", new_callable=AsyncMock) as mock_llm:
+            mock_llm.return_value = (
+                CatTacticalDecision(action="east", thought="Flanking mouse-1", strategy="STALKING", target_mouse_id="mouse-1"),
+                "adk_gemini",
+                None,
+            )
+            # Decoupled call
+            resp = await act_async(obs, decoupled=True)
+            assert resp.action in ["east", "attack", "north", "south", "stay"]
+
+            # Wait briefly for the background task to finish and update active directive
+            if state.deliberation_task:
+                await state.deliberation_task
+            assert state.active_directive is not None
+            assert state.active_directive.get("target_mouse_id") == "mouse-1"
+
+
+

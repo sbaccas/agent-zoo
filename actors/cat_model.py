@@ -119,7 +119,6 @@ async def query_adk_gemini(
 
             pos = obs.self.get("position", {})
             facing = obs.self.get("facing", "north")
-            hp = obs.self.get("hp", 100)
             entities = obs.visible_entities
             legal = obs.legal_actions or ["stay", "north", "south", "east", "west"]
 
@@ -150,7 +149,6 @@ async def query_adk_gemini(
                 f"Agent ID: {obs.self.get('id', agent_id)}\n"
                 f"Current Position: (x={pos.get('x', 0)}, y={pos.get('y', 0)})\n"
                 f"Current Facing: {facing}\n"
-                f"Current HP: {hp}\n"
                 f"Visible Entities in 90° Vision Cone: {entities}\n"
                 f"Legal Actions this tick: {legal}\n"
                 f"Consult your skills manual and choose the single best tactical action strictly from legal actions."

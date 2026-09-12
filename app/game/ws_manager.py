@@ -25,6 +25,8 @@ class WsAgentManager:
         self.agent_metadata: Dict[str, Dict[str, Any]] = {}
         # agent_id -> asyncio.Future for pending actions
         self._pending_actions: Dict[str, asyncio.Future] = {}
+        # agent_id -> latest buffered action from decoupled agents
+        self.action_buffers: Dict[str, Dict[str, Any]] = {}
         self._lock = asyncio.Lock()
 
     async def register(
@@ -96,6 +98,9 @@ class WsAgentManager:
                 if fut and not fut.done():
                     fut.cancel()
 
+                # Clear action buffer
+                self.action_buffers.pop(agent_id, None)
+
                 # Restore simulation entity to auto mode if still in ws mode
                 if sim and sim.entity_manager.get_agent_mode(agent_id) == "ws":
                     sim.entity_manager.set_agent_mode(agent_id, "auto")
@@ -111,10 +116,84 @@ class WsAgentManager:
         return self.connection_agents.get(websocket)
 
     def receive_action(self, agent_id: str, action_data: Dict[str, Any]):
-        """Delivers an incoming action from the WebSocket to any waiting scheduler future."""
+        """Buffers incoming action and delivers to any waiting scheduler future."""
+        self.action_buffers[agent_id] = action_data
         fut = self._pending_actions.get(agent_id)
         if fut and not fut.done():
             fut.set_result(action_data)
+
+    def pop_buffered_action(self, agent_id: str) -> Optional[Dict[str, Any]]:
+        """Pops and returns the latest unconsumed action from the agent's buffer."""
+        return self.action_buffers.pop(agent_id, None)
+
+    def peek_buffered_action(self, agent_id: str) -> Optional[Dict[str, Any]]:
+        """Inspects the latest unconsumed action without removing it."""
+        return self.action_buffers.get(agent_id)
+
+    async def send_observation(
+        self,
+        agent_id: str,
+        obs_payload: Dict[str, Any],
+    ) -> bool:
+        """Asynchronously dispatches an observation to the connected agent without blocking."""
+        websocket = self.active_connections.get(agent_id)
+        if not websocket:
+            return False
+        try:
+            await websocket.send_json({
+                "type": "observation",
+                "tick": obs_payload.get("tick"),
+                "round": obs_payload.get("round"),
+                "payload": obs_payload,
+            })
+            return True
+        except Exception as exc:
+            logger.warning(f"⚠️ [WS AGENT {agent_id}] Error dispatching observation: {exc}")
+            return False
+
+    async def request_action_with_budget(
+        self,
+        agent_id: str,
+        obs_payload: Dict[str, Any],
+        budget_sec: float = 0.5,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Decoupled tick-budget deliberation:
+        1. Dispatches the fresh observation to the agent.
+        2. If an action is already buffered (e.g. from previous deliberation or fast reflex), returns it.
+        3. Otherwise waits up to budget_sec for an action to arrive.
+        4. If the budget elapses without an action, returns None (allowing scheduler to default to 'stay').
+        """
+        websocket = self.active_connections.get(agent_id)
+        if not websocket:
+            return None
+
+        # 1. Dispatch observation
+        sent = await self.send_observation(agent_id, obs_payload)
+        if not sent:
+            return None
+
+        # 2. Check if an action was already queued in buffer
+        buffered = self.pop_buffered_action(agent_id)
+        if buffered:
+            return buffered
+
+        # 3. Wait up to budget_sec
+        loop = asyncio.get_running_loop()
+        fut = loop.create_future()
+        self._pending_actions[agent_id] = fut
+
+        try:
+            action_data = await asyncio.wait_for(fut, timeout=budget_sec)
+            self.action_buffers.pop(agent_id, None)
+            return action_data
+        except asyncio.TimeoutError:
+            return None
+        except Exception as exc:
+            logger.warning(f"⚠️ [WS AGENT {agent_id}] Error waiting for action: {exc}")
+            return None
+        finally:
+            self._pending_actions.pop(agent_id, None)
 
     async def request_action(
         self,

@@ -103,13 +103,15 @@ class Scheduler:
             action_val = None
             if mode == "ws" and ws_agent_manager.has_agent(cat.id):
                 obs = self._build_observation_payload(cat)
-                action_data = await ws_agent_manager.request_action(cat.id, obs, timeout=3.0)
+                action_data = await ws_agent_manager.request_action_with_budget(cat.id, obs, budget_sec=0.8)
                 if action_data:
                     action_val = action_data.get("action")
                     thought = action_data.get("thought", "")
-                    print(f"🤖 [WS AGENT {cat.id} @ Tick {self.tick}] -> {action_val} | Thought: \"{thought}\"", flush=True)
+                    strategy = action_data.get("strategy", "")
+                    print(f"🤖 [WS AGENT {cat.id} @ Tick {self.tick}] -> {action_val} | Strategy: {strategy} | Thought: \"{thought}\"", flush=True)
                 else:
-                    print(f"⚠️ [WS AGENT {cat.id}] Timeout / no action from WS agent (falling back to fast heuristic)", flush=True)
+                    action_val = ActionType.STAY.value
+                    print(f"⏳ [WS AGENT {cat.id} @ Tick {self.tick}] Deliberating in background (hesitating/stay in place)", flush=True)
             elif mode == "http":
                 agent_url = self.entity_manager.get_agent_url(cat.id)
                 err_count = self.consecutive_http_errors.get(cat.id, 0)
@@ -170,13 +172,14 @@ class Scheduler:
             action_val = None
             if mode == "ws" and ws_agent_manager.has_agent(mouse.id):
                 obs = self._build_observation_payload(mouse)
-                action_data = await ws_agent_manager.request_action(mouse.id, obs, timeout=3.0)
+                action_data = await ws_agent_manager.request_action_with_budget(mouse.id, obs, budget_sec=0.8)
                 if action_data:
                     action_val = action_data.get("action")
                     thought = action_data.get("thought", "")
                     print(f"🤖 [WS AGENT {mouse.id} @ Tick {self.tick}] -> {action_val} | Thought: \"{thought}\"", flush=True)
                 else:
-                    print(f"⚠️ [WS AGENT {mouse.id}] Timeout / no action from WS agent", flush=True)
+                    action_val = ActionType.STAY.value
+                    print(f"⏳ [WS AGENT {mouse.id} @ Tick {self.tick}] Deliberating (stay in place)", flush=True)
             elif mode == "http":
                 agent_url = self.entity_manager.get_agent_url(mouse.id)
                 err_count = self.consecutive_http_errors.get(mouse.id, 0)

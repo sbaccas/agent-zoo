@@ -28,6 +28,7 @@ from actors.models import (
 # Heuristic tactical engine
 from actors.cat_heuristic import (
     compute_heuristic_decision,
+    compute_reflex_decision,
     compute_resulting_posture,
 )
 
@@ -71,6 +72,12 @@ class AgentWorkbenchState:
         self.last_engine_error: Optional[str] = None
         self.last_evaluated_tick: Optional[int] = None
 
+        # Decoupled Deliberation & System 1/2 Architecture (AI-02)
+        self.active_directive: Optional[Dict[str, Any]] = None
+        self.deliberation_task: Optional[asyncio.Task] = None
+        self.latest_deliberated_decision: Optional[CatTacticalDecision] = None
+        self.is_deliberating: bool = False
+
 
 # Singleton in-memory state
 state = AgentWorkbenchState()
@@ -100,25 +107,83 @@ def run_sync(coro):
     return asyncio.run(coro)
 
 
-async def act_async(obs: Observation) -> ActionResponse:
-    """Evaluates an observation, arbitrating between manual override, LLM, and heuristic."""
+async def _run_background_deliberation(obs: Observation):
+    """Executes Gemini LLM macro-deliberation in the background without stalling the game clock."""
+    try:
+        state.is_deliberating = True
+        decision, source, err = await model_query_adk_gemini(
+            obs, history=state.history, agent_id=state.agent_id
+        )
+        state.last_engine_source = source
+        state.last_engine_error = err
+        if decision:
+            state.latest_deliberated_decision = decision
+            state.active_directive = {
+                "strategy": decision.strategy,
+                "target_mouse_id": decision.target_mouse_id,
+                "thought": decision.thought,
+                "action": decision.action,
+                "tick": obs.tick,
+            }
+    except Exception as exc:
+        state.last_engine_error = str(exc)
+    finally:
+        state.is_deliberating = False
+
+
+async def act_async(obs: Observation, decoupled: bool = False) -> ActionResponse:
+    """Evaluates an observation, arbitrating between manual override, LLM, and fast reflex."""
     obs_dict = obs.model_dump()
     legal = obs.legal_actions or ["stay", "north", "south", "east", "west"]
 
-    # 1. Compute autonomous baseline heuristic
-    auto_action, auto_thought, auto_meta = compute_heuristic_decision(obs)
-    auto_meta["engine"] = "heuristic"
+    active_dir = state.active_directive or {}
+    locked_target = active_dir.get("target_mouse_id") or None
+    active_strat = active_dir.get("strategy") or "ROAMING"
 
-    # 2. Consult Google ADK Gemini 2.5 Flash if credentials are present
-    if has_gemini_credentials():
-        llm_decision = await query_adk_gemini(obs)
-        if llm_decision and llm_decision.action in legal:
+    if decoupled and has_gemini_credentials():
+        # System 1 / System 2 Decoupled Deliberation (AI-02):
+        # 1. Did a background Gemini deliberation task just complete?
+        if state.latest_deliberated_decision and state.latest_deliberated_decision.action in legal:
+            llm_decision = state.latest_deliberated_decision
+            state.latest_deliberated_decision = None
             auto_action = llm_decision.action
             auto_thought = llm_decision.thought
+            auto_meta = {
+                "engine": "adk_gemini",
+                "strategy": llm_decision.strategy,
+                "target_mouse_id": llm_decision.target_mouse_id,
+                "phase": llm_decision.strategy,
+            }
+        else:
+            # 2. Fast Reflex System 1 (Strike-Zone pounce / target-lock pursuit / roaming)
+            auto_action, auto_thought, auto_meta = compute_reflex_decision(
+                obs, locked_target_id=locked_target, strategy=active_strat
+            )
             auto_meta["engine"] = "adk_gemini"
-            auto_meta["strategy"] = llm_decision.strategy
-            auto_meta["target_mouse_id"] = llm_decision.target_mouse_id
-            auto_meta["phase"] = llm_decision.strategy
+
+        # 3. Trigger background deliberation task if free
+        if not state.is_deliberating and (state.deliberation_task is None or state.deliberation_task.done()):
+            state.deliberation_task = asyncio.create_task(_run_background_deliberation(obs))
+    else:
+        # Standard synchronous path (used for direct HTTP /act calls or deterministic testing)
+        auto_action, auto_thought, auto_meta = compute_heuristic_decision(obs)
+        auto_meta["engine"] = "heuristic"
+
+        if has_gemini_credentials():
+            llm_decision = await query_adk_gemini(obs)
+            if llm_decision and llm_decision.action in legal:
+                auto_action = llm_decision.action
+                auto_thought = llm_decision.thought
+                auto_meta["engine"] = "adk_gemini"
+                auto_meta["strategy"] = llm_decision.strategy
+                auto_meta["target_mouse_id"] = llm_decision.target_mouse_id
+                auto_meta["phase"] = llm_decision.strategy
+                state.active_directive = {
+                    "strategy": llm_decision.strategy,
+                    "target_mouse_id": llm_decision.target_mouse_id,
+                    "thought": llm_decision.thought,
+                    "tick": obs.tick,
+                }
 
     # 3. Check for human manual override
     chosen_action = auto_action
@@ -307,7 +372,7 @@ class WsClientManager:
                             if init_obs and isinstance(init_obs, dict) and "self" in init_obs:
                                 try:
                                     obs_obj = Observation(**init_obs)
-                                    await act_async(obs_obj)
+                                    await act_async(obs_obj, decoupled=True)
                                 except Exception:
                                     pass
 
@@ -315,7 +380,7 @@ class WsClientManager:
                             obs_dict = data.get("payload", {})
                             try:
                                 obs_obj = Observation(**obs_dict)
-                                action_resp = await act_async(obs_obj)
+                                action_resp = await act_async(obs_obj, decoupled=True)
                                 meta = state.latest_autonomous.get("meta", {}) if state.latest_autonomous else {}
                                 resp_msg = {
                                     "type": "action",
@@ -401,7 +466,6 @@ async def sync_live_observation(agent_id: Optional[str] = None) -> bool:
                         "type": self_info.get("type", "cat"),
                         "position": self_info.get("position", {"x": 0, "y": 0}),
                         "facing": self_info.get("facing", "north"),
-                        "hp": self_info.get("hp", 100),
                     },
                     "visible_entities": data.get("visible_entities", []),
                     "legal_actions": data.get("legal_actions", ["stay", "north", "south", "east", "west", "attack", "lunge"]),
@@ -519,6 +583,8 @@ async def get_agent_state(sync: bool = False, agent_id: Optional[str] = None) ->
         "gcp_project": os.environ.get("GOOGLE_CLOUD_PROJECT", ""),
         "last_engine_source": state.last_engine_source,
         "last_engine_error": state.last_engine_error,
+        "is_deliberating": state.is_deliberating,
+        "active_directive": state.active_directive,
     }
 
 

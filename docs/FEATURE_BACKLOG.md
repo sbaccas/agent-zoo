@@ -50,14 +50,17 @@ A living backlog tracking architectural initiatives, gameplay mechanics, and age
   - **Future Roadmap**: Extensible to vector-based Retrieval-Augmented Generation (RAG) and inter-agent memory sharing.
 
 ### `AI-02`: Asynchronous Thinking & Decoupled Clock Deliberation
-- **Status**: 📋 Backlog (High Priority)
+- **Status**: ✅ Done (Implemented Sept 12)
 - **Target**: Authoritative Game Server & Agent Clients
-- **Description**: Decouple agent deliberation latency from the simulation clock so the authoritative server progresses without stalling for external LLM calls.
-- **Key Capabilities**:
-  - The authoritative simulation advances on a steady tick cadence.
-  - Observations are dispatched asynchronously to agents over WebSockets.
-  - If Gemini completes its decision (~1.2s) before the tick window closes, the action is queued and resolved at the tick barrier.
-  - If deliberation exceeds the tick budget, the server automatically defaults the agent's turn to `stay` (hesitation/thinking in place) without halting other entities or freezing the world.
+- **Description**: Decouple agent deliberation latency from the simulation clock so the authoritative server progresses without stalling for external LLM calls, implementing RuneScape-style target-lock combat and fast spinal reflexes.
+- **Delivered Capabilities**:
+  - Authoritative simulation advances on a steady tick cadence without stalling for LLM round-trips.
+  - Non-blocking observation dispatch over WebSockets via `send_observation` and `action_buffers`.
+  - Game scheduler implements `request_action_with_budget(budget_sec=0.8)`: defaults to `stay` (hesitation) if budget elapses, preventing game freezes.
+  - Cat Agent System 1/2 Architecture:
+    - **System 1 (Fast Reflexes)**: Instantaneous execution of strike-zone pounces, gap-closing lunges, and RuneScape-style target-lock pursuit (`compute_reflex_decision`).
+    - **System 2 (Gemini Deliberation)**: Asynchronous background macro-strategic reasoning (`_run_background_deliberation`), dynamically steering target locks and tactical directives.
+  - Removed legacy phantom `HP` chip from UI and prompts, keeping data strictly authoritative.
 
 ### `AI-03`: Agent-to-Agent (A2A) Coordination & Communication
 - **Status**: 💡 Future Discovery

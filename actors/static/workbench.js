@@ -48,7 +48,7 @@
   // DOM Elements - Box 1: Observation
   const chipPos = document.getElementById('chipPos');
   const chipFacing = document.getElementById('chipFacing');
-  const chipHp = document.getElementById('chipHp');
+  const chipRound = document.getElementById('chipRound');
   const chipVisible = document.getElementById('chipVisible');
   const obsJsonViewer = document.getElementById('obsJsonViewer');
   const btnCopyObs = document.getElementById('btnCopyObs');
@@ -152,7 +152,7 @@
     if (!obs) {
       chipPos.textContent = '--';
       chipFacing.textContent = '--';
-      chipHp.textContent = '--';
+      chipRound.textContent = '--';
       chipVisible.textContent = '--';
       obsJsonViewer.textContent = '// Waiting for observations from simulation server...';
       if (obsSubtitleChip) obsSubtitleChip.textContent = 'Server ➔ Cat';
@@ -163,7 +163,7 @@
     const pos = selfInfo.position || { x: '?', y: '?' };
     chipPos.textContent = `(${pos.x}, ${pos.y})`;
     chipFacing.textContent = (selfInfo.facing || 'north').toUpperCase();
-    chipHp.textContent = selfInfo.hp !== undefined ? `${selfInfo.hp} / 100` : '--';
+    chipRound.textContent = obs.round !== undefined ? `#${obs.round}` : '--';
 
     const visible = obs.visible_entities || [];
     const mice = visible.filter((e) => e.type === 'mouse');
