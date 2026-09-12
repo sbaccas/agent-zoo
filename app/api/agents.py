@@ -98,7 +98,7 @@ async def submit_agent_action(sim_id: str, agent_id: str, req: ActionRequest, st
     if not entity.alive:
         raise HTTPException(status_code=410, detail=f"Agent '{agent_id}' is dead")
 
-    # 1. Apply player's intended action
+    # 1. Apply player's intended action (fails if entity is in animation cooldown lock)
     result = sim.action_handler.apply_action(entity, req.action, sim.scheduler.tick)
 
     # 2. If action resulted in captures, update counters and log event
@@ -120,8 +120,8 @@ async def submit_agent_action(sim_id: str, agent_id: str, req: ActionRequest, st
                 message=msg,
             ))
 
-    # 3. Synchronize simulation clock: advance world 1 tick so other animals react
-    if step and sim.status != SimulationStatus.RUNNING:
+    # 3. Synchronize simulation clock: advance world 1 tick so other animals react (only if action was accepted)
+    if step and sim.status != SimulationStatus.RUNNING and result.accepted:
         sim._save_snapshot()
         await sim.scheduler.execute_simulation_step(skip_entity_id=agent_id)
 

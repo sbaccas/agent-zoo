@@ -5,6 +5,8 @@ from app.models.simulation import (
     ModifyPopulationRequest,
     SimulationConfig,
     SimulationStateResponse,
+    SpeciesConfig,
+    UpdateSpeciesConfigRequest,
     UpdateTickRateRequest,
 )
 
@@ -110,3 +112,28 @@ async def modify_entities(sim_id: str, req: ModifyPopulationRequest):
         return {"species": req.species, "new_count": new_count}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/{sim_id}/species", response_model=Dict[str, SpeciesConfig])
+async def get_species_configs(sim_id: str):
+    sim = get_simulation_or_404(sim_id)
+    return sim.entity_manager.species_config
+
+
+@router.patch("/{sim_id}/species/{species_key}", response_model=SpeciesConfig)
+async def update_species_config(sim_id: str, species_key: str, req: UpdateSpeciesConfigRequest):
+    sim = get_simulation_or_404(sim_id)
+    key = species_key.lower()
+    if key not in sim.entity_manager.species_config:
+        raise HTTPException(status_code=404, detail=f"Species '{species_key}' not found in simulation")
+
+    current = sim.entity_manager.species_config[key]
+    updates = req.model_dump(exclude_unset=True)
+    for field, val in updates.items():
+        if val is not None:
+            setattr(current, field, val)
+
+    # Keep config model synchronized
+    sim.config.species[key] = current
+    return current
+

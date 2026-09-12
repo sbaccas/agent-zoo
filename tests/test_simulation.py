@@ -183,3 +183,125 @@ async def test_mouse_cannot_lunge():
     assert res.accepted is False
 
 
+@pytest.mark.asyncio
+async def test_pacing_mouse_moves_1_tile_every_2_ticks():
+    """Verifies that mice move at a pace of 1 tile every 2 ticks (move_cooldown = 2)."""
+    from app.models.action import ActionType
+    from app.models.entity import Direction, EntityType, Position
+    sim = Simulation(config=SimulationConfig(populations={"cats": 0, "mice": 0}))
+    mouse = sim.entity_manager.spawn_entity(EntityType.MOUSE, pos=Position(x=10, y=10), facing=Direction.EAST)
+
+    # Initial state
+    assert mouse.position.x == 10
+    assert mouse.action_cooldown == 0
+
+    # Tick 1: Mouse moves East
+    res1 = sim.action_handler.apply_action(mouse, ActionType.EAST, current_tick=1)
+    assert res1.accepted is True
+    assert mouse.position.x == 11
+    assert mouse.action_cooldown == 1  # 2 ticks total: tick 1 active, 1 tick recovery
+    assert mouse.locked_action == "east"
+
+    # Tick 2: Mouse is animation-locked, cannot act
+    res_locked = sim.action_handler.apply_action(mouse, ActionType.EAST, current_tick=2)
+    assert res_locked.accepted is False
+    assert "locked in action 'east'" in res_locked.message
+
+    # Scheduler steps logical clock to tick 2: cooldown decrements 1 -> 0
+    await sim.step()
+    assert mouse.position.x == 11  # Still at tile (11, 10), did not move on tick 2
+    assert mouse.action_cooldown == 0
+    assert mouse.locked_action is None
+
+    # Tick 3: Cooldown is 0, mouse is ready to move again!
+    res3 = sim.action_handler.apply_action(mouse, ActionType.EAST, current_tick=3)
+    assert res3.accepted is True
+    assert mouse.position.x == 12  # Now at tile (12, 10)
+    assert mouse.action_cooldown == 1
+
+
+@pytest.mark.asyncio
+async def test_pacing_cat_moves_1_tile_every_3_ticks():
+    """Verifies that cats move at a pace of 1 tile every 3 ticks (move_cooldown = 3)."""
+    from app.models.action import ActionType
+    from app.models.entity import Direction, EntityType, Position
+    sim = Simulation(config=SimulationConfig(populations={"cats": 0, "mice": 0}))
+    cat = sim.entity_manager.spawn_entity(EntityType.CAT, pos=Position(x=10, y=10), facing=Direction.EAST)
+
+    # Tick 1: Cat moves East
+    res1 = sim.action_handler.apply_action(cat, ActionType.EAST, current_tick=1)
+    assert res1.accepted is True
+    assert cat.position.x == 11
+    assert cat.action_cooldown == 2  # 3 ticks total: tick 1 active, 2 ticks recovery
+    assert cat.locked_action == "east"
+
+    # Tick 2: Locked (cooldown 2 -> 1)
+    res_locked = sim.action_handler.apply_action(cat, ActionType.EAST, current_tick=2)
+    assert res_locked.accepted is False
+    await sim.step()
+    assert cat.position.x == 11  # Still at tile 11
+    assert cat.action_cooldown == 1
+    assert cat.locked_action == "east"
+
+    # Tick 3: Still locked (cooldown 1 -> 0)
+    res_locked2 = sim.action_handler.apply_action(cat, ActionType.EAST, current_tick=3)
+    assert res_locked2.accepted is False
+    await sim.step()
+    assert cat.position.x == 11  # Still at tile 11
+    assert cat.action_cooldown == 0
+    assert cat.locked_action is None
+
+    # Tick 4: Cooldown complete, Cat moves again!
+    res4 = sim.action_handler.apply_action(cat, ActionType.EAST, current_tick=4)
+    assert res4.accepted is True
+    assert cat.position.x == 12
+    assert cat.action_cooldown == 2
+
+
+@pytest.mark.asyncio
+async def test_hyperparameter_species_config_live_tuning():
+    """Verifies that games hyperparameters (cooldowns, attack AoE range) can be customized and tested."""
+    from app.models.action import ActionType
+    from app.models.entity import Direction, EntityType, Position
+    from httpx import ASGITransport, AsyncClient
+    from app.main import app
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        # Create simulation
+        sim_res = await client.post("/api/simulations")
+        assert sim_res.status_code == 200
+        sim_id = sim_res.json()["simulation_id"]
+
+        # 1. Inspect default hyperparameters via GET /species
+        get_res = await client.get(f"/api/simulations/{sim_id}/species")
+        assert get_res.status_code == 200
+        species_data = get_res.json()
+        assert species_data["cat"]["move_cooldown"] == 3
+        assert species_data["cat"]["attack_range"] == 2
+        assert species_data["mouse"]["move_cooldown"] == 2
+
+        # 2. Live tune cat attack_range to 3 tiles and move_cooldown to 1 (fastest)
+        patch_res = await client.patch(
+            f"/api/simulations/{sim_id}/species/cat",
+            json={"attack_range": 3, "move_cooldown": 1},
+        )
+        assert patch_res.status_code == 200
+        updated = patch_res.json()
+        assert updated["attack_range"] == 3
+        assert updated["move_cooldown"] == 1
+
+        # 3. Test that cat slash AoE now hits target 3 tiles ahead
+        from app.api.admin import get_simulation_or_404
+        sim = get_simulation_or_404(sim_id)
+        cat = sim.entity_manager.spawn_entity(EntityType.CAT, pos=Position(x=10, y=10), facing=Direction.EAST)
+        # Mouse 3 squares ahead at (13, 10)
+        mouse = sim.entity_manager.spawn_entity(EntityType.MOUSE, pos=Position(x=13, y=10), facing=Direction.WEST)
+
+        slash_res = sim.action_handler.apply_action(cat, ActionType.ATTACK, current_tick=1)
+        assert slash_res.accepted is True
+        assert mouse.id in slash_res.affected_entities
+        assert mouse.alive is False
+
+
+

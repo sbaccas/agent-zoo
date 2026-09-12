@@ -6,6 +6,13 @@ from app.api.admin import get_or_create_default_sim
 from app.game.ws_manager import ws_agent_manager
 
 
+@pytest.fixture(autouse=True)
+def reset_default_simulation():
+    import app.api.admin as admin
+    admin.default_sim_id = None
+    admin.simulations.clear()
+
+
 def test_ws_agent_invalid_handshake():
     with TestClient(app) as client:
         with client.websocket_connect("/ws/agents") as ws:
@@ -97,9 +104,9 @@ def test_ws_agent_decoupled_deliberation_and_timeout():
             # 1. Test pre-buffering an action before tick starts
             ws_agent_manager.receive_action("cat-1", {
                 "type": "action",
-                "action": "south",
+                "action": "stay",
                 "thought": "Pre-buffered fast reflex action",
-                "strategy": "PURSUIT",
+                "strategy": "ROAMING",
             })
             assert ws_agent_manager.peek_buffered_action("cat-1") is not None
 

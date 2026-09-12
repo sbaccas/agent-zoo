@@ -3,6 +3,14 @@ from httpx import ASGITransport, AsyncClient
 from app.main import app
 
 
+@pytest.fixture(autouse=True)
+def reset_admin_simulations():
+    import app.api.admin as admin
+    admin.default_sim_id = None
+    admin.simulations.clear()
+
+
+
 @pytest.mark.asyncio
 async def test_get_simulation_state():
     transport = ASGITransport(app=app)
@@ -141,9 +149,19 @@ async def test_agent_action_facing_and_payload_consistency():
         assert obs_w["self"]["facing"] == "west"
         assert obs_w["self"]["position"] == pos_after_w
 
-        # Now move cat-1 from west to east
+        # Attempting immediate move while animation locked should be rejected (OSRS action lock)
+        res_locked = await client.post(f"/api/simulations/{sim_id}/agents/cat-1/actions?step=false", json={"action": "east"})
+        assert res_locked.status_code == 200
+        assert res_locked.json()["accepted"] is False
+
+        # Advance 2 simulation steps to allow cat-1's 3-tick move cooldown to elapse
+        await client.post(f"/api/simulations/{sim_id}/step")
+        await client.post(f"/api/simulations/{sim_id}/step")
+
+        # Now move cat-1 from west to east once cooldown is 0
         res_e = await client.post(f"/api/simulations/{sim_id}/agents/cat-1/actions?step=true", json={"action": "east"})
         assert res_e.status_code == 200
+        assert res_e.json()["accepted"] is True
         assert res_e.json()["action"] == "east"
         pos_after_e = res_e.json()["new_position"]
         assert pos_after_e["x"] == pos_after_w["x"] + 1

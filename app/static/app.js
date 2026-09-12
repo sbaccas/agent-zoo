@@ -198,6 +198,18 @@
         ctx.restore();
       }
 
+      // OSRS action lock / cooldown ring
+      if (e.action_cooldown && e.action_cooldown > 0) {
+        ctx.save();
+        ctx.strokeStyle = isCat ? '#f59e0b' : '#38bdf8';
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([2, 2]);
+        ctx.beginPath();
+        ctx.arc(0, 0, bgRadius + 2.5, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+      }
+
       ctx.restore();
     }
   }
@@ -395,8 +407,13 @@
     }
 
     const self = obs.self;
+    const isLocked = Boolean(self.action_cooldown && self.action_cooldown > 0);
     hudAgentId.textContent = `${self.id} (${self.type.toUpperCase()}) @ (${self.position.x}, ${self.position.y})`;
-    hudAgentFacing.textContent = `Facing: ⬆ ${self.facing.toUpperCase()}`;
+    if (isLocked) {
+      hudAgentFacing.textContent = `Facing: ⬆ ${self.facing.toUpperCase()} | ⏳ LOCKED (${self.action_cooldown}t: ${self.locked_action || 'moving'})`;
+    } else {
+      hudAgentFacing.textContent = `Facing: ⬆ ${self.facing.toUpperCase()} | ⚡ READY`;
+    }
 
     // Vision list
     hudVisionList.replaceChildren();
@@ -421,11 +438,21 @@
       }
     }
 
+    // Directional Dpad buttons: disable when animation locked
+    if (dpadUp) dpadUp.disabled = isLocked;
+    if (dpadDown) dpadDown.disabled = isLocked;
+    if (dpadLeft) dpadLeft.disabled = isLocked;
+    if (dpadRight) dpadRight.disabled = isLocked;
+    if (dpadStay) dpadStay.disabled = isLocked;
+
     // Slash Attack & Lunge Buttons
     const legal = obs.legal_actions || [];
     if (self.type === 'cat') {
       btnAttack.style.display = 'block';
-      if (legal.includes('attack')) {
+      if (isLocked) {
+        btnAttack.disabled = true;
+        btnAttack.textContent = `⚔️ Slash Attack (Locked: ${self.action_cooldown}t)`;
+      } else if (legal.includes('attack')) {
         btnAttack.disabled = false;
         btnAttack.textContent = '⚔️ Slash Attack (Ready!)';
       } else {
@@ -435,7 +462,10 @@
 
       if (btnLunge) {
         btnLunge.style.display = 'block';
-        if (legal.includes('lunge')) {
+        if (isLocked) {
+          btnLunge.disabled = true;
+          btnLunge.textContent = `⚡ Forward Lunge (Locked: ${self.action_cooldown}t)`;
+        } else if (legal.includes('lunge')) {
           btnLunge.disabled = false;
           btnLunge.textContent = '⚡ Forward Lunge (Ready!)';
         } else {

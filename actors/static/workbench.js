@@ -49,6 +49,7 @@
   const chipPos = document.getElementById('chipPos');
   const chipFacing = document.getElementById('chipFacing');
   const chipRound = document.getElementById('chipRound');
+  const chipCooldown = document.getElementById('chipCooldown');
   const chipVisible = document.getElementById('chipVisible');
   const obsJsonViewer = document.getElementById('obsJsonViewer');
   const btnCopyObs = document.getElementById('btnCopyObs');
@@ -153,6 +154,10 @@
       chipPos.textContent = '--';
       chipFacing.textContent = '--';
       chipRound.textContent = '--';
+      if (chipCooldown) {
+        chipCooldown.textContent = '--';
+        chipCooldown.style.color = '';
+      }
       chipVisible.textContent = '--';
       obsJsonViewer.textContent = '// Waiting for observations from simulation server...';
       if (obsSubtitleChip) obsSubtitleChip.textContent = 'Server ➔ Cat';
@@ -164,6 +169,17 @@
     chipPos.textContent = `(${pos.x}, ${pos.y})`;
     chipFacing.textContent = (selfInfo.facing || 'north').toUpperCase();
     chipRound.textContent = obs.round !== undefined ? `#${obs.round}` : '--';
+
+    if (chipCooldown) {
+      const cd = selfInfo.action_cooldown;
+      if (cd && cd > 0) {
+        chipCooldown.textContent = `⏳ Locked (${cd}t: ${selfInfo.locked_action || 'acting'})`;
+        chipCooldown.style.color = '#ea580c';
+      } else {
+        chipCooldown.textContent = '⚡ Ready';
+        chipCooldown.style.color = '#10b981';
+      }
+    }
 
     const visible = obs.visible_entities || [];
     const mice = visible.filter((e) => e.type === 'mouse');

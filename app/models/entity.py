@@ -1,4 +1,5 @@
 from enum import Enum
+from typing import Optional
 from pydantic import BaseModel, Field
 
 
@@ -29,3 +30,5 @@ class Entity(BaseModel):
     facing: Direction = Direction.NORTH
     alive: bool = True
     weight: int = 1
+    action_cooldown: int = 0
+    locked_action: Optional[str] = None

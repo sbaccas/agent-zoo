@@ -168,13 +168,13 @@ class World:
             elif self.is_in_bounds(tx, ty):
                 tiles.append((tx, ty))
 
-        # If range >= 2, add tile 2 steps directly ahead
-        if range_tiles >= 2:
-            tx2 = pos.x + dx * 2
-            ty2 = pos.y + dy * 2
+        # Add tiles directly ahead for each distance from 2 up to range_tiles
+        for r in range(2, range_tiles + 1):
+            tx_r = pos.x + dx * r
+            ty_r = pos.y + dy * r
             if self.topology == Topology.TORUS:
-                tiles.append(self.wrap_position(tx2, ty2))
-            elif self.is_in_bounds(tx2, ty2):
-                tiles.append((tx2, ty2))
+                tiles.append(self.wrap_position(tx_r, ty_r))
+            elif self.is_in_bounds(tx_r, ty_r):
+                tiles.append((tx_r, ty_r))
 
         return list(set(tiles))

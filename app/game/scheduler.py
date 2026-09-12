@@ -52,6 +52,8 @@ class Scheduler:
                         "type": other.type.value,
                         "position": {"x": other.position.x, "y": other.position.y},
                         "facing": other.facing.value,
+                        "action_cooldown": other.action_cooldown,
+                        "locked_action": other.locked_action,
                     })
         else:
             for other in self.entity_manager.get_alive_entities():
@@ -64,10 +66,13 @@ class Scheduler:
                         "type": other.type.value,
                         "position": {"x": other.position.x, "y": other.position.y},
                         "facing": other.facing.value,
+                        "action_cooldown": other.action_cooldown,
+                        "locked_action": other.locked_action,
                     })
 
         allow_attack = (entity.type == EntityType.CAT)
         legal_actions = [a.value for a in self.world.get_legal_actions(entity.position, allow_attack=allow_attack, facing=entity.facing)]
+
         return {
             "tick": self.tick,
             "round": self.round,
@@ -76,6 +81,9 @@ class Scheduler:
                 "type": entity.type.value,
                 "position": {"x": entity.position.x, "y": entity.position.y},
                 "facing": entity.facing.value,
+                "action_cooldown": entity.action_cooldown,
+                "locked_action": entity.locked_action,
+                "ready_to_act": (entity.action_cooldown == 0),
             },
             "visible_entities": visible,
             "legal_actions": legal_actions,
@@ -96,6 +104,17 @@ class Scheduler:
                 continue
 
             mode = self.entity_manager.get_agent_mode(cat.id)
+
+            # OSRS action lock: if cat is recovering/animating previous action, decrement and skip turn
+            if cat.action_cooldown > 0:
+                cat.action_cooldown -= 1
+                if cat.action_cooldown == 0:
+                    cat.locked_action = None
+                if mode == "ws" and ws_agent_manager.has_agent(cat.id):
+                    obs = self._build_observation_payload(cat)
+                    await ws_agent_manager.send_observation(cat.id, obs)
+                continue
+
             if mode == "manual":
                 # Controlled manually by human player via UI / HTTP
                 continue
@@ -165,6 +184,17 @@ class Scheduler:
                 continue
 
             mode = self.entity_manager.get_agent_mode(mouse.id)
+
+            # OSRS action lock: if mouse is recovering/animating previous action, decrement and skip turn
+            if mouse.action_cooldown > 0:
+                mouse.action_cooldown -= 1
+                if mouse.action_cooldown == 0:
+                    mouse.locked_action = None
+                if mode == "ws" and ws_agent_manager.has_agent(mouse.id):
+                    obs = self._build_observation_payload(mouse)
+                    await ws_agent_manager.send_observation(mouse.id, obs)
+                continue
+
             if mode == "manual":
                 # Controlled manually by human player via UI / HTTP
                 continue

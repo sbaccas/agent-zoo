@@ -26,6 +26,7 @@ class ActionResult(BaseModel):
     action: ActionType
     affected_entities: List[str] = []
     message: Optional[str] = None
+    cooldown: int = 0
 
 
 class ObservationResponse(BaseModel):

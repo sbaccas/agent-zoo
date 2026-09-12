@@ -74,16 +74,26 @@ A living backlog tracking architectural initiatives, gameplay mechanics, and age
 
 ## 🎮 Game Features
 
-### `GAME-01`: Action Durations & Tick Cost Economics
-- **Status**: 📋 Backlog (High Priority)
-- **Target**: World Engine & Rules (`app/game/rules.py`, `app/game/world.py`)
-- **Description**: Generalize atomic 1-tick actions into duration-based commitments with distinct tick costs and recovery locks.
-- **Action Economics**:
-  - `stay`: 1 tick.
-  - Standard Step (`north`, `south`, `east`, `west`): 1 tick.
-  - `lunge`: 2 ticks (high-velocity 2-tile burst; 1 tick recovery).
-  - `attack` / `slash`: 3 ticks (1 tick windup/strike, 2 ticks recovery lock).
-- **Tactical Impact**: Missed attacks create tactical openings for prey evasion. Entities have an `action_lock` / `busy_until_tick` state preventing overlapping actions.
+### `GAME-01`: Action Durations & OSRS-Style Tick Pacing System
+- **Status**: ✅ Done (Implemented Sept 12)
+- **Target**: World Engine & Simulation Scheduler (`app/game/actions.py`, `app/game/scheduler.py`, `app/models/simulation.py`)
+- **Description**: Replaced 1-tile/tick baseline with Old School RuneScape (OSRS) tick pacing and action animation locks.
+- **Delivered Capabilities**:
+  - **Differentiated Movement Pacing**:
+    - **Mice**: 1 tile every 2 ticks (`move_cooldown: 2`). Fast and nimble foragers.
+    - **Cats**: 1 tile every 3 ticks (`move_cooldown: 3`). Deliberate stalkers.
+    - **Fastest Possible Limit**: 1 tile per tick is the absolute fastest max limit (e.g. Cat Lunge covers 2 tiles in 2 ticks = 1 tile/tick).
+  - **OSRS Action Animation Lock**:
+    - When an action is initiated, entity enters `action_cooldown` lock (`locked_action`).
+    - During cooldown ticks, entity is locked in animation: premature inputs are rejected with `accepted: False`.
+    - Once cooldown decrements to 0, the entity is unlocked and can input its next move.
+  - **Configurable Hyperparameters & Live Tuning API**:
+    - `SpeciesConfig` exposes `move_cooldown`, `attack_cooldown`, `lunge_cooldown`, `attack_range`, `vision_radius`, `weight`.
+    - `GET /api/simulations/{id}/species`: inspect hyperparameters.
+    - `PATCH /api/simulations/{id}/species/{species_key}`: live tune hyperparameters at runtime.
+  - **Visualizer & Workbench Cooldown Indicators**:
+    - Game visualizer displays animated dashed cooldown rings around locked actors and lock badges in HUD.
+    - Cat Workbench displays `chipCooldown` (`⚡ Ready` vs `⏳ Locked (2t: east)`).
 
 ### `GAME-02`: Calorie & Metabolic Pressure System
 - **Status**: 📋 Backlog (Medium Priority)
