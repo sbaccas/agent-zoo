@@ -32,12 +32,17 @@ async def register_agent(sim_id: str, agent_id: str, req: RegisterAgentRequest):
     if agent_id not in sim.entity_manager.entities:
         raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found")
 
-    sim.entity_manager.set_agent_mode(agent_id, req.mode, req.agent_url)
+    from app.game.ws_manager import ws_agent_manager
+    effective_mode = req.mode
+    if effective_mode == "auto" and ws_agent_manager.has_agent(agent_id):
+        effective_mode = "ws"
+
+    sim.entity_manager.set_agent_mode(agent_id, effective_mode, req.agent_url)
     return {
         "agent_id": agent_id,
-        "mode": req.mode,
+        "mode": effective_mode,
         "agent_url": req.agent_url,
-        "message": f"Agent {agent_id} configured as {req.mode}",
+        "message": f"Agent {agent_id} configured as {effective_mode}",
     }
 
 

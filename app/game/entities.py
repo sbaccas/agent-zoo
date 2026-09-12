@@ -22,7 +22,13 @@ class EntityManager:
             self.agent_urls.pop(entity_id, None)
 
     def get_agent_mode(self, entity_id: str) -> str:
-        return self.agent_modes.get(entity_id, "auto")
+        explicit_mode = self.agent_modes.get(entity_id)
+        if explicit_mode == "manual":
+            return "manual"
+        from app.game.ws_manager import ws_agent_manager
+        if ws_agent_manager.has_agent(entity_id):
+            return "ws"
+        return explicit_mode or "auto"
 
     def get_agent_url(self, entity_id: str) -> Optional[str]:
         return self.agent_urls.get(entity_id)

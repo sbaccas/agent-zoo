@@ -56,6 +56,26 @@
   const btnAttack = document.getElementById('btnAttack');
   const btnLunge = document.getElementById('btnLunge');
 
+  // Game Settings Modal Elements
+  const btnOpenSettings = document.getElementById('btnOpenSettings');
+  const btnCloseSettings = document.getElementById('btnCloseSettings');
+  const btnCancelSettings = document.getElementById('btnCancelSettings');
+  const btnSaveSettings = document.getElementById('btnSaveSettings');
+  const btnResetSettings = document.getElementById('btnResetSettings');
+  const settingsModal = document.getElementById('settingsModal');
+  const settingsFeedback = document.getElementById('settingsFeedback');
+
+  const settingCatMove = document.getElementById('settingCatMove');
+  const settingCatAttackRange = document.getElementById('settingCatAttackRange');
+  const settingCatAttackCd = document.getElementById('settingCatAttackCd');
+  const settingCatLungeCd = document.getElementById('settingCatLungeCd');
+  const settingCatVision = document.getElementById('settingCatVision');
+  const settingCatWeight = document.getElementById('settingCatWeight');
+
+  const settingMouseMove = document.getElementById('settingMouseMove');
+  const settingMouseVision = document.getElementById('settingMouseVision');
+  const settingMouseWeight = document.getElementById('settingMouseWeight');
+
   let currentSimId = 'active';
   let pollTimeout = null;
   let currentState = null;
@@ -198,18 +218,6 @@
         ctx.restore();
       }
 
-      // OSRS action lock / cooldown ring
-      if (e.action_cooldown && e.action_cooldown > 0) {
-        ctx.save();
-        ctx.strokeStyle = isCat ? '#f59e0b' : '#38bdf8';
-        ctx.lineWidth = 1.5;
-        ctx.setLineDash([2, 2]);
-        ctx.beginPath();
-        ctx.arc(0, 0, bgRadius + 2.5, 0, Math.PI * 2);
-        ctx.stroke();
-        ctx.restore();
-      }
-
       ctx.restore();
     }
   }
@@ -346,10 +354,6 @@
     const res = await apiCall(`/api/simulations/${currentSimId}/agents/${selectedAgentId}/register`, 'POST', body);
     if (res) {
       updateModeButtons(mode);
-      if (mode === 'manual' && currentState && currentState.status === 'running') {
-        const pauseRes = await apiCall(`/api/simulations/${currentSimId}/pause`, 'POST');
-        if (pauseRes) updateUI(pauseRes);
-      }
       refreshAgentHUD();
     }
   }
@@ -376,11 +380,18 @@
     if (agentSelect) agentSelect.value = selectedAgentId;
     if (agentHud) agentHud.style.display = 'block';
 
-    // Immediately set to manual mode & pause continuous timer so player controls the turns
-    await setAgentMode('manual');
-    if (currentState && currentState.status === 'running') {
-      const pauseRes = await apiCall(`/api/simulations/${currentSimId}/pause`, 'POST');
-      if (pauseRes) updateUI(pauseRes);
+    // Fetch the agent's current mode from backend so we reflect reality without clobbering
+    try {
+      const agents = await apiCall(`/api/simulations/${currentSimId}/agents`, 'GET');
+      if (agents && Array.isArray(agents)) {
+        const found = agents.find(a => a.id === selectedAgentId);
+        const mode = (found && found.mode) ? found.mode : 'auto';
+        updateModeButtons(mode);
+      } else {
+        updateModeButtons('auto');
+      }
+    } catch {
+      updateModeButtons('auto');
     }
 
     refreshAgentHUD();
@@ -568,7 +579,13 @@
     btnDeselectAgent.addEventListener('click', () => selectAgent(null));
   }
   if (btnModeAuto) {
-    btnModeAuto.addEventListener('click', () => setAgentMode('auto'));
+    btnModeAuto.addEventListener('click', async () => {
+      await setAgentMode('auto');
+      if (currentState && currentState.status === 'paused') {
+        const startRes = await apiCall(`/api/simulations/${currentSimId}/start`, 'POST');
+        if (startRes) updateUI(startRes);
+      }
+    });
   }
   if (btnModeManual) {
     btnModeManual.addEventListener('click', () => setAgentMode('manual'));
@@ -599,8 +616,143 @@
   if (btnAttack) btnAttack.addEventListener('click', () => sendAgentAction('attack'));
   if (btnLunge) btnLunge.addEventListener('click', () => sendAgentAction('lunge'));
 
+  // Game Settings Pop-out Modal Logic
+  function showSettingsFeedback(message, isError = false) {
+    if (!settingsFeedback) return;
+    settingsFeedback.textContent = message;
+    settingsFeedback.className = isError ? 'settings-feedback feedback-error' : 'settings-feedback feedback-success';
+    settingsFeedback.style.display = 'block';
+  }
+
+  function hideSettingsFeedback() {
+    if (!settingsFeedback) return;
+    settingsFeedback.textContent = '';
+    settingsFeedback.className = 'settings-feedback';
+    settingsFeedback.style.display = 'none';
+  }
+
+  function parseIntDefault(val, def, minVal = 0) {
+    const parsed = parseInt(val, 10);
+    if (isNaN(parsed)) return def;
+    return Math.max(minVal, parsed);
+  }
+
+  async function openSettingsModal() {
+    if (!settingsModal) return;
+    hideSettingsFeedback();
+    settingsModal.style.display = 'flex';
+
+    try {
+      const data = await apiCall(`/api/simulations/${currentSimId}/species`, 'GET');
+      if (!data) {
+        showSettingsFeedback('Failed to load current species settings from server.', true);
+        return;
+      }
+      if (data.cat) {
+        if (settingCatMove) settingCatMove.value = data.cat.move_cooldown ?? 3;
+        if (settingCatAttackRange) settingCatAttackRange.value = data.cat.attack_range ?? 2;
+        if (settingCatAttackCd) settingCatAttackCd.value = data.cat.attack_cooldown ?? 3;
+        if (settingCatLungeCd) settingCatLungeCd.value = data.cat.lunge_cooldown ?? 2;
+        if (settingCatVision) settingCatVision.value = data.cat.vision_radius ?? 4;
+        if (settingCatWeight) settingCatWeight.value = data.cat.weight ?? 10;
+      }
+      if (data.mouse) {
+        if (settingMouseMove) settingMouseMove.value = data.mouse.move_cooldown ?? 2;
+        if (settingMouseVision) settingMouseVision.value = data.mouse.vision_radius ?? 4;
+        if (settingMouseWeight) settingMouseWeight.value = data.mouse.weight ?? 1;
+      }
+    } catch (err) {
+      console.error('Failed to load species settings:', err);
+      showSettingsFeedback('Failed to load species settings.', true);
+    }
+  }
+
+  function closeSettingsModal() {
+    if (!settingsModal) return;
+    settingsModal.style.display = 'none';
+    hideSettingsFeedback();
+  }
+
+  function resetSettingsToDefaults() {
+    if (settingCatMove) settingCatMove.value = 3;
+    if (settingCatAttackRange) settingCatAttackRange.value = 2;
+    if (settingCatAttackCd) settingCatAttackCd.value = 3;
+    if (settingCatLungeCd) settingCatLungeCd.value = 2;
+    if (settingCatVision) settingCatVision.value = 4;
+    if (settingCatWeight) settingCatWeight.value = 10;
+
+    if (settingMouseMove) settingMouseMove.value = 2;
+    if (settingMouseVision) settingMouseVision.value = 4;
+    if (settingMouseWeight) settingMouseWeight.value = 1;
+
+    showSettingsFeedback('Reset to default values. Click "Apply Settings" to save.', false);
+  }
+
+  async function saveSettings() {
+    hideSettingsFeedback();
+
+    const catPayload = {
+      move_cooldown: parseIntDefault(settingCatMove?.value, 3, 1),
+      attack_range: parseIntDefault(settingCatAttackRange?.value, 2, 0),
+      attack_cooldown: parseIntDefault(settingCatAttackCd?.value, 3, 0),
+      lunge_cooldown: parseIntDefault(settingCatLungeCd?.value, 2, 0),
+      vision_radius: parseIntDefault(settingCatVision?.value, 4, 1),
+      weight: parseIntDefault(settingCatWeight?.value, 10, 1)
+    };
+
+    const mousePayload = {
+      move_cooldown: parseIntDefault(settingMouseMove?.value, 2, 1),
+      vision_radius: parseIntDefault(settingMouseVision?.value, 4, 1),
+      weight: parseIntDefault(settingMouseWeight?.value, 1, 1)
+    };
+
+    try {
+      const [catRes, mouseRes] = await Promise.all([
+        apiCall(`/api/simulations/${currentSimId}/species/cat`, 'PATCH', catPayload),
+        apiCall(`/api/simulations/${currentSimId}/species/mouse`, 'PATCH', mousePayload)
+      ]);
+
+      if (!catRes || !mouseRes) {
+        showSettingsFeedback('Failed to update species parameters on server.', true);
+        return;
+      }
+
+      showSettingsFeedback('Settings successfully updated and applied in real time!', false);
+      const stateData = await apiCall(`/api/simulations/${currentSimId}/state`, 'GET');
+      if (stateData) updateUI(stateData);
+
+      setTimeout(() => {
+        closeSettingsModal();
+      }, 700);
+    } catch (err) {
+      console.error('Error saving settings:', err);
+      showSettingsFeedback('Error saving settings: ' + err.message, true);
+    }
+  }
+
+  // Settings Modal Listeners
+  if (btnOpenSettings) btnOpenSettings.addEventListener('click', openSettingsModal);
+  if (btnCloseSettings) btnCloseSettings.addEventListener('click', closeSettingsModal);
+  if (btnCancelSettings) btnCancelSettings.addEventListener('click', closeSettingsModal);
+  if (btnSaveSettings) btnSaveSettings.addEventListener('click', saveSettings);
+  if (btnResetSettings) btnResetSettings.addEventListener('click', resetSettingsToDefaults);
+
+  if (settingsModal) {
+    settingsModal.addEventListener('click', (e) => {
+      if (e.target === settingsModal) {
+        closeSettingsModal();
+      }
+    });
+  }
+
   // Keyboard Controls (WASD / Arrows / Spacebar / L for lunge)
   window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      if (settingsModal && settingsModal.style.display !== 'none') {
+        closeSettingsModal();
+        return;
+      }
+    }
     if (!selectedAgentId || selectedAgentMode !== 'manual') return;
     if (document.activeElement && document.activeElement.tagName === 'INPUT') return;
 
@@ -620,12 +772,7 @@
   });
 
   // Event Listeners for Simulation Administration
-  btnStart.addEventListener('click', async () => {
-    if (selectedAgentId && selectedAgentMode === 'manual') {
-      await setAgentMode('auto');
-    }
-    triggerAction(`/api/simulations/${currentSimId}/start`);
-  });
+  btnStart.addEventListener('click', () => triggerAction(`/api/simulations/${currentSimId}/start`));
   btnPause.addEventListener('click', () => triggerAction(`/api/simulations/${currentSimId}/pause`));
 
   if (btnStepBack) {

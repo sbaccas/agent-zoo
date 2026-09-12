@@ -104,13 +104,14 @@ class Scheduler:
                 continue
 
             mode = self.entity_manager.get_agent_mode(cat.id)
+            has_ws = ws_agent_manager.has_agent(cat.id)
 
             # OSRS action lock: if cat is recovering/animating previous action, decrement and skip turn
             if cat.action_cooldown > 0:
                 cat.action_cooldown -= 1
                 if cat.action_cooldown == 0:
                     cat.locked_action = None
-                if mode == "ws" and ws_agent_manager.has_agent(cat.id):
+                if has_ws and mode != "manual":
                     obs = self._build_observation_payload(cat)
                     await ws_agent_manager.send_observation(cat.id, obs)
                 continue
@@ -120,7 +121,7 @@ class Scheduler:
                 continue
 
             action_val = None
-            if mode == "ws" and ws_agent_manager.has_agent(cat.id):
+            if has_ws:
                 obs = self._build_observation_payload(cat)
                 action_data = await ws_agent_manager.request_action_with_budget(cat.id, obs, budget_sec=0.8)
                 if action_data:
@@ -184,13 +185,14 @@ class Scheduler:
                 continue
 
             mode = self.entity_manager.get_agent_mode(mouse.id)
+            has_ws = ws_agent_manager.has_agent(mouse.id)
 
             # OSRS action lock: if mouse is recovering/animating previous action, decrement and skip turn
             if mouse.action_cooldown > 0:
                 mouse.action_cooldown -= 1
                 if mouse.action_cooldown == 0:
                     mouse.locked_action = None
-                if mode == "ws" and ws_agent_manager.has_agent(mouse.id):
+                if has_ws and mode != "manual":
                     obs = self._build_observation_payload(mouse)
                     await ws_agent_manager.send_observation(mouse.id, obs)
                 continue
@@ -200,7 +202,7 @@ class Scheduler:
                 continue
 
             action_val = None
-            if mode == "ws" and ws_agent_manager.has_agent(mouse.id):
+            if has_ws:
                 obs = self._build_observation_payload(mouse)
                 action_data = await ws_agent_manager.request_action_with_budget(mouse.id, obs, budget_sec=0.8)
                 if action_data:

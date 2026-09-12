@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Cat & Mouse — Simulation Control</title>
-  <link rel="stylesheet" href="/static/styles.css?v=2">
+  <link rel="stylesheet" href="/static/styles.css?v=5">
 </head>
 <body>
   <div class="app-layout">
@@ -14,6 +14,7 @@
         <span class="subtitle">Multi-Agent Simulation v0</span>
       </div>
       <div class="header-status">
+        <button id="btnOpenSettings" class="btn btn-settings" title="Configure game tick pacing, slash AoE range, and species parameters">⚙️ Game Settings</button>
         <span class="badge" id="statusBadge">CREATED</span>
       </div>
     </header>
@@ -177,6 +178,123 @@
     </main>
   </div>
 
-  <script src="/static/app.js?v=2"></script>
+  <!-- Pop-out Window: Game Settings -->
+  <div id="settingsModal" class="modal-backdrop" style="display: none;">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <div class="modal-title-group">
+          <span class="modal-icon">⚙️</span>
+          <h2>Game Settings</h2>
+        </div>
+        <button id="btnCloseSettings" class="btn-close" title="Close Settings">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p class="modal-intro">Configure OSRS tick pacing, movement speeds, combat recovery cooldowns, and perception ranges for each species.</p>
+
+        <!-- Cat Settings Card -->
+        <div class="settings-card cat-settings">
+          <div class="settings-card-header">
+            <span class="species-badge cat-badge">🐱 CAT (Predator)</span>
+            <span class="species-summary">Heavy stalker with forward slash AoE attack</span>
+          </div>
+          <div class="settings-grid">
+            <div class="setting-item">
+              <label for="settingCatMove">Move Pace (Ticks/Tile):</label>
+              <div class="setting-input-row">
+                <input type="number" id="settingCatMove" min="1" max="10" step="1" class="form-input">
+                <span class="setting-unit">ticks</span>
+              </div>
+              <span class="setting-hint">1 = fastest (1 tile/tick); 3 = OSRS pace</span>
+            </div>
+            <div class="setting-item">
+              <label for="settingCatAttackRange">Slash AoE Range:</label>
+              <div class="setting-input-row">
+                <input type="number" id="settingCatAttackRange" min="1" max="5" step="1" class="form-input">
+                <span class="setting-unit">tiles forward</span>
+              </div>
+              <span class="setting-hint">Forward reach of the slash strike</span>
+            </div>
+            <div class="setting-item">
+              <label for="settingCatAttackCd">Attack Recovery:</label>
+              <div class="setting-input-row">
+                <input type="number" id="settingCatAttackCd" min="1" max="10" step="1" class="form-input">
+                <span class="setting-unit">ticks lock</span>
+              </div>
+              <span class="setting-hint">Ticks cat is locked after executing slash</span>
+            </div>
+            <div class="setting-item">
+              <label for="settingCatLungeCd">Lunge Recovery:</label>
+              <div class="setting-input-row">
+                <input type="number" id="settingCatLungeCd" min="1" max="10" step="1" class="form-input">
+                <span class="setting-unit">ticks lock</span>
+              </div>
+              <span class="setting-hint">Ticks to recover from 2-tile burst leap</span>
+            </div>
+            <div class="setting-item">
+              <label for="settingCatVision">Vision Radius:</label>
+              <div class="setting-input-row">
+                <input type="number" id="settingCatVision" min="1" max="15" step="1" class="form-input">
+                <span class="setting-unit">tiles</span>
+              </div>
+              <span class="setting-hint">Forward-facing cone distance</span>
+            </div>
+            <div class="setting-item">
+              <label for="settingCatWeight">Weight:</label>
+              <div class="setting-input-row">
+                <input type="number" id="settingCatWeight" min="1" max="50" step="1" class="form-input">
+                <span class="setting-unit">mass</span>
+              </div>
+              <span class="setting-hint">Physics momentum for bump collisions</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Mouse Settings Card -->
+        <div class="settings-card mouse-settings">
+          <div class="settings-card-header">
+            <span class="species-badge mouse-badge">🐭 MOUSE (Prey)</span>
+            <span class="species-summary">Nimble forager with 360° panoramic vision</span>
+          </div>
+          <div class="settings-grid">
+            <div class="setting-item">
+              <label for="settingMouseMove">Move Pace (Ticks/Tile):</label>
+              <div class="setting-input-row">
+                <input type="number" id="settingMouseMove" min="1" max="10" step="1" class="form-input">
+                <span class="setting-unit">ticks</span>
+              </div>
+              <span class="setting-hint">2 = OSRS default pace (1 tile every 2 ticks)</span>
+            </div>
+            <div class="setting-item">
+              <label for="settingMouseVision">Vision Radius:</label>
+              <div class="setting-input-row">
+                <input type="number" id="settingMouseVision" min="1" max="15" step="1" class="form-input">
+                <span class="setting-unit">tiles</span>
+              </div>
+              <span class="setting-hint">360° omnidirectional detection radius</span>
+            </div>
+            <div class="setting-item">
+              <label for="settingMouseWeight">Weight:</label>
+              <div class="setting-input-row">
+                <input type="number" id="settingMouseWeight" min="1" max="50" step="1" class="form-input">
+                <span class="setting-unit">mass</span>
+              </div>
+              <span class="setting-hint">Lower weight bounces away on collision</span>
+            </div>
+          </div>
+        </div>
+
+        <div id="settingsFeedback" class="settings-feedback" style="display: none;"></div>
+      </div>
+      <div class="modal-footer">
+        <button id="btnResetSettings" class="btn btn-outline" title="Reset all parameters to default values">Reset to Defaults</button>
+        <div class="modal-footer-right">
+          <button id="btnCancelSettings" class="btn btn-secondary">Close</button>
+          <button id="btnSaveSettings" class="btn btn-primary">Apply Settings</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/app.js?v=5"></script>
 </body>
 </html>
