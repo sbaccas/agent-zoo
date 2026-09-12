@@ -427,8 +427,32 @@ async def sync_live_observation(agent_id: Optional[str] = None) -> bool:
     return False
 
 
+class PollingLogFilter(logging.Filter):
+    """Suppresses high-frequency access logs from workbench frontend polling."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        args = getattr(record, "args", ())
+        if len(args) >= 5:
+            # args format: (client_addr, method, path, http_version, status_code)
+            path = args[2]
+            status = args[4]
+            if status == 200 and any(p in path for p in ["/api/agent/state", "/api/agent/server", "/favicon.ico"]):
+                return False
+        msg = record.getMessage()
+        if (" 200 " in msg or "200 OK" in msg) and any(p in msg for p in ["/api/agent/state", "/api/agent/server", "/favicon.ico"]):
+            return False
+        return True
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Suppress high-frequency polling from uvicorn.access logger and handlers
+    filt = PollingLogFilter()
+    access_logger = logging.getLogger("uvicorn.access")
+    access_logger.addFilter(filt)
+    for h in access_logger.handlers:
+        h.addFilter(filt)
+
     # Auto-connect WebSocket client in background if enabled
     if os.environ.get("CAT_AGENT_AUTO_CONNECT", "1") != "0":
         asyncio.create_task(ws_client.connect())
