@@ -73,6 +73,22 @@ class Scheduler:
         allow_attack = (entity.type == EntityType.CAT)
         legal_actions = [a.value for a in self.world.get_legal_actions(entity.position, allow_attack=allow_attack, facing=entity.facing)]
 
+        spec_cfg = self.entity_manager.species_config.get(species_key)
+        attack_range = spec_cfg.attack_range if spec_cfg else (2 if entity.type == EntityType.CAT else 0)
+        move_cd = spec_cfg.move_cooldown if spec_cfg else 1
+        attack_cd = spec_cfg.attack_cooldown if spec_cfg else 0
+        lunge_cd = spec_cfg.lunge_cooldown if spec_cfg else 0
+        weight = spec_cfg.weight if spec_cfg else 1
+
+        capabilities = {
+            "vision_radius": vision_radius,
+            "attack_range": attack_range,
+            "move_cooldown": move_cd,
+            "attack_cooldown": attack_cd,
+            "lunge_cooldown": lunge_cd,
+            "weight": weight,
+        }
+
         return {
             "tick": self.tick,
             "round": self.round,
@@ -85,6 +101,7 @@ class Scheduler:
                 "locked_action": entity.locked_action,
                 "ready_to_act": (entity.action_cooldown == 0),
             },
+            "capabilities": capabilities,
             "visible_entities": visible,
             "legal_actions": legal_actions,
         }

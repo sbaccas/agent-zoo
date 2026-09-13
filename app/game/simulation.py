@@ -89,6 +89,7 @@ class Simulation:
             entities=self.entity_manager.get_alive_entities(),
             recent_events=self.scheduler.events[-25:],
             can_step_back=len(self.history) > 0,
+            species=self.entity_manager.species_config,
         )
 
     async def _run_loop(self):

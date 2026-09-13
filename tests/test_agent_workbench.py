@@ -334,4 +334,41 @@ async def test_decoupled_act_async_execution():
             assert state.active_directive.get("target_mouse_id") == "mouse-1"
 
 
+def test_dynamic_attack_range_in_heuristic():
+    from actors.cat_heuristic import compute_heuristic_decision, compute_reflex_decision
+
+    # Mouse is 5 tiles ahead (distance 5)
+    # Default range (2) would NOT attack
+    obs_default = Observation(
+        tick=1,
+        round=0,
+        self={"id": "cat-1", "position": {"x": 10, "y": 10}, "facing": "north"},
+        visible_entities=[{"id": "mouse-1", "type": "mouse", "position": {"x": 10, "y": 5}}],
+        legal_actions=["north", "south", "east", "west", "stay", "attack"],
+        capabilities={"attack_range": 2, "vision_radius": 6},
+    )
+    act_def, _, _ = compute_heuristic_decision(obs_default)
+    assert act_def != "attack"
+
+    # With dynamic attack_range=6, it SHOULD slash attack!
+    obs_boosted = Observation(
+        tick=1,
+        round=0,
+        self={"id": "cat-1", "position": {"x": 10, "y": 10}, "facing": "north"},
+        visible_entities=[{"id": "mouse-1", "type": "mouse", "position": {"x": 10, "y": 5}}],
+        legal_actions=["north", "south", "east", "west", "stay", "attack"],
+        capabilities={"attack_range": 6, "vision_radius": 6},
+    )
+    act_boosted, thought_boosted, meta_boosted = compute_heuristic_decision(obs_boosted)
+    assert act_boosted == "attack"
+    assert "range 6" in thought_boosted
+    assert meta_boosted["phase"] == "ATTACK"
+
+    # Also test reflex trigger with dynamic range
+    act_reflex, thought_reflex, meta_reflex = compute_reflex_decision(obs_boosted)
+    assert act_reflex == "attack"
+    assert "range 6" in thought_reflex
+
+
+
 

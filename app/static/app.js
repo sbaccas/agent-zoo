@@ -165,6 +165,59 @@
 
     // Render Entities
     const entities = state.entities || [];
+
+    // Render Vision Cones & Detection Fields (underneath sprites)
+    const aliveMice = entities.filter(e => e.type === 'mouse' && e.alive);
+    const miceToShow = new Set();
+    if (selectedAgentId) {
+      const selMouse = aliveMice.find(m => m.id === selectedAgentId);
+      if (selMouse) miceToShow.add(selMouse.id);
+    }
+    for (const m of aliveMice) {
+      if (miceToShow.size >= 2) break;
+      miceToShow.add(m.id);
+    }
+
+    const catVision = (state.species && state.species.cat && state.species.cat.vision_radius) ? state.species.cat.vision_radius : 4;
+    const mouseVision = (state.species && state.species.mouse && state.species.mouse.vision_radius) ? state.species.mouse.vision_radius : 4;
+
+    for (let i = 0; i < entities.length; i++) {
+      const e = entities[i];
+      if (!e.alive) continue;
+
+      const cx = e.position.x * cellW + cellW / 2;
+      const cy = e.position.y * cellH + cellH / 2;
+
+      if (e.type === 'cat') {
+        const angle = getFacingAngle(e.facing || 'north');
+        const radius = catVision * cellW;
+        ctx.save();
+        ctx.beginPath();
+        ctx.moveTo(cx, cy);
+        ctx.arc(cx, cy, radius, angle - Math.PI / 4, angle + Math.PI / 4);
+        ctx.closePath();
+        ctx.fillStyle = 'rgba(239, 68, 68, 0.12)';
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(220, 38, 38, 0.35)';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([3, 3]);
+        ctx.stroke();
+        ctx.restore();
+      } else if (e.type === 'mouse' && miceToShow.has(e.id)) {
+        const radius = mouseVision * cellW;
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(2, 132, 199, 0.08)';
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(2, 132, 199, 0.25)';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([2, 3]);
+        ctx.stroke();
+        ctx.restore();
+      }
+    }
+
     const fontSize = Math.max(10, Math.floor(cellW * 1.3));
 
     for (let i = 0; i < entities.length; i++) {
@@ -717,30 +770,102 @@
         return;
       }
 
-      showSettingsFeedback('Settings successfully updated and applied in real time!', false);
+      showSettingsFeedback('✓ Settings applied live! Active on next simulation tick.', false);
       const stateData = await apiCall(`/api/simulations/${currentSimId}/state`, 'GET');
       if (stateData) updateUI(stateData);
-
-      setTimeout(() => {
-        closeSettingsModal();
-      }, 700);
     } catch (err) {
       console.error('Error saving settings:', err);
       showSettingsFeedback('Error saving settings: ' + err.message, true);
     }
   }
 
-  // Settings Modal Listeners
-  if (btnOpenSettings) btnOpenSettings.addEventListener('click', openSettingsModal);
+  const btnPopoutWindow = document.getElementById('btnPopoutWindow');
+
+  function openSettingsWindow() {
+    const width = 560;
+    const height = 780;
+    const screenW = window.screen.availWidth || window.innerWidth;
+    const screenH = window.screen.availHeight || window.innerHeight;
+    const left = Math.max(10, Math.min(screenW - width - 20, (window.screenX || 0) + (window.outerWidth || 1000) - width));
+    const top = Math.max(20, (window.screenY || 0) + 30);
+    const features = `width=${width},height=${height},left=${left},top=${top},resizable=yes,scrollbars=yes,status=no,toolbar=no,menubar=no,location=no`;
+
+    const popup = window.open('/settings', 'CMGameSettings', features);
+    if (popup && !popup.closed) {
+      popup.focus();
+      closeSettingsModal();
+    } else {
+      // Fallback to in-page pop-out if browser blocks popup windows
+      openSettingsModal();
+    }
+  }
+
+  // Settings Pop-Out Window Listeners
+  if (btnOpenSettings) btnOpenSettings.addEventListener('click', openSettingsWindow);
+  if (btnPopoutWindow) btnPopoutWindow.addEventListener('click', openSettingsWindow);
   if (btnCloseSettings) btnCloseSettings.addEventListener('click', closeSettingsModal);
   if (btnCancelSettings) btnCancelSettings.addEventListener('click', closeSettingsModal);
   if (btnSaveSettings) btnSaveSettings.addEventListener('click', saveSettings);
   if (btnResetSettings) btnResetSettings.addEventListener('click', resetSettingsToDefaults);
 
-  if (settingsModal) {
-    settingsModal.addEventListener('click', (e) => {
-      if (e.target === settingsModal) {
-        closeSettingsModal();
+  // Sync settings when modified from external standalone settings window
+  window.addEventListener('message', async (event) => {
+    if (event.data && event.data.type === 'settings_updated') {
+      try {
+        const stateData = await apiCall(`/api/simulations/${currentSimId}/state`, 'GET');
+        if (stateData) updateUI(stateData);
+      } catch (err) {
+        console.error('Error refreshing state from settings update:', err);
+      }
+    }
+  });
+
+  // Draggable Game Settings Pop-Out Window
+  const modalDialog = settingsModal ? settingsModal.querySelector('.modal-dialog') : null;
+  const modalHeader = settingsModal ? settingsModal.querySelector('.modal-header') : null;
+
+  if (modalDialog && modalHeader) {
+    let isDragging = false;
+    let dragStartX = 0;
+    let dragStartY = 0;
+    let initialLeft = 0;
+    let initialTop = 0;
+
+    modalHeader.addEventListener('mousedown', (e) => {
+      if (e.target.closest('button')) return;
+      isDragging = true;
+      dragStartX = e.clientX;
+      dragStartY = e.clientY;
+
+      const rect = modalDialog.getBoundingClientRect();
+      initialLeft = rect.left;
+      initialTop = rect.top;
+
+      modalDialog.style.position = 'fixed';
+      modalDialog.style.left = `${initialLeft}px`;
+      modalDialog.style.top = `${initialTop}px`;
+      modalDialog.style.right = 'auto';
+      modalDialog.style.margin = '0';
+
+      document.body.style.userSelect = 'none';
+    });
+
+    window.addEventListener('mousemove', (e) => {
+      if (!isDragging) return;
+      const dx = e.clientX - dragStartX;
+      const dy = e.clientY - dragStartY;
+
+      const newLeft = Math.max(10, Math.min(window.innerWidth - modalDialog.offsetWidth - 10, initialLeft + dx));
+      const newTop = Math.max(10, Math.min(window.innerHeight - 80, initialTop + dy));
+
+      modalDialog.style.left = `${newLeft}px`;
+      modalDialog.style.top = `${newTop}px`;
+    });
+
+    window.addEventListener('mouseup', () => {
+      if (isDragging) {
+        isDragging = false;
+        document.body.style.userSelect = '';
       }
     });
   }

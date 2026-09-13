@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 from app.models.entity import Entity, Position
 
@@ -82,6 +82,7 @@ class SimulationStateResponse(BaseModel):
     entities: List[Entity]
     recent_events: List[GameEvent] = []
     can_step_back: bool = False
+    species: Optional[Dict[str, Any]] = None
 
 
 class UpdateTickRateRequest(BaseModel):

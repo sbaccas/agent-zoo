@@ -83,6 +83,17 @@ async def get_agent_observation(sim_id: str, agent_id: str):
     allow_attack = (entity.type == EntityType.CAT)
     legal_actions = sim.world.get_legal_actions(entity.position, allow_attack=allow_attack, facing=entity.facing)
 
+    spec_cfg = sim.entity_manager.species_config.get(species_key)
+    attack_range = spec_cfg.attack_range if spec_cfg else (2 if entity.type == EntityType.CAT else 0)
+    capabilities = {
+        "vision_radius": vision_radius,
+        "attack_range": attack_range,
+        "move_cooldown": spec_cfg.move_cooldown if spec_cfg else 1,
+        "attack_cooldown": spec_cfg.attack_cooldown if spec_cfg else 0,
+        "lunge_cooldown": spec_cfg.lunge_cooldown if spec_cfg else 0,
+        "weight": spec_cfg.weight if spec_cfg else 1,
+    }
+
     return ObservationResponse(
         simulation_id=sim.simulation_id,
         tick=sim.scheduler.tick,
@@ -90,6 +101,7 @@ async def get_agent_observation(sim_id: str, agent_id: str):
         self_entity=entity,
         visible_entities=visible,
         legal_actions=legal_actions,
+        capabilities=capabilities,
     )
 
 

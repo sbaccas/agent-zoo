@@ -8,6 +8,7 @@ class Observation(BaseModel):
     self: Dict[str, Any]
     visible_entities: List[Dict[str, Any]] = []
     legal_actions: List[str] = []
+    capabilities: Optional[Dict[str, Any]] = None
 
 
 class ActionResponse(BaseModel):

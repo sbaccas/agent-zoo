@@ -47,6 +47,17 @@ async def test_security_headers():
 
 
 @pytest.mark.asyncio
+async def test_settings_page_served():
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        res = await client.get("/settings")
+        assert res.status_code == 200
+        assert "Game Settings" in res.text
+        assert "settingCatAttackRange" in res.text
+
+
+
+@pytest.mark.asyncio
 async def test_step_back_api():
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:

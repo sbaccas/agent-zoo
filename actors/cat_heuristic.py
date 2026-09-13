@@ -22,6 +22,7 @@ def compute_heuristic_decision(obs: Observation) -> Tuple[str, str, Dict[str, An
     mice_seen = [e for e in obs.visible_entities if e.get("type") == "mouse"]
 
     # 1. Can we slash attack?
+    atk_range = (obs.capabilities or {}).get("attack_range", 2)
     if "attack" in legal and mice_seen:
         for m in mice_seen:
             m_pos = m.get("position", {})
@@ -40,8 +41,8 @@ def compute_heuristic_decision(obs: Observation) -> Tuple[str, str, Dict[str, An
                 in_front = True
 
             dist = abs(dx) + abs(dy)
-            if in_front and dist <= 2:
-                msg = f"Target {m.get('id')} in strike zone! Executing slash attack."
+            if in_front and dist <= atk_range:
+                msg = f"Target {m.get('id')} in strike zone (range {atk_range})! Executing slash attack."
                 meta = {
                     "phase": "ATTACK",
                     "target_id": m.get("id"),
@@ -188,6 +189,7 @@ def compute_reflex_decision(
     mice_seen = [e for e in obs.visible_entities if e.get("type") == "mouse"]
 
     # 1. Immediate slash attack (highest reflex priority)
+    atk_range = (obs.capabilities or {}).get("attack_range", 2)
     if "attack" in legal and mice_seen:
         for m in mice_seen:
             m_pos = m.get("position", {})
@@ -206,8 +208,8 @@ def compute_reflex_decision(
                 in_front = True
 
             dist = abs(dx) + abs(dy)
-            if in_front and dist <= 2:
-                msg = f"[Reflex Trigger] Prey {m.get('id')} in strike zone! Executing attack."
+            if in_front and dist <= atk_range:
+                msg = f"[Reflex Trigger] Prey {m.get('id')} in strike zone (range {atk_range})! Executing attack."
                 meta = {
                     "phase": "ATTACK",
                     "strategy": "ATTACK",

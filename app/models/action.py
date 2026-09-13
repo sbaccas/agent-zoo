@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, ConfigDict, Field
 from app.models.entity import Entity, Position
 
@@ -38,6 +38,7 @@ class ObservationResponse(BaseModel):
     self_entity: Entity = Field(..., alias="self", serialization_alias="self")
     visible_entities: List[Entity]
     legal_actions: List[ActionType]
+    capabilities: Optional[Dict[str, Any]] = None
 
 
 

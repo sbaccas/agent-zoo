@@ -233,6 +233,10 @@ async def act_async(obs: Observation, decoupled: bool = False) -> ActionResponse
     current_obs["self"] = dict(obs_dict.get("self", {}))
     current_obs["self"]["position"] = posture["position"]
     current_obs["self"]["facing"] = posture["facing"]
+    if obs.capabilities:
+        current_obs["capabilities"] = obs.capabilities
+    elif "capabilities" in obs_dict:
+        current_obs["capabilities"] = obs_dict["capabilities"]
 
     state.latest_observation = current_obs
     state.latest_response = exchange["response"]
@@ -466,6 +470,17 @@ async def sync_live_observation(agent_id: Optional[str] = None) -> bool:
                         "type": self_info.get("type", "cat"),
                         "position": self_info.get("position", {"x": 0, "y": 0}),
                         "facing": self_info.get("facing", "north"),
+                        "action_cooldown": self_info.get("action_cooldown", 0),
+                        "locked_action": self_info.get("locked_action"),
+                        "ready_to_act": self_info.get("ready_to_act", True),
+                    },
+                    "capabilities": data.get("capabilities") or {
+                        "vision_radius": 4,
+                        "attack_range": 2,
+                        "move_cooldown": 3,
+                        "attack_cooldown": 3,
+                        "lunge_cooldown": 2,
+                        "weight": 10,
                     },
                     "visible_entities": data.get("visible_entities", []),
                     "legal_actions": data.get("legal_actions", ["stay", "north", "south", "east", "west", "attack", "lunge"]),
@@ -676,9 +691,12 @@ async def get_workbench():
     return FileResponse(static_dir / "index.html")
 
 
+FAVICON_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">🐱</text></svg>"""
+
+
 @app.get("/favicon.ico", include_in_schema=False)
 async def favicon():
-    return Response(status_code=204)
+    return Response(content=FAVICON_SVG, media_type="image/svg+xml")
 
 
 if __name__ == "__main__":

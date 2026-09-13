@@ -14,11 +14,17 @@ You play as the **Cat** (`cat-1`), an apex predator hunting elusive mice across 
 
 ### Perception & Field of View (FoV)
 - **Facing Direction**: The cat faces one of four cardinal directions: `"north"`, `"south"`, `"east"`, or `"west"`.
-- **Vision Cone**: A 90° angular field of view extending up to 6 tiles ahead in your current facing direction.
+- **Vision Cone**: A 90° angular field of view extending forward up to `capabilities.vision_radius` tiles (dynamic, default: 4-6) in your current facing direction.
 - **Occlusion**: Solid walls completely block line of sight. Entities behind walls or outside your 90° cone are hidden from your perception.
 - **Visible Entities**: An observation lists all entities currently within your line of sight:
   - Mice: `{"id": "mouse-1", "type": "mouse", "position": {"x": 5, "y": 7}}`
   - Cheese: `{"id": "cheese-1", "type": "cheese", "position": {"x": 10, "y": 12}}`
+- **Dynamic Capabilities**: Your observation provides a `capabilities` dictionary containing your current dynamic stats:
+  - `attack_range`: The forward reach (in tiles) of your slash `attack`.
+  - `vision_radius`: The distance (in tiles) your 90° vision cone penetrates.
+  - `move_cooldown`: Ticks locked into your movement action before new input is accepted.
+  - `attack_cooldown`: Ticks locked after slashing.
+  - `lunge_cooldown`: Ticks locked after lunging.
 
 ---
 
@@ -56,9 +62,9 @@ On each simulation tick, you receive an observation payload that includes `legal
 - **Tactical Utility**: Instantly close distance on a mouse aligned 2 to 4 tiles straight ahead down an open corridor before the mouse can escape or change direction.
 
 ### Skill: `attack` (Predatory Slash)
-- **Effect**: Executes a swipe attack across the forward strike zone (up to 2 tiles ahead within your frontal cone).
+- **Effect**: Executes a forward area-of-effect slash attack extending up to `capabilities.attack_range` tiles forward in your facing direction (and 1 tile laterally).
 - **Conditions**: Only available when `attack` is in `legal_actions`.
-- **Tactical Utility**: Lethal capture or severe damage. Use whenever a mouse is detected in your forward strike zone.
+- **Tactical Utility**: Lethal capture or damage. Use whenever a mouse is detected in your forward strike zone. **NOTE**: If `capabilities.attack_range` is tuned large (e.g. 10 or 100 tiles), your slash sweeps that entire distance forward! Whenever prey is lined up ahead within `capabilities.attack_range`, prioritize `attack` immediately to strike from range!
 
 ---
 
@@ -67,7 +73,7 @@ On each simulation tick, you receive an observation payload that includes `legal
 When evaluating an incoming observation, apply the following hierarchical reasoning:
 
 1. **PRIORITY 1 - LETHAL STRIKE (`attack`)**:
-   - If a mouse is within 1 to 2 tiles directly ahead or in your immediate strike zone, execute `attack` immediately!
+   - If a mouse is within `capabilities.attack_range` tiles forward in your strike zone (whether 2 tiles or 100 tiles!), execute `attack` immediately!
 
 2. **PRIORITY 2 - HIGH-SPEED GAP CLOSER (`lunge`)**:
    - If a mouse is directly aligned along your facing axis (same row or column) 2 to 4 tiles away with clear floor between you, execute `lunge` to close the gap before it escapes.

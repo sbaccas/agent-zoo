@@ -143,15 +143,28 @@ async def query_adk_gemini(
             if history_lines:
                 history_context = "--- RECENT TACTICAL CONTEXT (Last 3 Ticks) ---\n" + "\n".join(history_lines) + "\n\n"
 
+            caps = obs.capabilities or {}
+            atk_range = caps.get("attack_range", 2)
+            vision_rad = caps.get("vision_radius", 4)
+            move_cd = caps.get("move_cooldown", 3)
+            atk_cd = caps.get("attack_cooldown", 3)
+            lunge_cd = caps.get("lunge_cooldown", 2)
+
             prompt = (
                 f"{history_context}"
                 f"--- CURRENT OBSERVATION (Tick {obs.tick}, Round {obs.round}) ---\n"
                 f"Agent ID: {obs.self.get('id', agent_id)}\n"
                 f"Current Position: (x={pos.get('x', 0)}, y={pos.get('y', 0)})\n"
                 f"Current Facing: {facing}\n"
-                f"Visible Entities in 90° Vision Cone: {entities}\n"
+                f"Dynamic Capabilities & Range Parameters:\n"
+                f"  • Slash Attack Range (`attack`): reaches {atk_range} tile(s) directly forward! (Strikes all targets in line across range 1 to {atk_range} plus immediate flank arc)\n"
+                f"  • Vision Perception Radius: {vision_rad} tiles\n"
+                f"  • Move Pacing / Lock: 1 tile every {move_cd} tick(s)\n"
+                f"  • Attack Recovery Lock: {atk_cd} tick(s)\n"
+                f"  • Lunge Recovery Lock: {lunge_cd} tick(s)\n"
+                f"Visible Entities in Vision Cone: {entities}\n"
                 f"Legal Actions this tick: {legal}\n"
-                f"Consult your skills manual and choose the single best tactical action strictly from legal actions."
+                f"TACTICAL RULE: If 'attack' is legal and prey is within your {atk_range}-tile forward slash range (or if attack range is very large), prioritize 'attack' to instantly strike prey! Choose the single best action strictly from legal actions."
             )
 
             msg = types.Content(role="user", parts=[types.Part.from_text(text=prompt)])

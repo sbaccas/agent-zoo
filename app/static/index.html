@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Cat & Mouse — Simulation Control</title>
-  <link rel="stylesheet" href="/static/styles.css?v=5">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🐱</text></svg>">
+  <link rel="stylesheet" href="/static/styles.css?v=9">
 </head>
 <body>
   <div class="app-layout">
@@ -185,8 +185,12 @@
         <div class="modal-title-group">
           <span class="modal-icon">⚙️</span>
           <h2>Game Settings</h2>
+          <span class="modal-drag-hint">(Drag header to reposition)</span>
         </div>
-        <button id="btnCloseSettings" class="btn-close" title="Close Settings">&times;</button>
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <button id="btnPopoutWindow" class="btn btn-sm btn-outline" title="Pop out into an independent OS desktop window">⧉ Detach Window</button>
+          <button id="btnCloseSettings" class="btn-close" title="Close Settings">&times;</button>
+        </div>
       </div>
       <div class="modal-body">
         <p class="modal-intro">Configure OSRS tick pacing, movement speeds, combat recovery cooldowns, and perception ranges for each species.</p>
@@ -209,15 +213,15 @@
             <div class="setting-item">
               <label for="settingCatAttackRange">Slash AoE Range:</label>
               <div class="setting-input-row">
-                <input type="number" id="settingCatAttackRange" min="1" max="5" step="1" class="form-input">
+                <input type="number" id="settingCatAttackRange" min="1" max="100" step="1" class="form-input">
                 <span class="setting-unit">tiles forward</span>
               </div>
-              <span class="setting-hint">Forward reach of the slash strike</span>
+              <span class="setting-hint">Forward reach of the slash strike (e.g. 2 to 100 tiles)</span>
             </div>
             <div class="setting-item">
               <label for="settingCatAttackCd">Attack Recovery:</label>
               <div class="setting-input-row">
-                <input type="number" id="settingCatAttackCd" min="1" max="10" step="1" class="form-input">
+                <input type="number" id="settingCatAttackCd" min="0" max="20" step="1" class="form-input">
                 <span class="setting-unit">ticks lock</span>
               </div>
               <span class="setting-hint">Ticks cat is locked after executing slash</span>
@@ -225,7 +229,7 @@
             <div class="setting-item">
               <label for="settingCatLungeCd">Lunge Recovery:</label>
               <div class="setting-input-row">
-                <input type="number" id="settingCatLungeCd" min="1" max="10" step="1" class="form-input">
+                <input type="number" id="settingCatLungeCd" min="0" max="20" step="1" class="form-input">
                 <span class="setting-unit">ticks lock</span>
               </div>
               <span class="setting-hint">Ticks to recover from 2-tile burst leap</span>
@@ -233,7 +237,7 @@
             <div class="setting-item">
               <label for="settingCatVision">Vision Radius:</label>
               <div class="setting-input-row">
-                <input type="number" id="settingCatVision" min="1" max="15" step="1" class="form-input">
+                <input type="number" id="settingCatVision" min="1" max="100" step="1" class="form-input">
                 <span class="setting-unit">tiles</span>
               </div>
               <span class="setting-hint">Forward-facing cone distance</span>
@@ -241,7 +245,7 @@
             <div class="setting-item">
               <label for="settingCatWeight">Weight:</label>
               <div class="setting-input-row">
-                <input type="number" id="settingCatWeight" min="1" max="50" step="1" class="form-input">
+                <input type="number" id="settingCatWeight" min="1" max="100" step="1" class="form-input">
                 <span class="setting-unit">mass</span>
               </div>
               <span class="setting-hint">Physics momentum for bump collisions</span>
@@ -259,7 +263,7 @@
             <div class="setting-item">
               <label for="settingMouseMove">Move Pace (Ticks/Tile):</label>
               <div class="setting-input-row">
-                <input type="number" id="settingMouseMove" min="1" max="10" step="1" class="form-input">
+                <input type="number" id="settingMouseMove" min="1" max="20" step="1" class="form-input">
                 <span class="setting-unit">ticks</span>
               </div>
               <span class="setting-hint">2 = OSRS default pace (1 tile every 2 ticks)</span>
@@ -267,7 +271,7 @@
             <div class="setting-item">
               <label for="settingMouseVision">Vision Radius:</label>
               <div class="setting-input-row">
-                <input type="number" id="settingMouseVision" min="1" max="15" step="1" class="form-input">
+                <input type="number" id="settingMouseVision" min="1" max="100" step="1" class="form-input">
                 <span class="setting-unit">tiles</span>
               </div>
               <span class="setting-hint">360° omnidirectional detection radius</span>
@@ -295,6 +299,6 @@
     </div>
   </div>
 
-  <script src="/static/app.js?v=5"></script>
+  <script src="/static/app.js?v=9"></script>
 </body>
 </html>

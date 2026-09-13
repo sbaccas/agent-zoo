@@ -81,11 +81,20 @@ static_dir = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
 
+FAVICON_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">🐱</text></svg>"""
+
+
 @app.get("/favicon.ico", include_in_schema=False)
 async def favicon():
-    return Response(status_code=204)
+    return Response(content=FAVICON_SVG, media_type="image/svg+xml")
 
 
 @app.get("/")
 async def root():
     return FileResponse(static_dir / "index.html")
+
+
+@app.get("/settings")
+async def settings_page():
+    return FileResponse(static_dir / "settings.html")
+

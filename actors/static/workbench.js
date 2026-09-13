@@ -49,6 +49,9 @@
   const chipPos = document.getElementById('chipPos');
   const chipFacing = document.getElementById('chipFacing');
   const chipRound = document.getElementById('chipRound');
+  const chipReach = document.getElementById('chipReach');
+  const chipSpeed = document.getElementById('chipSpeed');
+  const chipVision = document.getElementById('chipVision');
   const chipCooldown = document.getElementById('chipCooldown');
   const chipVisible = document.getElementById('chipVisible');
   const obsJsonViewer = document.getElementById('obsJsonViewer');
@@ -153,7 +156,10 @@
     if (!obs) {
       chipPos.textContent = '--';
       chipFacing.textContent = '--';
-      chipRound.textContent = '--';
+      if (chipRound) chipRound.textContent = '--';
+      if (chipReach) chipReach.textContent = '--';
+      if (chipSpeed) chipSpeed.textContent = '--';
+      if (chipVision) chipVision.textContent = '--';
       if (chipCooldown) {
         chipCooldown.textContent = '--';
         chipCooldown.style.color = '';
@@ -168,7 +174,21 @@
     const pos = selfInfo.position || { x: '?', y: '?' };
     chipPos.textContent = `(${pos.x}, ${pos.y})`;
     chipFacing.textContent = (selfInfo.facing || 'north').toUpperCase();
-    chipRound.textContent = obs.round !== undefined ? `#${obs.round}` : '--';
+    if (chipRound) chipRound.textContent = obs.round !== undefined ? `#${obs.round}` : '--';
+
+    const caps = obs.capabilities || {};
+    if (chipReach) {
+      const atkR = caps.attack_range !== undefined ? caps.attack_range : 2;
+      chipReach.textContent = `${atkR} tile${atkR === 1 ? '' : 's'}`;
+    }
+    if (chipSpeed) {
+      const moveCd = caps.move_cooldown !== undefined ? caps.move_cooldown : 3;
+      chipSpeed.textContent = `1 tile / ${moveCd}t`;
+    }
+    if (chipVision) {
+      const visR = caps.vision_radius !== undefined ? caps.vision_radius : 4;
+      chipVision.textContent = `${visR} tiles`;
+    }
 
     if (chipCooldown) {
       const cd = selfInfo.action_cooldown;

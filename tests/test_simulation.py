@@ -16,9 +16,14 @@ async def test_simulation_creation():
     assert state.tick == 0
     assert state.round == 0
     assert state.width == 50
-    assert state.height == 50
     assert state.cat_count == 5
     assert state.mouse_count == 20
+    assert state.species is not None
+    assert "cat" in state.species
+    assert "mouse" in state.species
+    assert state.species["cat"].attack_range == 2
+    assert state.species["cat"].move_cooldown == 3
+    assert state.species["mouse"].move_cooldown == 2
 
 
 @pytest.mark.asyncio
