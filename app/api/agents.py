@@ -115,32 +115,55 @@ async def submit_agent_action(sim_id: str, agent_id: str, req: ActionRequest, st
     if not entity.alive:
         raise HTTPException(status_code=410, detail=f"Agent '{agent_id}' is dead")
 
-    # 1. Apply player's intended action (fails if entity is in animation cooldown lock)
+    # 1. Action lock check: If agent is currently on cooldown, reject without advancing clock
+    if entity.action_cooldown > 0:
+        return sim.action_handler.apply_action(entity, req.action, sim.scheduler.tick)
+
+    # 2. Advance clock and save snapshot if stepping simulation
+    if step and sim.status != SimulationStatus.RUNNING:
+        sim._save_snapshot()
+        sim.scheduler.step_logical_clock()
+
+    # 3. Apply player's intended action at the synchronized tick
     result = sim.action_handler.apply_action(entity, req.action, sim.scheduler.tick)
 
-    # 2. If action resulted in captures, update counters and log event
-    if result.action == ActionType.ATTACK and result.affected_entities:
-        sim.scheduler.captures += len(result.affected_entities)
-        for victim_id in result.affected_entities:
-            victim = sim.entity_manager.entities.get(victim_id)
-            v_pos = f"({victim.position.x}, {victim.position.y})" if victim else "?"
-            msg = f"💥 [TICK {sim.scheduler.tick} | R{sim.scheduler.round}] MANUAL CAPTURE: {entity.id} at ({entity.position.x}, {entity.position.y}) attacked and captured {victim_id} at {v_pos}!"
-            logger.info(msg)
-            print(msg, flush=True)
-            sim.scheduler.events.append(GameEvent(
-                tick=sim.scheduler.tick,
-                round=sim.scheduler.round,
-                event_type="capture",
-                actor_id=entity.id,
-                target_id=victim_id,
-                position=victim.position if victim else entity.position,
-                message=msg,
-            ))
+    # 4. If action was an attack, log slash event and any captures at the synchronized tick
+    if result.action == ActionType.ATTACK and result.accepted:
+        slash_details = result.details or {}
+        sim.scheduler.events.append(GameEvent(
+            tick=sim.scheduler.tick,
+            round=sim.scheduler.round,
+            event_type="slash",
+            actor_id=entity.id,
+            position=entity.position,
+            message=f"⚔️ [TICK {sim.scheduler.tick} | R{sim.scheduler.round}] SLASH: {entity.id} executed slash attack ({len(result.affected_entities)} hits)",
+            details=slash_details,
+        ))
+        if result.affected_entities:
+            sim.scheduler.captures += len(result.affected_entities)
+            for victim_id in result.affected_entities:
+                victim = sim.entity_manager.entities.get(victim_id)
+                v_pos = f"({victim.position.x}, {victim.position.y})" if victim else "?"
+                msg = f"💥 [TICK {sim.scheduler.tick} | R{sim.scheduler.round}] MANUAL CAPTURE: {entity.id} at ({entity.position.x}, {entity.position.y}) attacked and captured {victim_id} at {v_pos}!"
+                logger.info(msg)
+                print(msg, flush=True)
+                sim.scheduler.events.append(GameEvent(
+                    tick=sim.scheduler.tick,
+                    round=sim.scheduler.round,
+                    event_type="capture",
+                    actor_id=entity.id,
+                    target_id=victim_id,
+                    position=victim.position if victim else entity.position,
+                    message=msg,
+                    details={
+                        "facing": entity.facing.value,
+                        "slash_range": slash_details.get("range_tiles", 2),
+                    },
+                ))
 
-    # 3. Synchronize simulation clock: advance world 1 tick so other animals react (only if action was accepted)
+    # 5. Synchronize simulation clock: advance other animals for this step (clock was already advanced)
     if step and sim.status != SimulationStatus.RUNNING and result.accepted:
-        sim._save_snapshot()
-        await sim.scheduler.execute_simulation_step(skip_entity_id=agent_id)
+        await sim.scheduler.execute_simulation_step(skip_entity_id=agent_id, advance_clock=False)
 
     return result
 

@@ -110,7 +110,7 @@
   window.addEventListener('resize', resizeCanvas);
 
   function getFacingAngle(facing) {
-    switch (facing) {
+    switch ((facing || 'north').toLowerCase()) {
       case 'north': return -Math.PI / 2;
       case 'south': return Math.PI / 2;
       case 'east': return 0;
@@ -119,17 +119,594 @@
     }
   }
 
-  function renderBoard(state) {
+  // Area of Effect (AoE) Calculation matching world.py get_slash_aoe_tiles
+  function getSlashAoeTiles(pos, facing, rangeTiles = 2, width = 100, height = 100, topology = 'torus') {
+    if (!pos) return [];
+    let dx = 0, dy = 0;
+    switch ((facing || 'north').toLowerCase()) {
+      case 'north': dy = -1; break;
+      case 'south': dy = 1; break;
+      case 'east': dx = 1; break;
+      case 'west': dx = -1; break;
+      default: dy = -1; break;
+    }
+    const px = -dy;
+    const py = dx;
+
+    function wrapOrBound(x, y) {
+      if (topology === 'torus') {
+        return {
+          x: ((x % width) + width) % width,
+          y: ((y % height) + height) % height,
+        };
+      } else {
+        if (x >= 0 && x < width && y >= 0 && y < height) {
+          return { x, y };
+        }
+        return null;
+      }
+    }
+
+    const tiles = [];
+    const seen = new Set();
+    function addTile(tx, ty, isFrontalArc, isCorridor, dist) {
+      const pt = wrapOrBound(tx, ty);
+      if (!pt) return;
+      const key = `${pt.x},${pt.y}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        tiles.push({
+          x: pt.x,
+          y: pt.y,
+          isFrontalArc: !!isFrontalArc,
+          isCorridor: !!isCorridor,
+          distance: dist,
+        });
+      }
+    }
+
+    // 1 tile ahead + forward flanks (3-tile lateral sweep)
+    for (const lat of [-1, 0, 1]) {
+      addTile(pos.x + dx * 1 + px * lat, pos.y + dy * 1 + py * lat, true, false, 1);
+    }
+
+    // Forward corridor: distance 2 up to rangeTiles
+    const maxR = Math.min(rangeTiles, Math.max(width, height));
+    for (let r = 2; r <= maxR; r++) {
+      addTile(pos.x + dx * r, pos.y + dy * r, false, true, r);
+    }
+
+    return tiles;
+  }
+
+  // Animation Engine for Slash, Special Effects & Multi-Frame Death
+  let activeAnimations = [];
+  let animFrameId = null;
+  const processedSlashEvents = new Set();
+  const dyingEntities = new Map(); // victimId -> { id, type, position, facing, startTime, duration }
+  const deadEntitiesSet = new Set(); // Permanently dead mice in current simulation run
+
+  function startAnimationLoop() {
+    if (!animFrameId) {
+      animFrameId = requestAnimationFrame(animationLoop);
+    }
+  }
+
+  function animationLoop(timestamp) {
+    animFrameId = null;
+    const now = performance.now();
+    activeAnimations = activeAnimations.filter(anim => (now - anim.startTime) < anim.duration);
+
+    // Clean up expired dying entities
+    for (const [id, dying] of dyingEntities.entries()) {
+      if ((now - dying.startTime) >= dying.duration) {
+        dyingEntities.delete(id);
+      }
+    }
+
+    if (currentState) {
+      renderBoard(currentState, now);
+    }
+
+    if (activeAnimations.length > 0 || dyingEntities.size > 0) {
+      animFrameId = requestAnimationFrame(animationLoop);
+    }
+  }
+
+  function enqueueSlashAnimation(anim) {
+    anim.startTime = performance.now();
+    anim.duration = anim.duration || 600;
+    const duplicate = activeAnimations.some(a =>
+      a.actorId === anim.actorId && Math.abs(a.startTime - anim.startTime) < 220
+    );
+    if (duplicate) return;
+
+    // ALWAYS ensure aoeTiles is computed with proper metadata (isFrontalArc, isCorridor, distance)
+    const width = currentState?.width || 100;
+    const height = currentState?.height || 100;
+    const topology = currentState?.topology || 'torus';
+    anim.aoeTiles = getSlashAoeTiles(anim.catPos, anim.facing, anim.rangeTiles, width, height, topology);
+
+    activeAnimations.push(anim);
+    if (activeAnimations.length > 20) {
+      activeAnimations.shift();
+    }
+    startAnimationLoop();
+  }
+
+  function renderAoePreview(state, cat, cellW, cellH) {
+    if (!cat || !cat.alive) return;
+    const catRange = (settingCatAttackRange && settingCatAttackRange.value)
+      ? parseInt(settingCatAttackRange.value, 10)
+      : (state.species?.cat?.attack_range ?? 2);
+    const aoeTiles = getSlashAoeTiles(cat.position, cat.facing, catRange, state.width, state.height, state.topology);
+
+    ctx.save();
+    for (const t of aoeTiles) {
+      const rx = t.x * cellW;
+      const ry = t.y * cellH;
+      const cx = rx + cellW / 2;
+      const cy = ry + cellH / 2;
+
+      // Vibrant crimson tint (stronger on frontal 3-tile arc)
+      ctx.fillStyle = t.isFrontalArc ? 'rgba(239, 68, 68, 0.32)' : 'rgba(239, 68, 68, 0.18)';
+      ctx.fillRect(rx + 1, ry + 1, cellW - 2, cellH - 2);
+
+      // High-contrast gold / red boundary
+      ctx.strokeStyle = t.isFrontalArc ? 'rgba(250, 204, 21, 0.9)' : 'rgba(239, 68, 68, 0.65)';
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([3, 2]);
+      ctx.strokeRect(rx + 1, ry + 1, cellW - 2, cellH - 2);
+
+      // Subtle targeting reticle / crosshair in center
+      ctx.strokeStyle = 'rgba(220, 38, 38, 0.45)';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([]);
+      const crossSize = Math.max(2, Math.min(4, cellW * 0.2));
+      ctx.beginPath();
+      ctx.moveTo(cx - crossSize, cy);
+      ctx.lineTo(cx + crossSize, cy);
+      ctx.moveTo(cx, cy - crossSize);
+      ctx.lineTo(cx, cy + crossSize);
+      ctx.stroke();
+    }
+
+    // Small icon indicator on primary frontal strike tile
+    let dx = 0, dy = 0;
+    switch (cat.facing) {
+      case 'north': dy = -1; break;
+      case 'south': dy = 1; break;
+      case 'east': dx = 1; break;
+      case 'west': dx = -1; break;
+    }
+    const frontX = ((cat.position.x + dx) % state.width + state.width) % state.width;
+    const frontY = ((cat.position.y + dy) % state.height + state.height) % state.height;
+    const tagX = frontX * cellW + cellW / 2;
+    const tagY = frontY * cellH + cellH / 2;
+
+    if (cellW >= 14) {
+      ctx.fillStyle = 'rgba(220, 38, 38, 0.85)';
+      ctx.font = `bold ${Math.max(8, Math.floor(cellW * 0.45))}px system-ui, sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('⚔️', tagX, tagY);
+    }
+
+    ctx.restore();
+  }
+
+  // 1. Ground AoE Damage Squares Fill & Delineation (beneath sprites)
+  function renderSlashGroundFill(slashes, cellW, cellH) {
+    if (!slashes || slashes.length === 0) return;
+
+    for (const slash of slashes) {
+      const p = slash.progress;
+      const fade = slash.isDynamic ? Math.max(0.4, 1.0 - p * 0.6) : 1.0;
+
+      ctx.save();
+      for (const t of slash.aoeTiles) {
+        const rx = t.x * cellW;
+        const ry = t.y * cellH;
+
+        // A) High-visibility vibrant red/crimson damage fill for the square
+        ctx.fillStyle = `rgba(239, 68, 68, ${0.75 * fade})`;
+        ctx.fillRect(rx, ry, cellW, cellH);
+
+        // B) Bold, sharp electric yellow / gold border outlining the exact square
+        ctx.strokeStyle = `rgba(250, 204, 21, ${0.98 * fade})`;
+        ctx.lineWidth = Math.max(2, Math.min(3.5, cellW * 0.18));
+        ctx.strokeRect(rx + 0.5, ry + 0.5, cellW - 1, cellH - 1);
+
+        // C) Tactical hazard cross inside the tile square
+        ctx.strokeStyle = `rgba(255, 255, 255, ${0.45 * fade})`;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(rx + 1, ry + 1);
+        ctx.lineTo(rx + cellW - 1, ry + cellH - 1);
+        ctx.moveTo(rx + cellW - 1, ry + 1);
+        ctx.lineTo(rx + 1, ry + cellH - 1);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+  }
+
+  // 1b. Prominent "!" Danger Badges on each active attack tile
+  function renderSlashDamageSquareMarkers(slashes, state, cellW, cellH) {
+    if (!slashes || slashes.length === 0) return;
+
+    for (const slash of slashes) {
+      const p = slash.progress;
+      const fade = slash.isDynamic ? Math.max(0.5, 1.0 - p * 0.5) : 1.0;
+
+      ctx.save();
+      for (const t of slash.aoeTiles) {
+        // User rule: "you dont have to put one on the mouse if it gets hit but i do wnana be able to see where the fucking slash tiles are"
+        const hasAliveMouse = (state.entities || []).some(
+          e => e.type === 'mouse' && e.alive && e.position.x === t.x && e.position.y === t.y
+        );
+        if (hasAliveMouse) {
+          continue; // Skip putting "!" on top of a living mouse
+        }
+
+        const cx = (t.x + 0.5) * cellW;
+        const cy = (t.y + 0.5) * cellH;
+
+        // Ensure badge is ALWAYS human-readable (minimum radius 7.5px = 15px diameter)
+        const badgeRadius = Math.max(7.5, Math.min(cellW * 0.65, 14));
+
+        // Circular danger badge backing
+        ctx.beginPath();
+        ctx.arc(cx, cy, badgeRadius, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(220, 38, 38, ${fade * 0.98})`;
+        ctx.fill();
+        ctx.strokeStyle = `rgba(250, 204, 21, ${fade * 1.0})`;
+        ctx.lineWidth = 1.8;
+        ctx.stroke();
+
+        // The bold "!" character (minimum 11px font so it is sharp & crisp)
+        const fontSize = Math.max(11, Math.min(Math.floor(cellW * 0.8), 16));
+        ctx.font = `900 ${fontSize}px -apple-system, system-ui, sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+
+        // Drop shadow for crispness against any background
+        ctx.shadowColor = 'rgba(0, 0, 0, 0.9)';
+        ctx.shadowBlur = 3;
+        ctx.fillStyle = '#ffffff';
+        ctx.fillText('!', cx, cy + 0.5);
+        ctx.shadowBlur = 0;
+      }
+      ctx.restore();
+    }
+  }
+
+  // 2. Multi-Frame Mouse Death Sequence (40–50 frames across 850ms, plays ONCE per death)
+  function renderDyingEntities(state, timestamp, cellW, cellH) {
+    if (dyingEntities.size === 0) return;
+
+    const fontSize = Math.max(10, Math.floor(cellW * 1.3));
+
+    for (const [victimId, dying] of dyingEntities.entries()) {
+      const elapsed = timestamp - dying.startTime;
+      if (elapsed >= dying.duration) {
+        dyingEntities.delete(victimId);
+        continue;
+      }
+
+      const dp = Math.min(1.0, elapsed / dying.duration);
+      const cx = dying.position.x * cellW + cellW / 2;
+      const cy = dying.position.y * cellH + cellH / 2;
+
+      ctx.save();
+
+      // Phase 1: Flinch recoil (first 300ms)
+      const flinchOffset = (dp < 0.35)
+        ? Math.sin(dp * Math.PI * 6) * Math.max(2, cellW * 0.2) * (1.0 - dp / 0.35)
+        : 0;
+
+      ctx.translate(cx + flinchOffset, cy);
+
+      // Phase 2: Tumble rotation & collapse (300ms to 850ms)
+      const tumbleAngle = (dp > 0.15) ? Math.min(Math.PI * 0.5, (dp - 0.15) * Math.PI * 0.8) : 0;
+      ctx.rotate(tumbleAngle);
+
+      // Squashing down onto the ground as it collapses
+      const squashX = 1.0 + dp * 0.25;
+      const squashY = Math.max(0.2, 1.0 - dp * 0.65);
+      ctx.scale(squashX, squashY);
+
+      // Flash effect: alternating red/white damage flash in first 350ms, then fading ash slate
+      let bodyColor = COLOR_MOUSE;
+      let bgGlowColor = COLOR_MOUSE_BG;
+      const fadeAlpha = Math.max(0, 1.0 - (dp > 0.5 ? (dp - 0.5) / 0.5 : 0));
+
+      if (dp < 0.35) {
+        const flashPhase = Math.floor(elapsed / 55) % 2;
+        bodyColor = (flashPhase === 0) ? '#ffffff' : '#ef4444';
+        bgGlowColor = (flashPhase === 0) ? 'rgba(255, 255, 255, 0.9)' : 'rgba(239, 68, 68, 0.6)';
+      } else {
+        bodyColor = `rgba(148, 163, 184, ${fadeAlpha})`; // Ash slate
+        bgGlowColor = `rgba(100, 116, 139, ${fadeAlpha * 0.3})`;
+      }
+
+      // Background disc
+      ctx.fillStyle = bgGlowColor;
+      const bgRadius = Math.max(5, cellW * 0.7);
+      ctx.beginPath();
+      ctx.arc(0, 0, bgRadius, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Mouse Dead Eyes '✕'
+      ctx.fillStyle = bodyColor;
+      ctx.font = `bold ${fontSize}px monospace`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      if (dp < 0.25) {
+        ctx.fillText('M', 0, 1);
+      } else {
+        ctx.fillText('✕', 0, 1);
+      }
+
+      ctx.restore();
+
+      // Phase 3: Soul ghost rising upward (from 250ms to 850ms)
+      if (dp > 0.25) {
+        const ghostProg = (dp - 0.25) / 0.75;
+        const ghostY = cy - ghostProg * (cellH * 1.8);
+        const ghostAlpha = (1.0 - ghostProg) * 0.9;
+        const ghostSize = Math.max(10, Math.floor(cellW * 0.8));
+
+        ctx.save();
+        ctx.font = `${ghostSize}px system-ui, sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillStyle = `rgba(224, 242, 254, ${ghostAlpha})`;
+        ctx.fillText('👻', cx, ghostY);
+        ctx.restore();
+      }
+    }
+  }
+
+  // 3. Prominent Slash Blades: Orange Sweeping Arc & (///) Frontal Claws (drawn ABOVE entities)
+  function renderSlashBladesAndClaws(slashes, cellW, cellH) {
+    if (!slashes || slashes.length === 0) return;
+
+    for (const slash of slashes) {
+      const p = slash.progress;
+      const fade = slash.isDynamic ? Math.max(0.35, 1.0 - p * 0.65) : 0.9;
+      const angle = getFacingAngle(slash.facing || 'north');
+
+      if (!slash.catPos) continue;
+
+      const catPx = (slash.catPos.x + 0.5) * cellW;
+      const catPy = (slash.catPos.y + 0.5) * cellH;
+
+      // ----------------------------------------------------
+      // A) THE ORANGE ARC: 3 Sweeping Concentric Blade Crescents across 3 Frontal Tiles
+      // ----------------------------------------------------
+      ctx.save();
+      ctx.translate(catPx, catPy);
+      ctx.rotate(angle); // +X points forward into the 3 frontal tiles
+
+      const swipeProg = slash.isDynamic ? Math.min(1.0, p / 0.45) : 1.0;
+      const easedSwipe = slash.isDynamic ? (1.0 - Math.pow(1.0 - swipeProg, 2.5)) : 1.0;
+      const startAngle = -Math.PI * 0.42; // -75° (left flank)
+      const maxSweepSpan = Math.PI * 0.84; // 150° span sweeping across frontal tiles
+      const currentEndAngle = startAngle + maxSweepSpan * easedSwipe;
+
+      // 3 Concentric Claw Blade Arcs (Outer, Middle, Inner)
+      const clawRadii = [
+        Math.max(14, cellW * 1.3),  // Inner claw
+        Math.max(18, cellW * 1.7),  // Middle claw
+        Math.max(22, cellW * 2.1),  // Outer claw
+      ];
+
+      for (let i = 0; i < clawRadii.length; i++) {
+        const r = clawRadii[i];
+        const rStart = startAngle - (i * 0.04);
+        const rEnd = Math.max(rStart + 0.08, currentEndAngle - (i * 0.03));
+
+        ctx.beginPath();
+        ctx.arc(0, 0, r, rStart, rEnd);
+
+        // Outer Blazing Neon Orange Aura
+        ctx.strokeStyle = `rgba(255, 85, 0, ${fade * 0.95})`;
+        ctx.lineWidth = Math.max(5, cellW * 0.45);
+        ctx.lineCap = 'round';
+        ctx.stroke();
+
+        // Mid Electric Amber Blade Edge
+        ctx.strokeStyle = `rgba(255, 200, 0, ${fade * 0.98})`;
+        ctx.lineWidth = Math.max(3, cellW * 0.25);
+        ctx.stroke();
+
+        // Inner White-Hot Cutting Laser Core
+        ctx.strokeStyle = `rgba(255, 255, 255, ${fade * 1.0})`;
+        ctx.lineWidth = Math.max(1.5, cellW * 0.12);
+        ctx.stroke();
+
+        // Fiery Cutting Tip Spark Head
+        if (slash.isDynamic && swipeProg < 0.98) {
+          const tipX = Math.cos(rEnd) * r;
+          const tipY = Math.sin(rEnd) * r;
+          ctx.fillStyle = '#ffffff';
+          ctx.beginPath();
+          ctx.arc(tipX, tipY, Math.max(2, cellW * 0.15), 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+      ctx.restore();
+
+      // ----------------------------------------------------
+      // B) THE (///) CLAW GOUGES ACROSS ALL 3 FRONTAL TILES
+      // ----------------------------------------------------
+      const frontalTiles = slash.aoeTiles.filter(t => t.isFrontalArc);
+      for (const t of frontalTiles) {
+        const cx = t.x * cellW + cellW / 2;
+        const cy = t.y * cellH + cellH / 2;
+        const clawSweep = slash.isDynamic ? Math.min(1.0, p / 0.4) : 1.0;
+
+        ctx.save();
+        ctx.translate(cx, cy);
+        ctx.rotate(angle);
+
+        // Draw 3 sharp diagonal claw gouges (///)
+        const scratchLen = Math.max(12, cellW * 0.9) * clawSweep;
+        const clawOffsets = [-0.3 * cellW, 0, 0.3 * cellW];
+
+        for (const cOff of clawOffsets) {
+          ctx.beginPath();
+          ctx.moveTo(-scratchLen * 0.5 + cOff * 0.5, -scratchLen * 0.45);
+          ctx.lineTo(scratchLen * 0.5 + cOff * 0.5, scratchLen * 0.45);
+
+          // Fiery Orange Glow
+          ctx.strokeStyle = `rgba(255, 85, 0, ${fade * 0.95})`;
+          ctx.lineWidth = Math.max(3.5, cellW * 0.25);
+          ctx.lineCap = 'round';
+          ctx.stroke();
+
+          // Electric Yellow Midline
+          ctx.strokeStyle = `rgba(255, 235, 59, ${fade * 0.98})`;
+          ctx.lineWidth = Math.max(2, cellW * 0.15);
+          ctx.stroke();
+
+          // White Hot Core
+          ctx.strokeStyle = `rgba(255, 255, 255, ${fade * 1.0})`;
+          ctx.lineWidth = Math.max(1, cellW * 0.08);
+          ctx.stroke();
+        }
+        ctx.restore();
+      }
+
+      // ----------------------------------------------------
+      // C) FORWARD PIERCING CORRIDOR BEAM & CHEVRONS (dist >= 2)
+      // ----------------------------------------------------
+      const corridorTiles = slash.aoeTiles.filter(t => t.isCorridor);
+      for (const t of corridorTiles) {
+        const cx = t.x * cellW + cellW / 2;
+        const cy = t.y * cellH + cellH / 2;
+        const dist = t.distance || 2;
+        const delay = (dist - 1) * 0.03;
+        const beamProg = slash.isDynamic ? Math.min(1.0, Math.max(0, (p - delay) / 0.35)) : 1.0;
+        const bAlpha = fade * (beamProg > 0 ? 1 : 0);
+
+        if (bAlpha > 0.01) {
+          ctx.save();
+          ctx.translate(cx, cy);
+          ctx.rotate(angle);
+
+          // Piercing Laser Beam
+          ctx.beginPath();
+          ctx.moveTo(-cellW * 0.5, 0);
+          ctx.lineTo(cellW * 0.5 * beamProg, 0);
+          ctx.strokeStyle = `rgba(239, 68, 68, ${bAlpha * 0.95})`;
+          ctx.lineWidth = Math.max(3.5, cellW * 0.28);
+          ctx.lineCap = 'round';
+          ctx.stroke();
+
+          ctx.strokeStyle = `rgba(255, 255, 255, ${bAlpha * 1.0})`;
+          ctx.lineWidth = Math.max(1.5, cellW * 0.1);
+          ctx.stroke();
+
+          // Directional Chevrons >>>
+          const chevSize = Math.max(4, cellW * 0.3);
+          ctx.beginPath();
+          ctx.moveTo(-chevSize * 0.4, -chevSize * 0.7);
+          ctx.lineTo(chevSize * 0.5, 0);
+          ctx.lineTo(-chevSize * 0.4, chevSize * 0.7);
+          ctx.strokeStyle = `rgba(255, 237, 74, ${bAlpha * 1.0})`;
+          ctx.lineWidth = Math.max(2, cellW * 0.12);
+          ctx.stroke();
+
+          ctx.restore();
+        }
+      }
+    }
+  }
+
+  // 4. Hit Sparks, Impact Shockwave Rings & Floating Combat Text
+  function renderSlashImpactAndText(slashes, state, cellW, cellH) {
+    if (!slashes || slashes.length === 0) return;
+
+    for (const slash of slashes) {
+      const p = slash.progress;
+      const fade = slash.isDynamic ? Math.max(0, 1.0 - p * 1.5) : 0.85;
+
+      // Hit sparks & shockwave rings
+      if (slash.hits && slash.hits.length > 0) {
+        for (const hitId of slash.hits) {
+          const victim = (state.entities || []).find(e => e.id === hitId);
+          const vPos = victim ? victim.position : null;
+          if (!vPos) continue;
+
+          const vx = vPos.x * cellW + cellW / 2;
+          const vy = vPos.y * cellH + cellH / 2;
+
+          const impactProgress = slash.isDynamic ? Math.min(1.0, p * 2.0) : 1.0;
+          const ringRadius = (cellW * 0.3) + impactProgress * (cellW * 0.8);
+          const ringAlpha = slash.isDynamic ? (1.0 - impactProgress) : 0.7;
+
+          ctx.save();
+          ctx.strokeStyle = `rgba(239, 68, 68, ${ringAlpha})`;
+          ctx.lineWidth = Math.max(2, cellW * 0.12);
+          ctx.beginPath();
+          ctx.arc(vx, vy, ringRadius, 0, Math.PI * 2);
+          ctx.stroke();
+
+          const sparkDist = impactProgress * cellW * 0.85;
+          for (let s = 0; s < 8; s++) {
+            const sparkAngle = (s * Math.PI) / 4 + 0.25;
+            const sx = vx + Math.cos(sparkAngle) * sparkDist;
+            const sy = vy + Math.sin(sparkAngle) * sparkDist;
+            ctx.fillStyle = (s % 2 === 0) ? `rgba(255, 237, 74, ${ringAlpha})` : `rgba(255, 69, 0, ${ringAlpha})`;
+            ctx.beginPath();
+            ctx.arc(sx, sy, Math.max(1.5, cellW * 0.08), 0, Math.PI * 2);
+            ctx.fill();
+          }
+          ctx.restore();
+        }
+      }
+
+      // Floating text "SLASH!"
+      if (slash.catPos && fade > 0) {
+        const catPx = (slash.catPos.x + 0.5) * cellW;
+        const catPy = (slash.catPos.y + 0.5) * cellH;
+        const textY = slash.isDynamic
+          ? (catPy - cellH * 0.85 - (p * cellH * 0.6))
+          : (catPy - cellH * 1.2);
+        const text = (slash.hits && slash.hits.length > 0) ? `⚔️ SLASH! (${slash.hits.length})` : '⚔️ SLASH!';
+        const fontSize = Math.max(10, Math.floor(cellW * 0.65));
+
+        ctx.save();
+        ctx.font = `900 ${fontSize}px system-ui, -apple-system, sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+
+        ctx.strokeStyle = `rgba(0, 0, 0, ${fade * 0.85})`;
+        ctx.lineWidth = 3;
+        ctx.strokeText(text, catPx, textY);
+
+        ctx.fillStyle = (slash.hits && slash.hits.length > 0)
+          ? `rgba(255, 237, 74, ${fade})`
+          : `rgba(255, 255, 255, ${fade})`;
+        ctx.fillText(text, catPx, textY);
+        ctx.restore();
+      }
+    }
+  }
+
+  function renderBoard(state, timestamp = performance.now()) {
     const width = state.width || 100;
     const height = state.height || 100;
     const cellW = canvas.width / width;
     const cellH = canvas.height / height;
 
-    // Clear background
+    // 1. Clear background
     ctx.fillStyle = COLOR_BG;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    // Grid lines
+    // 2. Grid lines
     ctx.strokeStyle = COLOR_GRID_LINE;
     ctx.lineWidth = 1;
     const step = width <= 20 ? 1 : 10;
@@ -146,7 +723,88 @@
       ctx.stroke();
     }
 
-    // Render Recent Capture Marker (only on the exact tick it occurs)
+    // 3. Render AoE Strike-Zone Preview for selected cat
+    const entities = state.entities || [];
+    if (selectedAgentId) {
+      const selCat = entities.find(e => e.id === selectedAgentId && e.type === 'cat' && e.alive);
+      if (selCat) {
+        renderAoePreview(state, selCat, cellW, cellH);
+      }
+    }
+
+    // 4. Collect all slashes for current tick (stays drawn while on this tick!)
+    const currentTickSlashes = [];
+    const processedCatIds = new Set();
+
+    if (state.recent_events) {
+      for (const ev of state.recent_events) {
+        if (ev.event_type === 'slash' && ev.tick === state.tick && ev.position) {
+          const active = activeAnimations.find(a => a.actorId === ev.actor_id);
+          const details = ev.details || {};
+          const facing = details.facing || 'north';
+          const rangeTiles = details.range_tiles || 2;
+          let aoeTiles = getSlashAoeTiles(ev.position, facing, rangeTiles, state.width, state.height, state.topology);
+          if (details.aoe_tiles && Array.isArray(details.aoe_tiles)) {
+            const seen = new Set(aoeTiles.map(t => `${t.x},${t.y}`));
+            for (const st of details.aoe_tiles) {
+              if (!seen.has(`${st.x},${st.y}`)) {
+                aoeTiles.push({
+                  x: st.x,
+                  y: st.y,
+                  isFrontalArc: false,
+                  isCorridor: true,
+                  distance: rangeTiles,
+                });
+              }
+            }
+          }
+
+          let progress = 1.0;
+          let isDynamic = false;
+          if (active) {
+            const elapsed = timestamp - active.startTime;
+            progress = Math.min(1.0, elapsed / active.duration);
+            isDynamic = true;
+          }
+
+          currentTickSlashes.push({
+            actorId: ev.actor_id,
+            catPos: ev.position,
+            facing: facing,
+            rangeTiles: rangeTiles,
+            aoeTiles: aoeTiles,
+            hits: details.hit_entities || [],
+            progress: progress,
+            isDynamic: isDynamic,
+          });
+          processedCatIds.add(ev.actor_id);
+        }
+      }
+    }
+
+    // Also include any local active dynamic animations not yet reflected in state.recent_events
+    for (const anim of activeAnimations) {
+      if (!processedCatIds.has(anim.actorId)) {
+        const elapsed = timestamp - anim.startTime;
+        const progress = Math.min(1.0, elapsed / anim.duration);
+        currentTickSlashes.push({
+          actorId: anim.actorId,
+          catPos: anim.catPos,
+          facing: anim.facing,
+          rangeTiles: anim.rangeTiles,
+          aoeTiles: anim.aoeTiles,
+          hits: anim.hits || [],
+          progress: progress,
+          isDynamic: true,
+        });
+        processedCatIds.add(anim.actorId);
+      }
+    }
+
+    // 5. Render Slash Ground AoE Glow Fill (beneath sprites)
+    renderSlashGroundFill(currentTickSlashes, cellW, cellH);
+
+    // 6. Render Recent Capture Marker (only on the exact tick it occurs)
     if (state.recent_events) {
       for (const ev of state.recent_events) {
         if (ev.event_type === 'capture' && ev.position && ev.tick === state.tick) {
@@ -163,11 +821,8 @@
       }
     }
 
-    // Render Entities
-    const entities = state.entities || [];
-
-    // Render Vision Cones & Detection Fields (underneath sprites)
-    const aliveMice = entities.filter(e => e.type === 'mouse' && e.alive);
+    // 7. Render Vision Cones & Detection Fields (underneath sprites)
+    const aliveMice = entities.filter(e => e.type === 'mouse' && e.alive && !dyingEntities.has(e.id));
     const miceToShow = new Set();
     if (selectedAgentId) {
       const selMouse = aliveMice.find(m => m.id === selectedAgentId);
@@ -183,7 +838,7 @@
 
     for (let i = 0; i < entities.length; i++) {
       const e = entities[i];
-      if (!e.alive) continue;
+      if (!e.alive || dyingEntities.has(e.id)) continue;
 
       const cx = e.position.x * cellW + cellW / 2;
       const cy = e.position.y * cellH + cellH / 2;
@@ -218,11 +873,12 @@
       }
     }
 
+    // 8. Render Living Entities
     const fontSize = Math.max(10, Math.floor(cellW * 1.3));
 
     for (let i = 0; i < entities.length; i++) {
       const e = entities[i];
-      if (!e.alive) continue;
+      if (!e.alive || dyingEntities.has(e.id)) continue;
 
       const cx = e.position.x * cellW + cellW / 2;
       const cy = e.position.y * cellH + cellH / 2;
@@ -273,6 +929,18 @@
 
       ctx.restore();
     }
+
+    // 9. Render Dying Entities (Multi-Frame Death Animation across ~50 frames)
+    renderDyingEntities(state, timestamp, cellW, cellH);
+
+    // 10. Render Slash Blade Arcs (Orange Arc & (///) Frontal Claws) ABOVE entities
+    renderSlashBladesAndClaws(currentTickSlashes, cellW, cellH);
+
+    // 11. Render Active Damage Square "!" Badges (ABOVE CLAWS & SPRITES, skipping living mice)
+    renderSlashDamageSquareMarkers(currentTickSlashes, state, cellW, cellH);
+
+    // 12. Render Floating Combat Text ("SLASH!", "CAPTURE!") and Hit Sparks
+    renderSlashImpactAndText(currentTickSlashes, state, cellW, cellH);
   }
 
 
@@ -324,7 +992,110 @@
   }
 
   function updateUI(state) {
+    const prevState = currentState;
     currentState = state;
+
+    // Detect new slash events to animate
+    if (state.recent_events) {
+      for (const ev of state.recent_events) {
+        if (ev.event_type === 'slash') {
+          const evKey = `${ev.tick}_${ev.actor_id}_slash`;
+          if (!processedSlashEvents.has(evKey)) {
+            processedSlashEvents.add(evKey);
+            if (processedSlashEvents.size > 200) {
+              const first = processedSlashEvents.values().next().value;
+              processedSlashEvents.delete(first);
+            }
+            const details = ev.details || {};
+            const facing = details.facing || 'north';
+            const rangeTiles = details.range_tiles || 2;
+            const aoeTiles = getSlashAoeTiles(ev.position, facing, rangeTiles, state.width, state.height, state.topology);
+            enqueueSlashAnimation({
+              id: evKey,
+              type: 'slash',
+              actorId: ev.actor_id,
+              catPos: ev.position,
+              facing: facing,
+              rangeTiles: rangeTiles,
+              aoeTiles: aoeTiles,
+              hits: details.hit_entities || [],
+              duration: 600,
+            });
+          }
+        }
+      }
+    }
+
+    // Detect mouse captures & deaths to trigger multi-frame death animation (~50 frames across 850ms)
+    // Plays strictly ONCE per mouse death; ignores already dead mice or repeated polls when stopped
+    if (state.recent_events) {
+      for (const ev of state.recent_events) {
+        if (ev.event_type === 'capture' && ev.target_id) {
+          if (!deadEntitiesSet.has(ev.target_id) && !dyingEntities.has(ev.target_id) && ev.tick === state.tick) {
+            deadEntitiesSet.add(ev.target_id);
+            const victimPos = ev.position || { x: 0, y: 0 };
+            dyingEntities.set(ev.target_id, {
+              id: ev.target_id,
+              type: 'mouse',
+              position: { x: victimPos.x, y: victimPos.y },
+              facing: (ev.details?.facing || 'east').toLowerCase(),
+              startTime: performance.now(),
+              duration: 850,
+            });
+            startAnimationLoop();
+          }
+        }
+      }
+    }
+
+    // Also detect if any living mouse from previous state died
+    if (prevState && prevState.entities) {
+      for (const oldEnt of prevState.entities) {
+        if (oldEnt.type === 'mouse' && oldEnt.alive) {
+          const newEnt = (state.entities || []).find(e => e.id === oldEnt.id);
+          if (!newEnt || !newEnt.alive) {
+            if (!deadEntitiesSet.has(oldEnt.id) && !dyingEntities.has(oldEnt.id)) {
+              deadEntitiesSet.add(oldEnt.id);
+              dyingEntities.set(oldEnt.id, {
+                id: oldEnt.id,
+                type: 'mouse',
+                position: { x: oldEnt.position.x, y: oldEnt.position.y },
+                facing: (oldEnt.facing || 'east').toLowerCase(),
+                startTime: performance.now(),
+                duration: 850,
+              });
+              startAnimationLoop();
+            }
+          }
+        }
+      }
+    }
+
+    // Step Back / Rewind support: If an entity is alive again, un-mark it so it can die again if stepped forward
+    if (state.entities) {
+      for (const ent of state.entities) {
+        if (ent.type === 'mouse' && ent.alive) {
+          deadEntitiesSet.delete(ent.id);
+          dyingEntities.delete(ent.id);
+        }
+      }
+    }
+
+    // If simulation reset (tick 0), clear all animation tracking sets
+    if (state.tick === 0) {
+      deadEntitiesSet.clear();
+      dyingEntities.clear();
+      activeAnimations = [];
+      processedSlashEvents.clear();
+    }
+
+    // When rewinding ticks, clean up processedSlashEvents for ticks in the future
+    for (const key of processedSlashEvents) {
+      const t = parseInt(key.split('_')[0], 10);
+      if (!isNaN(t) && t > state.tick) {
+        processedSlashEvents.delete(key);
+      }
+    }
 
     // Update Status Badge
     const status = (state.status || 'CREATED').toUpperCase();
@@ -545,8 +1316,50 @@
 
   async function sendAgentAction(action) {
     if (!selectedAgentId) return;
+
+    // Instant client-side slash animation for zero-latency manual feedback
+    if (action === 'attack' && currentState) {
+      const cat = (currentState.entities || []).find(e => e.id === selectedAgentId && e.type === 'cat' && e.alive);
+      if (cat) {
+        const range = (settingCatAttackRange && settingCatAttackRange.value)
+          ? parseInt(settingCatAttackRange.value, 10)
+          : (currentState.species?.cat?.attack_range ?? 2);
+        const aoe = getSlashAoeTiles(cat.position, cat.facing, range, currentState.width, currentState.height, currentState.topology);
+        enqueueSlashAnimation({
+          id: `manual_${Date.now()}`,
+          type: 'slash',
+          actorId: cat.id,
+          catPos: { x: cat.position.x, y: cat.position.y },
+          facing: cat.facing,
+          rangeTiles: range,
+          aoeTiles: aoe,
+          hits: [],
+          duration: 600,
+        });
+      }
+    }
+
     const res = await apiCall(`/api/simulations/${currentSimId}/agents/${selectedAgentId}/actions?step=true`, 'POST', { action: action });
     if (res && res.accepted) {
+      // If action resulted in captures, register victims for death animation immediately
+      if (res.affected_entities && res.affected_entities.length > 0) {
+        for (const victimId of res.affected_entities) {
+          const victim = (currentState?.entities || []).find(e => e.id === victimId);
+          if (victim && !deadEntitiesSet.has(victimId) && !dyingEntities.has(victimId)) {
+            deadEntitiesSet.add(victimId);
+            dyingEntities.set(victimId, {
+              id: victimId,
+              type: 'mouse',
+              position: { x: victim.position.x, y: victim.position.y },
+              facing: (victim.facing || 'east').toLowerCase(),
+              startTime: performance.now(),
+              duration: 850,
+            });
+            startAnimationLoop();
+          }
+        }
+      }
+
       // Step simulation visually or refresh state
       const newState = await apiCall(`/api/simulations/${currentSimId}/state`, 'GET');
       if (newState) {
@@ -808,6 +1621,15 @@
   if (btnSaveSettings) btnSaveSettings.addEventListener('click', saveSettings);
   if (btnResetSettings) btnResetSettings.addEventListener('click', resetSettingsToDefaults);
 
+  // Real-time canvas AoE preview update when user edits attack range in settings
+  if (settingCatAttackRange) {
+    settingCatAttackRange.addEventListener('input', () => {
+      if (currentState && selectedAgentId) {
+        renderBoard(currentState);
+      }
+    });
+  }
+
   // Sync settings when modified from external standalone settings window
   window.addEventListener('message', async (event) => {
     if (event.data && event.data.type === 'settings_updated') {
@@ -905,7 +1727,13 @@
   }
   btnStep.addEventListener('click', () => triggerAction(`/api/simulations/${currentSimId}/step`));
   btnStop.addEventListener('click', () => triggerAction(`/api/simulations/${currentSimId}/stop`));
-  btnReset.addEventListener('click', () => triggerAction(`/api/simulations/${currentSimId}/reset`));
+  btnReset.addEventListener('click', () => {
+    deadEntitiesSet.clear();
+    dyingEntities.clear();
+    activeAnimations = [];
+    processedSlashEvents.clear();
+    triggerAction(`/api/simulations/${currentSimId}/reset`);
+  });
 
   speedSelect.addEventListener('change', async () => {
     const rate = parseFloat(speedSelect.value);

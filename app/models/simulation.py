@@ -65,6 +65,7 @@ class GameEvent(BaseModel):
     target_id: Optional[str] = None
     position: Optional[Position] = None
     message: str
+    details: Optional[Dict[str, Any]] = None
 
 
 class SimulationStateResponse(BaseModel):

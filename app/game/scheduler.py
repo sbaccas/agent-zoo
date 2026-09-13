@@ -106,8 +106,9 @@ class Scheduler:
             "legal_actions": legal_actions,
         }
 
-    async def execute_simulation_step(self, skip_entity_id: Optional[str] = None) -> int:
-        self.step_logical_clock()
+    async def execute_simulation_step(self, skip_entity_id: Optional[str] = None, advance_clock: bool = True) -> int:
+        if advance_clock:
+            self.step_logical_clock()
 
         entities = self.entity_manager.get_alive_entities()
         cats = [e for e in entities if e.type == EntityType.CAT and e.alive]
@@ -178,23 +179,38 @@ class Scheduler:
 
             if action_val in [a.value for a in ActionType]:
                 res = self.action_handler.apply_action(cat, ActionType(action_val), self.tick)
-                if res.action == ActionType.ATTACK and res.affected_entities:
-                    self.captures += len(res.affected_entities)
-                    for victim_id in res.affected_entities:
-                        victim = self.entity_manager.entities.get(victim_id)
-                        v_pos = f"({victim.position.x}, {victim.position.y})" if victim else "?"
-                        msg = f"💥 [TICK {self.tick} | R{self.round}] CAPTURE: {cat.id} at ({cat.position.x}, {cat.position.y}) facing {cat.facing.value.upper()} attacked and captured {victim_id} at {v_pos}! (Total captures: {self.captures})"
-                        logger.info(msg)
-                        print(msg, flush=True)
-                        self.events.append(GameEvent(
-                            tick=self.tick,
-                            round=self.round,
-                            event_type="capture",
-                            actor_id=cat.id,
-                            target_id=victim_id,
-                            position=victim.position if victim else cat.position,
-                            message=msg,
-                        ))
+                if res.action == ActionType.ATTACK and res.accepted:
+                    slash_details = res.details or {}
+                    self.events.append(GameEvent(
+                        tick=self.tick,
+                        round=self.round,
+                        event_type="slash",
+                        actor_id=cat.id,
+                        position=cat.position,
+                        message=f"⚔️ [TICK {self.tick} | R{self.round}] SLASH: {cat.id} executed slash attack ({len(res.affected_entities)} hits)",
+                        details=slash_details,
+                    ))
+                    if res.affected_entities:
+                        self.captures += len(res.affected_entities)
+                        for victim_id in res.affected_entities:
+                            victim = self.entity_manager.entities.get(victim_id)
+                            v_pos = f"({victim.position.x}, {victim.position.y})" if victim else "?"
+                            msg = f"💥 [TICK {self.tick} | R{self.round}] CAPTURE: {cat.id} at ({cat.position.x}, {cat.position.y}) facing {cat.facing.value.upper()} attacked and captured {victim_id} at {v_pos}! (Total captures: {self.captures})"
+                            logger.info(msg)
+                            print(msg, flush=True)
+                            self.events.append(GameEvent(
+                                tick=self.tick,
+                                round=self.round,
+                                event_type="capture",
+                                actor_id=cat.id,
+                                target_id=victim_id,
+                                position=victim.position if victim else cat.position,
+                                message=msg,
+                                details={
+                                    "facing": cat.facing.value,
+                                    "slash_range": slash_details.get("range_tiles", 2),
+                                },
+                            ))
 
         # 2. Mice turn
         for mouse in mice:

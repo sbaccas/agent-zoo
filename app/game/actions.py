@@ -55,6 +55,12 @@ class ActionHandler:
                 affected_entities=hit_entities,
                 message=f"Attack executed hitting {len(hit_entities)} target(s)",
                 cooldown=entity.action_cooldown,
+                details={
+                    "facing": entity.facing.value,
+                    "range_tiles": range_tiles,
+                    "aoe_tiles": [{"x": tx, "y": ty} for tx, ty in aoe_tiles],
+                    "hit_entities": hit_entities,
+                },
             )
 
         if action == ActionType.LUNGE:

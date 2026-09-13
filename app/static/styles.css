@@ -409,6 +409,12 @@ body {
   color: #991b1b;
 }
 
+.event-item.event-slash {
+  background-color: #fff1f2;
+  border-color: #fecdd3;
+  color: #9f1239;
+}
+
 .event-item.event-bump {
   background-color: #fffbeb;
   border-color: #fde68a;
@@ -426,6 +432,11 @@ body {
 
 .event-pill.pill-capture {
   background-color: #dc2626;
+  color: #ffffff;
+}
+
+.event-pill.pill-slash {
+  background-color: #e11d48;
   color: #ffffff;
 }
 
