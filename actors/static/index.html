@@ -124,6 +124,7 @@
               <span id="engineBadge" class="engine-badge fallback" title="Active Reasoning Brain">🤖 Heuristic</span>
             </div>
             <div class="wb-card-actions">
+              <button id="btnRadioInterrogate" class="btn btn-sm btn-primary-outline" title="Jump to Commander Radio console to interrogate cat">💬 Radio Cat</button>
               <button id="btnViewSkills" class="btn btn-sm" title="View agent skills.md tactical manual">📖 Skills</button>
               <button id="btnConfigKey" class="btn btn-sm" title="Configure Gemini API Key">🔑 API Key</button>
               <span id="badgeBrainState" class="badge-state badge-roaming">IDLE</span>
@@ -243,11 +244,67 @@
         </article>
       </section>
 
-      <!-- Box 4: Trajectory Conversation History (Bottom Full-Width) -->
+      <!-- Box 4: Commander Radio & Direct Agent Interrogation (Full-Width) -->
+      <section class="wb-card radio-card" id="cardCommanderRadio">
+        <div class="wb-card-header">
+          <div class="wb-card-title">
+            <span>💬 4. Commander Radio & Direct Interrogation</span>
+            <span id="radioStatusBadge" class="engine-badge adk" title="Live bidirectional plain text link with Cat Agent">✨ Neural Link Active</span>
+          </div>
+          <div class="wb-card-actions">
+            <button id="btnClearChat" class="btn btn-sm btn-danger-outline" title="Clear interrogation conversation history">🗑️ Clear Chat</button>
+          </div>
+        </div>
+        <div class="wb-card-body radio-card-body">
+          <!-- Chat Messages Scroll Container -->
+          <div id="chatMessages" class="chat-messages-container">
+            <div class="chat-bubble cat-bubble">
+              <div class="chat-bubble-header">
+                <span class="chat-sender">🐱 Cat Agent [cat-1]</span>
+                <span class="chat-meta" id="chatInitialMeta">Standby</span>
+              </div>
+              <div class="chat-bubble-body">
+                Commander, radio link established! You can ask me what I'm thinking, why I took certain moves, why I'm circling or not exploring parts of the board, or order me to pivot tactics.
+              </div>
+            </div>
+          </div>
+
+          <!-- Quick Preset Prompts Bar -->
+          <div class="chat-presets-bar">
+            <span class="presets-label">⚡ Quick Presets:</span>
+            <button type="button" class="btn-preset-chip" data-prompt="WHAT ARE YOU THINKING???? why aren't you exploring more of the board?">"Why aren't you exploring more?"</button>
+            <button type="button" class="btn-preset-chip" data-prompt="What is your current tactical goal and what do you see right now?">"What is your current goal?"</button>
+            <button type="button" class="btn-preset-chip" data-prompt="Explain your recent pathing. Why did you move in those directions?">"Explain your recent path"</button>
+            <button type="button" class="btn-preset-chip" data-prompt="Break out of this local area and aggressively explore towards the center of the board!">"Explore towards center!"</button>
+          </div>
+
+          <!-- Prompt Input Form -->
+          <form id="chatPromptForm" class="chat-prompt-form">
+            <div class="chat-input-row">
+              <input type="text" id="inputUserPrompt" class="chat-input" placeholder="Ask the cat anything (e.g. 'WHAT ARE YOU THINKING???? why aren't you exploring more of the board?')..." autocomplete="off">
+              <button type="submit" id="btnSendPrompt" class="btn btn-primary btn-send-prompt">
+                <span id="sendPromptIcon">📡</span>
+                <span id="sendPromptText">Send to Agent</span>
+              </button>
+            </div>
+            <div class="chat-form-options">
+              <label class="checkbox-label" title="When checked, adopting this prompt will set it as the cat's active tactical directive for subsequent moves">
+                <input type="checkbox" id="checkSteerDirective" checked>
+                <span>Adopt as Active Directive for Next Deliberations</span>
+              </label>
+              <span id="chatTypingIndicator" class="chat-typing-indicator" style="display: none;">
+                <span class="typing-dot"></span><span class="typing-dot"></span><span class="typing-dot"></span> Cat is analyzing observation & formulating thoughts...
+              </span>
+            </div>
+          </form>
+        </div>
+      </section>
+
+      <!-- Box 5: Trajectory Conversation History (Bottom Full-Width) -->
       <section class="wb-card history-card">
         <div class="wb-card-header">
           <div class="wb-card-title">
-            <span>📜 4. Trajectory Conversation History</span>
+            <span>📜 5. Trajectory Conversation History</span>
             <span id="historyCountPill" class="chip">0 ticks</span>
           </div>
           <div class="wb-card-actions">
@@ -381,6 +438,6 @@
     </div>
   </div>
 
-  <script src="/static/workbench.js?v=17"></script>
+  <script src="/static/workbench.js?v=18"></script>
 </body>
 </html>

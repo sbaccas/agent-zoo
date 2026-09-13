@@ -119,7 +119,24 @@
   const btnCopyResp = document.getElementById('btnCopyResp');
   const respSubtitleChip = document.getElementById('respSubtitleChip');
 
-  // DOM Elements - Box 4: History
+  // DOM Elements - Box 4: Commander Radio & Direct Agent Interrogation
+  const cardCommanderRadio = document.getElementById('cardCommanderRadio');
+  const btnRadioInterrogate = document.getElementById('btnRadioInterrogate');
+  const radioStatusBadge = document.getElementById('radioStatusBadge');
+  const btnClearChat = document.getElementById('btnClearChat');
+  const chatMessagesContainer = document.getElementById('chatMessages');
+  const chatPromptForm = document.getElementById('chatPromptForm');
+  const inputUserPrompt = document.getElementById('inputUserPrompt');
+  const btnSendPrompt = document.getElementById('btnSendPrompt');
+  const sendPromptIcon = document.getElementById('sendPromptIcon');
+  const sendPromptText = document.getElementById('sendPromptText');
+  const checkSteerDirective = document.getElementById('checkSteerDirective');
+  const chatTypingIndicator = document.getElementById('chatTypingIndicator');
+  const presetChips = document.querySelectorAll('.btn-preset-chip');
+  let isSendingPrompt = false;
+  let lastRenderedChatLen = -1;
+
+  // DOM Elements - Box 5: History
   const historyCountPill = document.getElementById('historyCountPill');
   const historyTableBody = document.getElementById('historyTableBody');
   const btnClearHistory = document.getElementById('btnClearHistory');
@@ -614,6 +631,148 @@
     historyTableBody.replaceChildren(...rows);
   }
 
+  // Render Box 4: Commander Radio & Direct Agent Interrogation (Zero innerHTML)
+  function renderChatHistory(chatList) {
+    if (!chatMessagesContainer) return;
+
+    if (!chatList || chatList.length === 0) {
+      const bubble = document.createElement('div');
+      bubble.className = 'chat-bubble cat-bubble';
+
+      const hdr = document.createElement('div');
+      hdr.className = 'chat-bubble-header';
+      const sender = document.createElement('span');
+      sender.className = 'chat-sender';
+      sender.textContent = '🐱 Cat Agent [cat-1]';
+      const meta = document.createElement('span');
+      meta.className = 'chat-meta';
+      meta.textContent = (cachedState && cachedState.active_tick) ? `Tick #${cachedState.active_tick}` : 'Standby';
+      hdr.appendChild(sender);
+      hdr.appendChild(meta);
+
+      const body = document.createElement('div');
+      body.className = 'chat-bubble-body';
+      body.textContent = "Commander, radio link established! You can ask me what I'm thinking, why I took certain moves, why I'm circling or not exploring parts of the board, or order me to pivot tactics.";
+
+      bubble.appendChild(hdr);
+      bubble.appendChild(body);
+      chatMessagesContainer.replaceChildren(bubble);
+      lastRenderedChatLen = 0;
+      return;
+    }
+
+    const bubbles = chatList.map((msg) => {
+      const bubble = document.createElement('div');
+      const isUser = msg.sender === 'commander' || msg.source === 'user';
+      bubble.className = isUser ? 'chat-bubble user-bubble' : 'chat-bubble cat-bubble';
+
+      const hdr = document.createElement('div');
+      hdr.className = 'chat-bubble-header';
+
+      const sender = document.createElement('span');
+      sender.className = 'chat-sender';
+      sender.textContent = isUser ? '👨‍✈️ Commander' : '🐱 Cat Agent [cat-1]';
+
+      const meta = document.createElement('span');
+      meta.className = 'chat-meta';
+      const tickText = (msg.tick !== undefined && msg.tick !== null && msg.tick > 0) ? `Tick #${msg.tick}` : '';
+      const timeText = msg.timestamp || '';
+      meta.textContent = [tickText, timeText].filter(Boolean).join(' • ');
+
+      hdr.appendChild(sender);
+      hdr.appendChild(meta);
+      bubble.appendChild(hdr);
+
+      const body = document.createElement('div');
+      body.className = 'chat-bubble-body';
+      body.textContent = msg.message || '';
+      bubble.appendChild(body);
+
+      if (msg.adopted_directive) {
+        const badge = document.createElement('span');
+        badge.className = 'chat-directive-badge';
+        badge.textContent = `🎯 Adopted as Active Directive`;
+        bubble.appendChild(badge);
+      }
+
+      return bubble;
+    });
+
+    chatMessagesContainer.replaceChildren(...bubbles);
+    lastRenderedChatLen = chatList.length;
+    chatMessagesContainer.scrollTop = chatMessagesContainer.scrollHeight;
+  }
+
+  async function handleSendPrompt(e) {
+    if (e) e.preventDefault();
+    if (isSendingPrompt) return;
+    const promptText = (inputUserPrompt.value || '').trim();
+    if (!promptText) {
+      inputUserPrompt.focus();
+      return;
+    }
+
+    const steer = checkSteerDirective ? checkSteerDirective.checked : true;
+    isSendingPrompt = true;
+    btnSendPrompt.disabled = true;
+    inputUserPrompt.disabled = true;
+    if (chatTypingIndicator) chatTypingIndicator.style.display = 'inline-flex';
+    if (sendPromptIcon) sendPromptIcon.textContent = '⏳';
+    if (sendPromptText) sendPromptText.textContent = 'Analyzing...';
+
+    // Optimistic local bubble append
+    const userBubble = document.createElement('div');
+    userBubble.className = 'chat-bubble user-bubble';
+    const hdr = document.createElement('div');
+    hdr.className = 'chat-bubble-header';
+    const sender = document.createElement('span');
+    sender.className = 'chat-sender';
+    sender.textContent = '👨‍✈️ Commander';
+    const meta = document.createElement('span');
+    meta.className = 'chat-meta';
+    meta.textContent = (cachedState && cachedState.active_tick) ? `Tick #${cachedState.active_tick}` : 'Now';
+    hdr.appendChild(sender);
+    hdr.appendChild(meta);
+    const body = document.createElement('div');
+    body.className = 'chat-bubble-body';
+    body.textContent = promptText;
+    userBubble.appendChild(hdr);
+    userBubble.appendChild(body);
+    chatMessagesContainer.appendChild(userBubble);
+    chatMessagesContainer.scrollTop = chatMessagesContainer.scrollHeight;
+
+    try {
+      const res = await api('/api/agent/prompt', 'POST', {
+        prompt: promptText,
+        steer_directive: steer,
+      });
+
+      if (res) {
+        inputUserPrompt.value = '';
+        await pollAgentState();
+      }
+    } catch (err) {
+      console.error('Failed to interrogate agent:', err);
+      const errBubble = document.createElement('div');
+      errBubble.className = 'chat-bubble cat-bubble';
+      const errBody = document.createElement('div');
+      errBody.className = 'chat-bubble-body';
+      errBody.style.color = 'var(--danger-color)';
+      errBody.textContent = `⚠️ Connection error: ${err.message || err}`;
+      errBubble.appendChild(errBody);
+      chatMessagesContainer.appendChild(errBubble);
+      chatMessagesContainer.scrollTop = chatMessagesContainer.scrollHeight;
+    } finally {
+      isSendingPrompt = false;
+      btnSendPrompt.disabled = false;
+      inputUserPrompt.disabled = false;
+      if (chatTypingIndicator) chatTypingIndicator.style.display = 'none';
+      if (sendPromptIcon) sendPromptIcon.textContent = '📡';
+      if (sendPromptText) sendPromptText.textContent = 'Send to Agent';
+      inputUserPrompt.focus();
+    }
+  }
+
   // Inspect a specific past tick
   function inspectHistoryItem(item) {
     inspectingTick = item.tick;
@@ -737,8 +896,26 @@
       renderBrain(state);
     }
 
-    // Always update Box 4 history
+    // Always update Box 5 history
     renderHistory(state.history || []);
+
+    // Update Box 4 Commander Radio
+    if (radioStatusBadge) {
+      const hasAuth = Boolean(state.has_auth && state.auth_valid);
+      if (hasAuth) {
+        radioStatusBadge.textContent = '✨ Neural Link Active';
+        radioStatusBadge.className = 'engine-badge adk';
+      } else {
+        radioStatusBadge.textContent = '🤖 Reflex Only';
+        radioStatusBadge.className = 'engine-badge fallback';
+      }
+    }
+
+    if (!isSendingPrompt && state.chat_history) {
+      if (state.chat_history.length !== lastRenderedChatLen) {
+        renderChatHistory(state.chat_history);
+      }
+    }
   }
 
   let pollCount = 0;
@@ -895,6 +1072,39 @@
       if (cachedState && cachedState.history) {
         renderHistory(cachedState.history);
       }
+    });
+  }
+
+  // Event Listeners - Commander Radio & Direct Agent Interrogation
+  if (chatPromptForm) {
+    chatPromptForm.addEventListener('submit', handleSendPrompt);
+  }
+
+  if (presetChips && presetChips.length > 0) {
+    presetChips.forEach((chip) => {
+      chip.addEventListener('click', () => {
+        const text = chip.getAttribute('data-prompt');
+        if (text && inputUserPrompt) {
+          inputUserPrompt.value = text;
+          handleSendPrompt();
+        }
+      });
+    });
+  }
+
+  if (btnRadioInterrogate) {
+    btnRadioInterrogate.addEventListener('click', () => {
+      if (cardCommanderRadio) {
+        cardCommanderRadio.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+      if (inputUserPrompt) inputUserPrompt.focus();
+    });
+  }
+
+  if (btnClearChat) {
+    btnClearChat.addEventListener('click', async () => {
+      await api('/api/agent/clear-chat', 'POST');
+      renderChatHistory([]);
     });
   }
 

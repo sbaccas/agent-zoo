@@ -40,3 +40,18 @@ class CatTacticalDecision(BaseModel):
 class HistoryWindowRequest(BaseModel):
     history_window_size: int = Field(default=3, ge=1, le=50, description="Sliding window size N for history sent to LLM")
 
+
+class InterrogateRequest(BaseModel):
+    prompt: str = Field(description="Direct plain-text prompt or interrogation question from the user")
+    steer_directive: bool = Field(default=False, description="Whether to also adopt this prompt as an active movement directive")
+
+
+class InterrogateResponse(BaseModel):
+    reply: str = Field(description="The direct answer or reasoning from the cat agent")
+    engine: str = Field(default="adk_gemini", description="Engine used: adk_gemini or heuristic_fallback")
+    tick: int = Field(default=0, description="The tick at which the prompt was answered")
+    posture: Dict[str, Any] = Field(default_factory=dict, description="Current position and facing of the cat")
+    active_strategy: str = Field(default="ROAMING", description="Active tactical phase")
+    adopted_directive: Optional[str] = Field(default=None, description="Directive adopted if steer_directive was enabled")
+    error: Optional[str] = Field(default=None, description="Error message if any occurred")
+

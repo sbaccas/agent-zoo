@@ -22,6 +22,8 @@ from actors.models import (
     CatTacticalDecision,
     ConnectServerRequest,
     HistoryWindowRequest,
+    InterrogateRequest,
+    InterrogateResponse,
     Observation,
     OverrideRequest,
 )
@@ -42,6 +44,7 @@ from actors.cat_model import (
     get_gemini_auth_mode,
     get_skills_instruction,
     has_gemini_credentials,
+    interrogate_adk_gemini,
     is_gemini_authenticated,
     mark_auth_error,
     query_adk_gemini as model_query_adk_gemini,
@@ -71,6 +74,7 @@ class AgentWorkbenchState:
         self.pending_override: Optional[str] = None
         self.override_mode: str = "once"  # "once" or "sticky"
         self.history: List[Dict[str, Any]] = []
+        self.chat_history: List[Dict[str, Any]] = []
         self.brain_engine: str = "Google ADK (gemini-2.5-flash)"
         self.skills_file: str = str(SKILLS_PATH)
         initial_health = check_gemini_auth_health()
@@ -646,6 +650,7 @@ async def get_agent_state(sync: bool = False, agent_id: Optional[str] = None) ->
         "is_deliberating": state.is_deliberating,
         "active_directive": state.active_directive,
         "history_window_size": state.history_window_size,
+        "chat_history": state.chat_history[-50:],
     }
 
 
@@ -752,6 +757,92 @@ def set_history_window(req: HistoryWindowRequest) -> Dict[str, Any]:
 def clear_history() -> Dict[str, str]:
     state.history.clear()
     return {"status": "ok"}
+
+
+@app.post("/api/agent/prompt", response_model=InterrogateResponse)
+async def interrogate_agent(req: InterrogateRequest) -> InterrogateResponse:
+    """Interrogate or prompt the cat agent directly via human plain text."""
+    clean_prompt = req.prompt.strip()
+    if not clean_prompt:
+        return InterrogateResponse(
+            reply="Commander, I received an empty transmission.",
+            engine="heuristic_fallback",
+            tick=state.active_tick,
+            posture=state.latest_observation.get("self", {}) if state.latest_observation else {},
+            active_strategy=(state.active_directive or {}).get("strategy", "ROAMING"),
+        )
+
+    obs = None
+    if state.latest_observation:
+        try:
+            obs = Observation(**state.latest_observation)
+        except Exception:
+            obs = None
+
+    reply, engine, err = await interrogate_adk_gemini(
+        user_prompt=clean_prompt,
+        obs=obs,
+        history=state.history,
+        agent_id=state.agent_id,
+        history_window_size=state.history_window_size,
+        active_directive=state.active_directive,
+    )
+
+    adopted = None
+    if req.steer_directive:
+        state.active_directive = {
+            "strategy": "ROAMING",
+            "directive": clean_prompt,
+            "thought": f"Commander Directive: {clean_prompt}",
+            "source": "commander_prompt",
+            "tick": state.active_tick,
+        }
+        adopted = clean_prompt
+
+    now_str = datetime.now().strftime("%H:%M:%S")
+    state.chat_history.append({
+        "id": f"msg-{len(state.chat_history)+1}-user",
+        "sender": "commander",
+        "message": clean_prompt,
+        "timestamp": now_str,
+        "tick": state.active_tick,
+        "source": "user",
+    })
+    state.chat_history.append({
+        "id": f"msg-{len(state.chat_history)+1}-agent",
+        "sender": "cat",
+        "message": reply,
+        "timestamp": now_str,
+        "tick": state.active_tick,
+        "source": engine,
+        "error": err,
+        "adopted_directive": adopted,
+    })
+
+    posture = state.latest_observation.get("self", {}) if state.latest_observation else {}
+    strat = (state.active_directive or {}).get("strategy", "ROAMING")
+
+    return InterrogateResponse(
+        reply=reply,
+        engine=engine,
+        tick=state.active_tick,
+        posture=posture,
+        active_strategy=strat,
+        adopted_directive=adopted,
+        error=err,
+    )
+
+
+@app.get("/api/agent/chat-history")
+def get_chat_history() -> List[Dict[str, Any]]:
+    return state.chat_history
+
+
+@app.post("/api/agent/clear-chat")
+def clear_chat_history() -> Dict[str, str]:
+    state.chat_history.clear()
+    return {"status": "ok"}
+
 
 
 # Mount static assets and serve workbench dashboard

@@ -391,3 +391,39 @@ def test_history_window_endpoint():
     # Reset back to 3
     client.post("/api/agent/history-window", json={"history_window_size": 3})
     assert state.history_window_size == 3
+
+
+def test_interrogate_agent_endpoint():
+    client = TestClient(app)
+
+    # Clear chat
+    client.post("/api/agent/clear-chat")
+    assert len(state.chat_history) == 0
+
+    # Post interrogation prompt
+    prompt_resp = client.post(
+        "/api/agent/prompt",
+        json={
+            "prompt": "WHAT ARE YOU THINKING???? why aren't you exploring more of the board?",
+            "steer_directive": True,
+        },
+    )
+    assert prompt_resp.status_code == 200
+    data = prompt_resp.json()
+    assert "reply" in data
+    assert len(data["reply"]) > 0
+    assert data["adopted_directive"] == "WHAT ARE YOU THINKING???? why aren't you exploring more of the board?"
+
+    # Check chat history
+    chat_resp = client.get("/api/agent/chat-history")
+    assert chat_resp.status_code == 200
+    chat_list = chat_resp.json()
+    assert len(chat_list) == 2
+    assert chat_list[0]["sender"] == "commander"
+    assert chat_list[1]["sender"] == "cat"
+
+    # Verify chat clear
+    clear_resp = client.post("/api/agent/clear-chat")
+    assert clear_resp.status_code == 200
+    assert len(state.chat_history) == 0
+

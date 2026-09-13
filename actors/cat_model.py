@@ -48,6 +48,33 @@ adk_runner = Runner(
     app_name="cat_agent_app",
     session_service=session_service,
 )
+
+# Initialize Dedicated Interrogation / Commander Radio Agent & Runner (Free-form conversational reasoning)
+adk_interrogator_agent = LlmAgent(
+    name="cat_interrogator",
+    model="gemini-2.5-flash",
+    instruction=(
+        get_skills_instruction()
+        + "\n\n"
+        + "--- INTERROGATION & COMMANDER RADIO CHANNEL ---\n"
+        + "You are directly communicating with your human Commander/Operator who is monitoring the Cat and Mouse simulation.\n"
+        + "The Commander can ask you anything: why you are making specific moves, what your thoughts are, why you aren't exploring more of the board, or issue strategic suggestions.\n"
+        + "Address the Commander directly, truthfully, and tactically in character as an intelligent hunting cat.\n"
+        + "Ground your answer in your spatial reality: reference your coordinates (x, y), facing direction, vision cone limits, and recent movement history.\n"
+        + "Explain your rationale for why you moved the way you did (e.g. searching for scent, sweeping vision, avoiding walls, patrolling) and what you plan to do next.\n"
+        + "If the Commander gives you a suggestion or directive (e.g. 'explore south', 'head toward center'), state how you will adapt your path to honor it.\n"
+        + "Keep your response focused, clear, and informative (2 to 4 concise paragraphs or bullet points)."
+    ),
+    generate_content_config=types.GenerateContentConfig(
+        thinking_config=types.ThinkingConfig(thinking_budget=0)
+    ),
+)
+adk_interrogator_runner = Runner(
+    agent=adk_interrogator_agent,
+    app_name="cat_agent_app",
+    session_service=session_service,
+)
+
 _llm_lock = asyncio.Lock()
 
 _auth_cache: Dict[str, Any] = {"timestamp": 0.0, "result": None}
@@ -348,3 +375,145 @@ async def query_adk_gemini(
             return None, "heuristic_fallback", err_msg
 
     return None, "heuristic_fallback", None
+
+
+async def interrogate_adk_gemini(
+    user_prompt: str,
+    obs: Optional[Observation] = None,
+    history: Optional[List[Dict[str, Any]]] = None,
+    agent_id: str = "cat-1",
+    history_window_size: int = 3,
+    active_directive: Optional[Dict[str, Any]] = None,
+) -> Tuple[str, str, Optional[str]]:
+    """
+    Queries Gemini directly for user-initiated plain text interrogation / commander questions.
+
+    Returns:
+      (reply_text, engine_source, error_message)
+    """
+    pos = obs.self.get("position", {}) if obs else {}
+    facing = obs.self.get("facing", "north") if obs else "north"
+    tick = obs.tick if obs else 0
+    round_num = obs.round if obs else 0
+    entities = obs.visible_entities if obs else []
+    caps = obs.capabilities if obs else {}
+    legal = obs.legal_actions if obs else []
+
+    if "PYTEST_CURRENT_TEST" in os.environ and not os.environ.get("ENABLE_LIVE_LLM_TESTS"):
+        return (
+            f"Commander! At Tick #{tick} (x={pos.get('x',0)}, y={pos.get('y',0)}) facing {facing}. "
+            f"Regarding '{user_prompt}': I am scanning with my {caps.get('vision_radius', 4)}-tile vision cone. "
+            f"I have {len(entities)} entities in sight and {len(history or [])} ticks of history recorded.",
+            "adk_gemini",
+            None,
+        )
+
+    if not has_gemini_credentials():
+        return (
+            f"Commander, my Gemini neural link is offline (running local heuristic reflexes). "
+            f"At Tick #{tick}, I am at position ({pos.get('x',0)}, {pos.get('y',0)}) facing {facing}. "
+            f"Regarding your question ('{user_prompt}'): I am currently following basic reflex heuristics. "
+            f"To unlock full cognitive interrogation, enter your Gemini API key in the workbench toolbar!",
+            "heuristic_fallback",
+            None,
+        )
+
+    user_id = "cat_commander"
+    session_id = f"interrogate_{agent_id}"
+
+    async with _llm_lock:
+        try:
+            try:
+                await session_service.delete_session(
+                    app_name="cat_agent_app", user_id=user_id, session_id=session_id
+                )
+            except Exception:
+                pass
+            await session_service.create_session(
+                app_name="cat_agent_app", user_id=user_id, session_id=session_id
+            )
+
+            window_size = max(1, history_window_size)
+            recent_slice = history[-window_size:] if history else []
+            history_lines = []
+            for h in recent_slice:
+                h_tick = h.get("tick", "?")
+                h_self = h.get("observation", {}).get("self", {})
+                h_pos = h_self.get("position", {})
+                h_facing = h_self.get("facing", "north")
+                h_vis = h.get("observation", {}).get("visible_entities", [])
+                h_resp = h.get("response", {})
+                h_act = (h_resp.get("action") or "stay").upper()
+                h_thought = h_resp.get("thought", "")
+                vis_info = f"{len(h_vis)} visible ({[m.get('id') for m in h_vis]})" if h_vis else "0 visible"
+                history_lines.append(
+                    f"  • Tick {h_tick}: Pos ({h_pos.get('x',0)}, {h_pos.get('y',0)}) facing {h_facing}. "
+                    f"Context: {vis_info}. Move: {h_act} (Reason: \"{h_thought}\")"
+                )
+
+            history_context = ""
+            if history_lines:
+                history_context = (
+                    f"--- RECENT TACTICAL CONTEXT (Last {len(history_lines)} Ticks) ---\n"
+                    + "\n".join(history_lines)
+                    + "\n\n"
+                )
+
+            directive_context = ""
+            if active_directive:
+                d_thought = active_directive.get("thought") or active_directive.get("directive") or ""
+                d_strat = active_directive.get("strategy") or "ROAMING"
+                directive_context = f"Current Tactical Phase: {d_strat}\nActive Directive: {d_thought}\n\n"
+
+            prompt = (
+                f"{history_context}"
+                f"--- CURRENT OBSERVATION (Tick {tick}, Round {round_num}) ---\n"
+                f"Agent ID: {agent_id}\n"
+                f"Current Position: (x={pos.get('x', 0)}, y={pos.get('y', 0)})\n"
+                f"Current Facing: {facing}\n"
+                f"Vision Radius: {caps.get('vision_radius', 4)} tiles (90° forward cone)\n"
+                f"Slash Attack Range: {caps.get('attack_range', 2)} tiles\n"
+                f"Visible Entities in Vision Cone: {entities}\n"
+                f"Legal Actions available: {legal}\n"
+                f"{directive_context}"
+                f"--- COMMANDER / OPERATOR DIRECT MESSAGE ---\n"
+                f"The Commander asks: \"{user_prompt}\"\n\n"
+                f"Respond directly to the Commander in character as the intelligent hunting cat. "
+                f"Explain what you are thinking, why you took your recent moves (reference your actual coordinates, facing, obstacles, or search pattern), "
+                f"and explain what you plan to do next or how you will adjust your exploration."
+            )
+
+            msg = types.Content(role="user", parts=[types.Part.from_text(text=prompt)])
+            reply_parts = []
+
+            async with asyncio.timeout(12.0):
+                agen = adk_interrogator_runner.run_async(
+                    user_id=user_id, session_id=session_id, new_message=msg
+                )
+                try:
+                    while True:
+                        event = await agen.__anext__()
+                        if event.error_code or event.error_message:
+                            raise RuntimeError(f"ADK Error: {event.error_code} - {event.error_message}")
+                        if event.content and event.content.parts:
+                            for p in event.content.parts:
+                                if p.text and not getattr(p, "thought", False):
+                                    reply_parts.append(p.text)
+                except StopAsyncIteration:
+                    pass
+
+            reply_text = "".join(reply_parts).strip()
+            if reply_text:
+                return reply_text, "adk_gemini", None
+            return "Commander, I received your transmission. Standing by at my current coordinates.", "adk_gemini", None
+
+        except Exception as exc:
+            err_msg = str(exc)
+            print(f"[ADK Interrogate Error] {err_msg}", flush=True)
+            return (
+                f"Commander, radio interference interrupted my cognitive link: {err_msg}. "
+                f"I am at ({pos.get('x',0)}, {pos.get('y',0)}) facing {facing}.",
+                "heuristic_fallback",
+                err_msg,
+            )
+
