@@ -370,5 +370,24 @@ def test_dynamic_attack_range_in_heuristic():
     assert "range 6" in thought_reflex
 
 
+def test_history_window_endpoint():
+    client = TestClient(app)
 
+    # Initial state should have history_window_size == 3
+    state_resp = client.get("/api/agent/state")
+    assert state_resp.status_code == 200
+    assert state_resp.json()["history_window_size"] == 3
 
+    # Update to 10
+    update_resp = client.post("/api/agent/history-window", json={"history_window_size": 10})
+    assert update_resp.status_code == 200
+    assert update_resp.json()["history_window_size"] == 10
+    assert state.history_window_size == 10
+
+    # Verify reflected in state endpoint
+    state_resp2 = client.get("/api/agent/state")
+    assert state_resp2.json()["history_window_size"] == 10
+
+    # Reset back to 3
+    client.post("/api/agent/history-window", json={"history_window_size": 3})
+    assert state.history_window_size == 3

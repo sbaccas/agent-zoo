@@ -21,6 +21,7 @@ from actors.models import (
     ApiKeyRequest,
     CatTacticalDecision,
     ConnectServerRequest,
+    HistoryWindowRequest,
     Observation,
     OverrideRequest,
 )
@@ -56,6 +57,7 @@ class AgentWorkbenchState:
 
     def __init__(self, max_history: int = 50):
         self.max_history = max_history
+        self.history_window_size: int = 3
         self.agent_id: str = "cat-1"
         self.simulation_id: Optional[str] = None
         self.active_tick: int = 0
@@ -86,7 +88,10 @@ state = AgentWorkbenchState()
 async def query_adk_gemini(obs: Observation) -> Optional[CatTacticalDecision]:
     """Wraps model execution, updating agent workbench diagnostic state."""
     decision, source, err = await model_query_adk_gemini(
-        obs, history=state.history, agent_id=state.agent_id
+        obs,
+        history=state.history,
+        agent_id=state.agent_id,
+        history_window_size=state.history_window_size,
     )
     state.last_engine_source = source
     state.last_engine_error = err
@@ -112,7 +117,10 @@ async def _run_background_deliberation(obs: Observation):
     try:
         state.is_deliberating = True
         decision, source, err = await model_query_adk_gemini(
-            obs, history=state.history, agent_id=state.agent_id
+            obs,
+            history=state.history,
+            agent_id=state.agent_id,
+            history_window_size=state.history_window_size,
         )
         state.last_engine_source = source
         state.last_engine_error = err
@@ -600,6 +608,7 @@ async def get_agent_state(sync: bool = False, agent_id: Optional[str] = None) ->
         "last_engine_error": state.last_engine_error,
         "is_deliberating": state.is_deliberating,
         "active_directive": state.active_directive,
+        "history_window_size": state.history_window_size,
     }
 
 
@@ -671,6 +680,15 @@ def set_agent_override(req: OverrideRequest) -> Dict[str, Any]:
         "status": "ok",
         "pending_override": state.pending_override,
         "override_mode": state.override_mode,
+    }
+
+
+@app.post("/api/agent/history-window")
+def set_history_window(req: HistoryWindowRequest) -> Dict[str, Any]:
+    state.history_window_size = max(1, min(50, req.history_window_size))
+    return {
+        "status": "ok",
+        "history_window_size": state.history_window_size,
     }
 
 

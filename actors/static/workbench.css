@@ -889,3 +889,96 @@ body {
   white-space: pre-wrap;
   word-break: break-word;
 }
+
+/* Hyperparameter Box for Working Memory Window */
+.hyperparam-box {
+  background-color: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.hyperparam-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.hyperparam-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.chip-n-badge {
+  background-color: #e0e7ff;
+  color: #3730a3;
+  padding: 2px 7px;
+  border-radius: 12px;
+  font-size: 0.72rem;
+  font-weight: 800;
+  border: 1px solid #c7d2fe;
+}
+
+.hyperparam-token-est {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
+.hyperparam-slider-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.slider-bound {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  min-width: 14px;
+  text-align: center;
+}
+
+.hyperparam-slider {
+  flex: 1;
+  height: 6px;
+  border-radius: 3px;
+  background: #cbd5e1;
+  outline: none;
+  cursor: pointer;
+  accent-color: #6366f1;
+}
+
+.hyperparam-desc {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  line-height: 1.3;
+}
+
+/* History table rows inside the active LLM context window */
+.history-table tr.in-llm-window {
+  background-color: #f5f7ff;
+  border-left: 3px solid #6366f1;
+}
+
+.chip-window-tag {
+  background-color: #e0e7ff;
+  color: #4338ca;
+  font-size: 0.65rem;
+  font-weight: 700;
+  padding: 1px 4px;
+  border-radius: 4px;
+  margin-left: 6px;
+  vertical-align: middle;
+  border: 1px solid #c7d2fe;
+}
+

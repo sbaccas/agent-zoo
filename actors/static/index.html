@@ -112,6 +112,25 @@
               <span class="chip">Engine: <strong id="tacticalEngine">Heuristic</strong></span>
             </div>
 
+            <!-- Working Memory N-Tick Hyperparameter Control -->
+            <div class="hyperparam-box">
+              <div class="hyperparam-header">
+                <div class="hyperparam-title">
+                  <span>🕒 Context Window (N-Ticks):</span>
+                  <span class="chip-n-badge" id="historyWindowBadge">3 ticks</span>
+                </div>
+                <span class="hyperparam-token-est" id="tokenEstBadge">~455 tokens</span>
+              </div>
+              <div class="hyperparam-slider-row">
+                <span class="slider-bound">1</span>
+                <input type="range" id="sliderHistoryWindow" min="1" max="25" value="3" step="1" class="hyperparam-slider" title="Adjust N-tick history sliding window sent in Gemini context">
+                <span class="slider-bound">25</span>
+              </div>
+              <div class="hyperparam-desc">
+                Sliding prompt context fed to Gemini. High N increases multi-tick target tracking.
+              </div>
+            </div>
+
             <!-- Autonomous thought stream -->
             <div class="thought-box">
               <div class="thought-label">Autonomous Rationale</div>
@@ -337,6 +356,6 @@
     </div>
   </div>
 
-  <script src="/static/workbench.js?v=6"></script>
+  <script src="/static/workbench.js?v=7"></script>
 </body>
 </html>

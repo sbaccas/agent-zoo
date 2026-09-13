@@ -77,6 +77,16 @@
   const overrideStatusText = document.getElementById('overrideStatusText');
   const btnClearOverride = document.getElementById('btnClearOverride');
 
+  // DOM Elements - N-Tick History Window Hyperparameter
+  const sliderHistoryWindow = document.getElementById('sliderHistoryWindow');
+  const historyWindowBadge = document.getElementById('historyWindowBadge');
+  const tokenEstBadge = document.getElementById('tokenEstBadge');
+  let isDraggingHistorySlider = false;
+
+  function estimateTokens(n) {
+    return Math.round(320 + n * 45);
+  }
+
   // DOM Elements - Modals
   const skillsModal = document.getElementById('skillsModal');
   const btnCloseSkills = document.getElementById('btnCloseSkills');
@@ -294,6 +304,18 @@
       if (tacticalEngine) tacticalEngine.textContent = hasAuth ? (isVertex ? 'ADK Gemini (Vertex AI)' : 'ADK Gemini') : 'Heuristic';
     }
 
+    // Synchronize N-tick history window hyperparameter
+    if (sliderHistoryWindow && !isDraggingHistorySlider) {
+      const windowSize = state.history_window_size || 3;
+      sliderHistoryWindow.value = windowSize;
+      if (historyWindowBadge) {
+        historyWindowBadge.textContent = `${windowSize} ticks`;
+      }
+      if (tokenEstBadge) {
+        tokenEstBadge.textContent = `~${estimateTokens(windowSize)} tokens`;
+      }
+    }
+
     // Override mode toggles
     const mode = state.override_mode || currentOverrideMode;
     currentOverrideMode = mode;
@@ -393,7 +415,10 @@
 
   // Render Box 4: History Table (Zero innerHTML)
   function renderHistory(history) {
-    historyCountPill.textContent = `${history.length} ticks`;
+    const windowSize = (sliderHistoryWindow ? parseInt(sliderHistoryWindow.value, 10) : (cachedState && cachedState.history_window_size)) || 3;
+    const windowCutoffIndex = Math.max(0, history ? (history.length - windowSize) : 0);
+    const inWindowCount = history ? Math.min(history.length, windowSize) : 0;
+    historyCountPill.textContent = `${(history && history.length) || 0} ticks (${inWindowCount} in LLM context)`;
 
     if (!history || history.length === 0) {
       const tr = document.createElement('tr');
@@ -417,11 +442,25 @@
         tr.classList.add('selected-history-row');
       }
 
+      const isInWindow = (i >= windowCutoffIndex);
+      if (isInWindow) {
+        tr.classList.add('in-llm-window');
+      }
+
       // 1. Tick
       const tdTick = document.createElement('td');
       const strongTick = document.createElement('strong');
       strongTick.textContent = `#${item.tick}`;
       tdTick.appendChild(strongTick);
+
+      if (isInWindow) {
+        const tag = document.createElement('span');
+        tag.className = 'chip-window-tag';
+        tag.title = `Included in active ${windowSize}-tick context window sent to Gemini`;
+        tag.textContent = 'LLM';
+        tdTick.appendChild(tag);
+      }
+
       tr.appendChild(tdTick);
 
       // 2. Time
@@ -759,6 +798,39 @@
   });
 
   btnClearOverride.addEventListener('click', clearOverride);
+
+  // Event Listeners - Working Memory / N-Tick History Window Slider
+  if (sliderHistoryWindow) {
+    sliderHistoryWindow.addEventListener('input', () => {
+      isDraggingHistorySlider = true;
+      const n = parseInt(sliderHistoryWindow.value, 10);
+      if (historyWindowBadge) {
+        historyWindowBadge.textContent = `${n} ticks`;
+      }
+      if (tokenEstBadge) {
+        tokenEstBadge.textContent = `~${estimateTokens(n)} tokens`;
+      }
+      if (cachedState && cachedState.history) {
+        renderHistory(cachedState.history);
+      }
+    });
+
+    sliderHistoryWindow.addEventListener('change', async () => {
+      const n = parseInt(sliderHistoryWindow.value, 10);
+      isDraggingHistorySlider = false;
+      if (cachedState) {
+        cachedState.history_window_size = n;
+      }
+      try {
+        await api('/api/agent/history-window', 'POST', { history_window_size: n });
+      } catch (err) {
+        console.error('Failed to update history window size:', err);
+      }
+      if (cachedState && cachedState.history) {
+        renderHistory(cachedState.history);
+      }
+    });
+  }
 
   // Event Listeners - Clear History
   btnClearHistory.addEventListener('click', async () => {

@@ -35,3 +35,8 @@ class CatTacticalDecision(BaseModel):
     thought: str = Field(description="Concise tactical reasoning based on game skills and rules")
     target_mouse_id: Optional[str] = Field(default="", description="ID of targeted mouse or empty string if none")
     strategy: str = Field(default="ROAMING", description="Tactical phase: ATTACK, LUNGE, STALKING, or ROAMING")
+
+
+class HistoryWindowRequest(BaseModel):
+    history_window_size: int = Field(default=3, ge=1, le=50, description="Sliding window size N for history sent to LLM")
+

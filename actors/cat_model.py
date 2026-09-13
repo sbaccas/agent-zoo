@@ -84,6 +84,7 @@ async def query_adk_gemini(
     obs: Observation,
     history: Optional[List[Dict[str, Any]]] = None,
     agent_id: str = "cat-1",
+    history_window_size: int = 3,
 ) -> Tuple[Optional[CatTacticalDecision], str, Optional[str]]:
     """
     Queries Gemini via Google ADK using the skills handbook.
@@ -122,9 +123,11 @@ async def query_adk_gemini(
             entities = obs.visible_entities
             legal = obs.legal_actions or ["stay", "north", "south", "east", "west"]
 
-            # Format 3-tick sliding context window: recent moves and reasons
+            # Format N-tick sliding context window: recent moves and reasons
+            window_size = max(1, history_window_size)
+            recent_slice = history[-window_size:] if history else []
             history_lines = []
-            for h in (history[-3:] if history else []):
+            for h in recent_slice:
                 h_tick = h.get("tick", "?")
                 h_self = h.get("observation", {}).get("self", {})
                 h_pos = h_self.get("position", {})
@@ -141,7 +144,11 @@ async def query_adk_gemini(
 
             history_context = ""
             if history_lines:
-                history_context = "--- RECENT TACTICAL CONTEXT (Last 3 Ticks) ---\n" + "\n".join(history_lines) + "\n\n"
+                history_context = (
+                    f"--- RECENT TACTICAL CONTEXT (Last {len(history_lines)} Ticks) ---\n"
+                    + "\n".join(history_lines)
+                    + "\n\n"
+                )
 
             caps = obs.capabilities or {}
             atk_range = caps.get("attack_range", 2)
@@ -157,7 +164,7 @@ async def query_adk_gemini(
                 f"Current Position: (x={pos.get('x', 0)}, y={pos.get('y', 0)})\n"
                 f"Current Facing: {facing}\n"
                 f"Dynamic Capabilities & Range Parameters:\n"
-                f"  • Slash Attack Range (`attack`): reaches {atk_range} tile(s) directly forward! (Strikes all targets in line across range 1 to {atk_range} plus immediate flank arc)\n"
+                f"  • Slash Attack Range (`attack`): reaches {atk_range} tile(s) in an expanding 60° sweeping cone forward! (Strikes all targets across range 1 to {atk_range} inside the sweeping forward cone arc)\n"
                 f"  • Vision Perception Radius: {vision_rad} tiles\n"
                 f"  • Move Pacing / Lock: 1 tile every {move_cd} tick(s)\n"
                 f"  • Attack Recovery Lock: {atk_cd} tick(s)\n"
