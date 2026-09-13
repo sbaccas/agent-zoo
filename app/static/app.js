@@ -119,7 +119,7 @@
     }
   }
 
-  // Area of Effect (AoE) Calculation matching world.py get_slash_aoe_tiles
+  // Area of Effect (AoE) Calculation matching world.py get_slash_aoe_tiles (sweeping 60-70 degree forward cone)
   function getSlashAoeTiles(pos, facing, rangeTiles = 2, width = 100, height = 100, topology = 'torus') {
     if (!pos) return [];
     let dx = 0, dy = 0;
@@ -149,31 +149,29 @@
 
     const tiles = [];
     const seen = new Set();
-    function addTile(tx, ty, isFrontalArc, isCorridor, dist) {
-      const pt = wrapOrBound(tx, ty);
-      if (!pt) return;
-      const key = `${pt.x},${pt.y}`;
-      if (!seen.has(key)) {
-        seen.add(key);
-        tiles.push({
-          x: pt.x,
-          y: pt.y,
-          isFrontalArc: !!isFrontalArc,
-          isCorridor: !!isCorridor,
-          distance: dist,
-        });
-      }
-    }
-
-    // 1 tile ahead + forward flanks (3-tile lateral sweep)
-    for (const lat of [-1, 0, 1]) {
-      addTile(pos.x + dx * 1 + px * lat, pos.y + dy * 1 + py * lat, true, false, 1);
-    }
-
-    // Forward corridor: distance 2 up to rangeTiles
+    const tanHalf = Math.tan(35 * Math.PI / 180);
     const maxR = Math.min(rangeTiles, Math.max(width, height));
-    for (let r = 2; r <= maxR; r++) {
-      addTile(pos.x + dx * r, pos.y + dy * r, false, true, r);
+
+    for (let dist = 1; dist <= maxR; dist++) {
+      const lateralSpread = Math.max(1, Math.round(dist * tanHalf));
+      for (let lat = -lateralSpread; lat <= lateralSpread; lat++) {
+        if (Math.hypot(dist, lat) <= maxR + 0.5) {
+          const pt = wrapOrBound(pos.x + dx * dist + px * lat, pos.y + dy * dist + py * lat);
+          if (pt) {
+            const key = `${pt.x},${pt.y}`;
+            if (!seen.has(key)) {
+              seen.add(key);
+              tiles.push({
+                x: pt.x,
+                y: pt.y,
+                isFrontalArc: dist === 1,
+                isCorridor: dist > 1,
+                distance: dist,
+              });
+            }
+          }
+        }
+      }
     }
 
     return tiles;
@@ -241,6 +239,26 @@
       : (state.species?.cat?.attack_range ?? 2);
     const aoeTiles = getSlashAoeTiles(cat.position, cat.facing, catRange, state.width, state.height, state.topology);
 
+    const catPx = (cat.position.x + 0.5) * cellW;
+    const catPy = (cat.position.y + 0.5) * cellH;
+    const angle = getFacingAngle(cat.facing || 'north');
+    const coneReach = Math.max(cellW * 1.5, catRange * cellW);
+    const coneHalfAngle = 35 * Math.PI / 180;
+
+    // Projected 60-70 degree attack cone sector (matching FOV cone style)
+    ctx.save();
+    ctx.beginPath();
+    ctx.moveTo(catPx, catPy);
+    ctx.arc(catPx, catPy, coneReach, angle - coneHalfAngle, angle + coneHalfAngle);
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(239, 68, 68, 0.15)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(250, 204, 21, 0.75)';
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([4, 3]);
+    ctx.stroke();
+    ctx.restore();
+
     ctx.save();
     for (const t of aoeTiles) {
       const rx = t.x * cellW;
@@ -249,17 +267,17 @@
       const cy = ry + cellH / 2;
 
       // Vibrant crimson tint (stronger on frontal 3-tile arc)
-      ctx.fillStyle = t.isFrontalArc ? 'rgba(239, 68, 68, 0.32)' : 'rgba(239, 68, 68, 0.18)';
+      ctx.fillStyle = t.isFrontalArc ? 'rgba(239, 68, 68, 0.35)' : 'rgba(239, 68, 68, 0.22)';
       ctx.fillRect(rx + 1, ry + 1, cellW - 2, cellH - 2);
 
       // High-contrast gold / red boundary
-      ctx.strokeStyle = t.isFrontalArc ? 'rgba(250, 204, 21, 0.9)' : 'rgba(239, 68, 68, 0.65)';
+      ctx.strokeStyle = t.isFrontalArc ? 'rgba(250, 204, 21, 0.95)' : 'rgba(239, 68, 68, 0.75)';
       ctx.lineWidth = 1.5;
       ctx.setLineDash([3, 2]);
       ctx.strokeRect(rx + 1, ry + 1, cellW - 2, cellH - 2);
 
       // Subtle targeting reticle / crosshair in center
-      ctx.strokeStyle = 'rgba(220, 38, 38, 0.45)';
+      ctx.strokeStyle = 'rgba(250, 204, 21, 0.55)';
       ctx.lineWidth = 1;
       ctx.setLineDash([]);
       const crossSize = Math.max(2, Math.min(4, cellW * 0.2));
@@ -483,11 +501,43 @@
       const catPy = (slash.catPos.y + 0.5) * cellH;
 
       // ----------------------------------------------------
-      // A) THE ORANGE ARC: 3 Sweeping Concentric Blade Crescents across 3 Frontal Tiles
+      // A0) SWEEPING FIERY CONE SECTOR (Shaped like the FOV cone, matching user's request)
+      // ----------------------------------------------------
+      const coneReach = Math.max(cellW * 1.5, (slash.rangeTiles || 2) * cellW);
+      const coneHalfAngle = 35 * Math.PI / 180; // 35° each side (~70° sweeping cone)
+      const sweepFactor = slash.isDynamic ? Math.min(1.0, p / 0.45) : 1.0;
+
+      ctx.save();
+      ctx.translate(catPx, catPy);
+      ctx.rotate(angle);
+
+      // Translucent fiery cone fill matching the FOV cone geometry
+      ctx.beginPath();
+      ctx.moveTo(0, 0);
+      ctx.arc(0, 0, coneReach, -coneHalfAngle * sweepFactor, coneHalfAngle * sweepFactor);
+      ctx.closePath();
+
+      const coneGrad = ctx.createRadialGradient(0, 0, cellW * 0.3, 0, 0, coneReach);
+      coneGrad.addColorStop(0, `rgba(255, 69, 0, ${0.45 * fade})`);
+      coneGrad.addColorStop(0.65, `rgba(255, 140, 0, ${0.22 * fade})`);
+      coneGrad.addColorStop(1.0, `rgba(255, 235, 59, ${0.05 * fade})`);
+      ctx.fillStyle = coneGrad;
+      ctx.fill();
+
+      // Glowing outer rim arc
+      ctx.strokeStyle = `rgba(255, 200, 0, ${0.85 * fade})`;
+      ctx.lineWidth = Math.max(2, cellW * 0.12);
+      ctx.setLineDash([4, 3]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.restore();
+
+      // ----------------------------------------------------
+      // A) THE ORANGE ARC: 3 Sweeping Concentric Blade Crescents across Frontal Cone
       // ----------------------------------------------------
       ctx.save();
       ctx.translate(catPx, catPy);
-      ctx.rotate(angle); // +X points forward into the 3 frontal tiles
+      ctx.rotate(angle); // +X points forward into the frontal cone
 
       const swipeProg = slash.isDynamic ? Math.min(1.0, p / 0.45) : 1.0;
       const easedSwipe = slash.isDynamic ? (1.0 - Math.pow(1.0 - swipeProg, 2.5)) : 1.0;
@@ -495,11 +545,11 @@
       const maxSweepSpan = Math.PI * 0.84; // 150° span sweeping across frontal tiles
       const currentEndAngle = startAngle + maxSweepSpan * easedSwipe;
 
-      // 3 Concentric Claw Blade Arcs (Outer, Middle, Inner)
+      // 3 Concentric Claw Blade Arcs (Outer, Middle, Inner) scaling with attack reach
       const clawRadii = [
         Math.max(14, cellW * 1.3),  // Inner claw
-        Math.max(18, cellW * 1.7),  // Middle claw
-        Math.max(22, cellW * 2.1),  // Outer claw
+        Math.max(18, Math.min(cellW * 1.8, coneReach * 0.65)),  // Middle claw
+        Math.max(22, Math.min(cellW * 2.4, coneReach * 0.98)),  // Outer claw
       ];
 
       for (let i = 0; i < clawRadii.length; i++) {

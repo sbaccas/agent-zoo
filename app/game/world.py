@@ -1,3 +1,4 @@
+import math
 from typing import List, Optional, Tuple
 from app.models.action import ActionType
 from app.models.entity import Direction, Position
@@ -152,29 +153,28 @@ class World:
         self, pos: Position, facing: Direction, range_tiles: int = 2
     ) -> List[Tuple[int, int]]:
         """
-        Returns Area of Effect (AoE) tiles directly in front of the entity's face.
-        Cannot hit anything behind or alongside.
+        Returns Area of Effect (AoE) tiles in a forward sweeping cone (~60-70 degree arc)
+        up to `range_tiles` steps ahead.
         """
         dx, dy = self.get_forward_delta(facing)
         px, py = -dy, dx
 
         tiles = []
-        # 1 tile ahead + forward flanks (3-tile forward arc)
-        for lat in [-1, 0, 1]:
-            tx = pos.x + dx * 1 + px * lat
-            ty = pos.y + dy * 1 + py * lat
-            if self.topology == Topology.TORUS:
-                tiles.append(self.wrap_position(tx, ty))
-            elif self.is_in_bounds(tx, ty):
-                tiles.append((tx, ty))
+        # Cone half-angle ~ 35 degrees (tan(35°) ≈ 0.70)
+        half_angle_rad = math.radians(35)
+        tan_half = math.tan(half_angle_rad)
 
-        # Add tiles directly ahead for each distance from 2 up to range_tiles
-        for r in range(2, range_tiles + 1):
-            tx_r = pos.x + dx * r
-            ty_r = pos.y + dy * r
-            if self.topology == Topology.TORUS:
-                tiles.append(self.wrap_position(tx_r, ty_r))
-            elif self.is_in_bounds(tx_r, ty_r):
-                tiles.append((tx_r, ty_r))
+        for dist in range(1, range_tiles + 1):
+            # Lateral spread expands with distance: at least 1 tile for close melee sweep
+            lateral_spread = max(1, round(dist * tan_half))
+            for lat in range(-lateral_spread, lateral_spread + 1):
+                # Sector distance check keeps the cone curved and circular at the outer edge
+                if math.hypot(dist, lat) <= range_tiles + 0.5:
+                    tx = pos.x + dx * dist + px * lat
+                    ty = pos.y + dy * dist + py * lat
+                    if self.topology == Topology.TORUS:
+                        tiles.append(self.wrap_position(tx, ty))
+                    elif self.is_in_bounds(tx, ty):
+                        tiles.append((tx, ty))
 
         return list(set(tiles))
