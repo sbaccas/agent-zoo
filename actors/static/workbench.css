@@ -156,6 +156,108 @@ body {
   font-family: var(--font-mono);
 }
 
+/* Authentication Expired / Error Alert Banner */
+.auth-alert-banner {
+  display: none;
+  background: linear-gradient(90deg, #450a0a 0%, #7f1d1d 50%, #991b1b 100%);
+  border-bottom: 2px solid #ef4444;
+  color: #fef2f2;
+  padding: 12px 24px;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  box-shadow: 0 4px 12px rgba(220, 38, 38, 0.25);
+  animation: bannerPulse 2s infinite ease-in-out;
+  flex-wrap: wrap;
+}
+
+@keyframes bannerPulse {
+  0%, 100% { border-bottom-color: #ef4444; }
+  50% { border-bottom-color: #f87171; }
+}
+
+.auth-alert-left {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex: 1;
+  min-width: 320px;
+}
+
+.auth-alert-icon {
+  font-size: 1.6rem;
+  line-height: 1;
+}
+
+.auth-alert-text {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.auth-alert-title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.auth-alert-title-row strong {
+  font-size: 0.95rem;
+  font-weight: 800;
+  letter-spacing: 0.2px;
+  color: #ffffff;
+}
+
+.auth-alert-pill {
+  background-color: rgba(255, 255, 255, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  color: #fee2e2;
+  font-size: 0.68rem;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 4px;
+  text-transform: uppercase;
+}
+
+.auth-alert-detail {
+  font-size: 0.82rem;
+  color: #fca5a5;
+  line-height: 1.35;
+}
+
+.auth-alert-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.auth-cmd-box {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background-color: rgba(0, 0, 0, 0.35);
+  padding: 4px 8px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.auth-cmd-label {
+  font-size: 0.72rem;
+  color: #fca5a5;
+  font-weight: 600;
+}
+
+.auth-cmd-code {
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  color: #fef08a;
+  background: transparent;
+  padding: 0;
+  font-weight: 700;
+}
+
 /* Inspection banner when viewing past history */
 .inspection-banner {
   display: none;
@@ -783,6 +885,27 @@ body {
   border: 1px solid #cbd5e1;
 }
 
+.engine-badge.error {
+  background: linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%);
+  color: #b91c1c;
+  border: 1px solid #f87171;
+  box-shadow: 0 1px 2px rgba(185, 28, 28, 0.15);
+  font-weight: 800;
+}
+
+.engine-badge.deliberating {
+  background: linear-gradient(135deg, #eff6ff 0%, #e0e7ff 100%);
+  color: #1d4ed8;
+  border: 1px solid #93c5fd;
+  box-shadow: 0 1px 2px rgba(29, 78, 216, 0.1);
+}
+
+.engine-badge.ready {
+  background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%);
+  color: #15803d;
+  border: 1px solid #86efac;
+}
+
 .brain-meta-row {
   margin-bottom: 12px;
 }
@@ -793,6 +916,26 @@ body {
   color: #7e22ce;
   border: 1px solid #d8b4fe;
   font-weight: 700;
+}
+
+.history-source-badge.fallback-error {
+  background: #fef2f2;
+  color: #b91c1c;
+  border: 1px solid #fca5a5;
+  font-weight: 700;
+}
+
+.history-source-badge.reflex {
+  background: #eff6ff;
+  color: #1d4ed8;
+  border: 1px solid #bfdbfe;
+  font-weight: 600;
+}
+
+.chip-window-tag.fallback {
+  background-color: #fee2e2;
+  color: #991b1b;
+  border: 1px solid #fca5a5;
 }
 
 /* Lunge Badges */

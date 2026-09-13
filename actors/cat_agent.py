@@ -38,9 +38,12 @@ from actors.cat_model import (
     SKILLS_PATH,
     adk_agent,
     adk_runner,
+    check_gemini_auth_health,
     get_gemini_auth_mode,
     get_skills_instruction,
     has_gemini_credentials,
+    is_gemini_authenticated,
+    mark_auth_error,
     query_adk_gemini as model_query_adk_gemini,
     reset_adk_session,
     session_service,
@@ -70,8 +73,9 @@ class AgentWorkbenchState:
         self.history: List[Dict[str, Any]] = []
         self.brain_engine: str = "Google ADK (gemini-2.5-flash)"
         self.skills_file: str = str(SKILLS_PATH)
-        self.last_engine_source: str = "adk_gemini" if has_gemini_credentials() else "heuristic_fallback"
-        self.last_engine_error: Optional[str] = None
+        initial_health = check_gemini_auth_health()
+        self.last_engine_source: str = "adk_gemini" if initial_health.get("authenticated") else "heuristic_fallback"
+        self.last_engine_error: Optional[str] = initial_health.get("error") if not initial_health.get("authenticated") else None
         self.last_evaluated_tick: Optional[int] = None
 
         # Decoupled Deliberation & System 1/2 Architecture (AI-02)
@@ -124,6 +128,8 @@ async def _run_background_deliberation(obs: Observation):
         )
         state.last_engine_source = source
         state.last_engine_error = err
+        if err:
+            mark_auth_error(err)
         if decision:
             state.latest_deliberated_decision = decision
             state.active_directive = {
@@ -134,7 +140,10 @@ async def _run_background_deliberation(obs: Observation):
                 "tick": obs.tick,
             }
     except Exception as exc:
-        state.last_engine_error = str(exc)
+        err_msg = str(exc)
+        state.last_engine_error = err_msg
+        state.last_engine_source = "heuristic_fallback"
+        mark_auth_error(err_msg)
     finally:
         state.is_deliberating = False
 
@@ -148,7 +157,13 @@ async def act_async(obs: Observation, decoupled: bool = False) -> ActionResponse
     locked_target = active_dir.get("target_mouse_id") or None
     active_strat = active_dir.get("strategy") or "ROAMING"
 
-    if decoupled and has_gemini_credentials():
+    auth_health = check_gemini_auth_health()
+    is_authenticated = bool(auth_health.get("authenticated", False))
+    if is_authenticated:
+        state.last_engine_error = None
+    auth_err = None if is_authenticated else (auth_health.get("error") or state.last_engine_error)
+
+    if decoupled and is_authenticated:
         # System 1 / System 2 Decoupled Deliberation (AI-02):
         # 1. Did a background Gemini deliberation task just complete?
         if state.latest_deliberated_decision and state.latest_deliberated_decision.action in legal:
@@ -162,22 +177,26 @@ async def act_async(obs: Observation, decoupled: bool = False) -> ActionResponse
                 "target_mouse_id": llm_decision.target_mouse_id,
                 "phase": llm_decision.strategy,
             }
+            state.last_engine_source = "adk_gemini"
         else:
             # 2. Fast Reflex System 1 (Strike-Zone pounce / target-lock pursuit / roaming)
             auto_action, auto_thought, auto_meta = compute_reflex_decision(
                 obs, locked_target_id=locked_target, strategy=active_strat
             )
             auto_meta["engine"] = "adk_gemini"
+            auto_meta["strategy"] = active_strat
+            auto_meta["target_id"] = locked_target
+            auto_meta["phase"] = active_strat
+            state.last_engine_source = "adk_gemini"
 
         # 3. Trigger background deliberation task if free
         if not state.is_deliberating and (state.deliberation_task is None or state.deliberation_task.done()):
             state.deliberation_task = asyncio.create_task(_run_background_deliberation(obs))
     else:
-        # Standard synchronous path (used for direct HTTP /act calls or deterministic testing)
+        # Standard synchronous path / Fallback when unauthenticated
         auto_action, auto_thought, auto_meta = compute_heuristic_decision(obs)
-        auto_meta["engine"] = "heuristic"
 
-        if has_gemini_credentials():
+        if is_authenticated:
             llm_decision = await query_adk_gemini(obs)
             if llm_decision and llm_decision.action in legal:
                 auto_action = llm_decision.action
@@ -186,19 +205,29 @@ async def act_async(obs: Observation, decoupled: bool = False) -> ActionResponse
                 auto_meta["strategy"] = llm_decision.strategy
                 auto_meta["target_mouse_id"] = llm_decision.target_mouse_id
                 auto_meta["phase"] = llm_decision.strategy
+                state.last_engine_source = "adk_gemini"
                 state.active_directive = {
                     "strategy": llm_decision.strategy,
                     "target_mouse_id": llm_decision.target_mouse_id,
                     "thought": llm_decision.thought,
                     "tick": obs.tick,
                 }
+            else:
+                auto_meta["engine"] = "heuristic_fallback"
+                state.last_engine_source = "heuristic_fallback"
+        elif has_gemini_credentials() or auth_err:
+            auto_meta["engine"] = "heuristic_fallback"
+            state.last_engine_source = "heuristic_fallback"
+            if not state.last_engine_error and auth_err:
+                state.last_engine_error = auth_err
+        else:
+            auto_meta["engine"] = "heuristic"
+            state.last_engine_source = "heuristic"
 
     # 3. Check for human manual override
     chosen_action = auto_action
     chosen_thought = auto_thought
-    source = auto_meta.get("engine", "auto")
-    if source == "heuristic":
-        source = "auto"
+    source = auto_meta.get("engine", "heuristic")
 
     if state.pending_override:
         override = state.pending_override.lower()
@@ -579,10 +608,13 @@ async def get_agent_state(sync: bool = False, agent_id: Optional[str] = None) ->
     if sync:
         await sync_live_observation(agent_id)
 
-    has_env_key = bool(os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY"))
-    has_vertex_auth = bool(os.environ.get("GOOGLE_CLOUD_PROJECT") or os.environ.get("GOOGLE_GENAI_USE_VERTEXAI"))
-    has_auth = has_env_key or has_vertex_auth
-    auth_mode = "vertex_ai" if has_vertex_auth else ("api_key" if has_env_key else "none")
+    auth_health = check_gemini_auth_health()
+    is_auth = bool(auth_health.get("authenticated", False))
+    auth_mode = auth_health.get("mode", "none")
+    if is_auth:
+        state.last_engine_error = None
+        state.last_engine_source = "adk_gemini"
+    auth_err = None if is_auth else (state.last_engine_error or auth_health.get("error"))
 
     return {
         "connected": (state.latest_observation is not None) or ws_client.connected,
@@ -599,17 +631,35 @@ async def get_agent_state(sync: bool = False, agent_id: Optional[str] = None) ->
         "history": state.history,
         "brain_engine": state.brain_engine,
         "skills_file": state.skills_file,
-        "has_api_key": has_env_key,
-        "has_vertex_auth": has_vertex_auth,
-        "has_auth": has_auth,
+        "has_api_key": auth_mode == "api_key",
+        "has_vertex_auth": auth_mode == "vertex_ai",
+        "has_auth": is_auth,
+        "auth_valid": is_auth,
+        "auth_health": auth_health,
         "auth_mode": auth_mode,
+        "auth_status": auth_health.get("status", "unknown"),
+        "auth_error": auth_err,
+        "reauth_command": auth_health.get("reauth_command") or "gcloud auth application-default login",
         "gcp_project": os.environ.get("GOOGLE_CLOUD_PROJECT", ""),
         "last_engine_source": state.last_engine_source,
-        "last_engine_error": state.last_engine_error,
+        "last_engine_error": auth_err,
         "is_deliberating": state.is_deliberating,
         "active_directive": state.active_directive,
         "history_window_size": state.history_window_size,
     }
+
+
+@app.post("/api/agent/auth/verify")
+async def verify_auth_endpoint() -> Dict[str, Any]:
+    """Force-checks authentication status and clears errors if reauthenticated."""
+    health = check_gemini_auth_health(force_refresh=True)
+    if health.get("authenticated"):
+        state.last_engine_error = None
+        state.last_engine_source = "adk_gemini"
+    else:
+        state.last_engine_error = health.get("error")
+        state.last_engine_source = "heuristic_fallback"
+    return health
 
 
 @app.get("/api/agent/server/status")
@@ -647,18 +697,24 @@ async def disconnect_from_server() -> Dict[str, Any]:
 
 
 @app.post("/api/agent/set-key")
+@app.post("/api/agent/config/key")
 def set_api_key(req: ApiKeyRequest) -> Dict[str, Any]:
     key = req.api_key.strip()
     if key:
         os.environ["GEMINI_API_KEY"] = key
+        # When explicit API key is saved, disable vertex flag so it uses Gemini API directly
+        os.environ["GOOGLE_GENAI_USE_VERTEXAI"] = "false"
+        health = check_gemini_auth_health(force_refresh=True)
         state.last_engine_error = None
         state.last_engine_source = "adk_gemini"
-        return {"status": "ok", "has_api_key": True}
+        return {"status": "ok", "has_api_key": True, "auth_health": health}
     else:
         os.environ.pop("GEMINI_API_KEY", None)
-        if not has_gemini_credentials():
+        health = check_gemini_auth_health(force_refresh=True)
+        if not health.get("authenticated"):
             state.last_engine_source = "heuristic_fallback"
-        return {"status": "cleared", "has_api_key": False}
+            state.last_engine_error = health.get("error")
+        return {"status": "cleared", "has_api_key": False, "auth_health": health}
 
 
 @app.get("/api/agent/skills")

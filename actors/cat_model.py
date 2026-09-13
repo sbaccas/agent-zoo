@@ -1,6 +1,7 @@
 import asyncio
 import os
 from pathlib import Path
+import time
 from typing import Any, Dict, List, Optional, Tuple
 
 from dotenv import load_dotenv
@@ -48,6 +49,139 @@ adk_runner = Runner(
     session_service=session_service,
 )
 _llm_lock = asyncio.Lock()
+
+_auth_cache: Dict[str, Any] = {"timestamp": 0.0, "result": None}
+
+
+def mark_auth_error(error_msg: str):
+    """Updates the cached authentication state immediately upon encountering an error."""
+    now = time.time()
+    mode = get_gemini_auth_mode()
+    is_expired = (
+        "RefreshError" in error_msg
+        or "reauthenticate" in error_msg.lower()
+        or "invalid_grant" in error_msg.lower()
+        or "token" in error_msg.lower()
+        or "401" in error_msg
+        or "unauthorized" in error_msg.lower()
+    )
+    res = {
+        "mode": mode,
+        "authenticated": False,
+        "status": "expired" if is_expired else "error",
+        "error": error_msg,
+        "reauth_command": "gcloud auth application-default login" if mode == "vertex_ai" else None,
+        "details": error_msg,
+    }
+    _auth_cache["timestamp"] = now
+    _auth_cache["result"] = res
+
+
+def check_gemini_auth_health(force_refresh: bool = False) -> Dict[str, Any]:
+    """
+    Truthfully checks if Gemini authentication credentials exist and are currently valid.
+    Caches results for 5 seconds unless force_refresh is True or environment variables change.
+    """
+    cache_key = (
+        os.environ.get("GEMINI_API_KEY"),
+        os.environ.get("GOOGLE_API_KEY"),
+        os.environ.get("GOOGLE_CLOUD_PROJECT"),
+        os.environ.get("GOOGLE_GENAI_USE_VERTEXAI"),
+    )
+    now = time.time()
+    if not force_refresh and _auth_cache.get("key") == cache_key and (now - _auth_cache.get("timestamp", 0) < 5.0):
+        return dict(_auth_cache["result"])
+
+    api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+    if api_key:
+        res = {
+            "mode": "api_key",
+            "authenticated": True,
+            "status": "valid",
+            "error": None,
+            "reauth_command": None,
+            "details": "Using Google AI Studio API Key",
+        }
+        _auth_cache["key"] = cache_key
+        _auth_cache["timestamp"] = now
+        _auth_cache["result"] = res
+        return res
+
+    use_vertex = os.environ.get("GOOGLE_GENAI_USE_VERTEXAI")
+    project = os.environ.get("GOOGLE_CLOUD_PROJECT")
+
+    if use_vertex or project:
+        try:
+            import google.auth
+            from google.auth.transport.requests import Request
+
+            creds, proj = google.auth.default()
+            if not creds.valid:
+                try:
+                    creds.refresh(Request())
+                except Exception as exc:
+                    err_str = str(exc)
+                    res = {
+                        "mode": "vertex_ai",
+                        "authenticated": False,
+                        "status": "expired",
+                        "error": err_str,
+                        "project": project or proj,
+                        "reauth_command": "gcloud auth application-default login",
+                        "details": f"Vertex AI ADC token expired ({err_str})",
+                    }
+                    _auth_cache["key"] = cache_key
+                    _auth_cache["timestamp"] = now
+                    _auth_cache["result"] = res
+                    return res
+
+            res = {
+                "mode": "vertex_ai",
+                "authenticated": True,
+                "status": "valid",
+                "error": None,
+                "project": project or proj,
+                "reauth_command": None,
+                "details": f"Vertex AI ADC credentials valid (Project: {project or proj})",
+            }
+            _auth_cache["key"] = cache_key
+            _auth_cache["timestamp"] = now
+            _auth_cache["result"] = res
+            return res
+
+        except Exception as exc:
+            err_str = str(exc)
+            res = {
+                "mode": "vertex_ai",
+                "authenticated": False,
+                "status": "missing_credentials",
+                "error": err_str,
+                "project": project,
+                "reauth_command": "gcloud auth application-default login",
+                "details": f"Vertex AI credentials error: {err_str}",
+            }
+            _auth_cache["key"] = cache_key
+            _auth_cache["timestamp"] = now
+            _auth_cache["result"] = res
+            return res
+
+    res = {
+        "mode": "none",
+        "authenticated": False,
+        "status": "unconfigured",
+        "error": "No API key or Google Cloud Project configured",
+        "reauth_command": None,
+        "details": "No Gemini credentials configured in environment",
+    }
+    _auth_cache["key"] = cache_key
+    _auth_cache["timestamp"] = now
+    _auth_cache["result"] = res
+    return res
+
+
+def is_gemini_authenticated() -> bool:
+    """Returns True ONLY if Gemini credentials exist AND are actively valid (not expired)."""
+    return bool(check_gemini_auth_health().get("authenticated", False))
 
 
 def has_gemini_credentials() -> bool:
@@ -209,6 +343,7 @@ async def query_adk_gemini(
 
         except Exception as exc:
             err_msg = str(exc)
+            mark_auth_error(err_msg)
             print(f"[ADK Error] Gemini execution failure: {err_msg} (falling back to heuristics)", flush=True)
             return None, "heuristic_fallback", err_msg
 
