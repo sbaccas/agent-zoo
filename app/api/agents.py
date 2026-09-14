@@ -84,7 +84,7 @@ async def get_agent_observation(sim_id: str, agent_id: str):
     legal_actions = sim.world.get_legal_actions(entity.position, allow_attack=allow_attack, facing=entity.facing)
 
     spec_cfg = sim.entity_manager.species_config.get(species_key)
-    attack_range = spec_cfg.attack_range if spec_cfg else (2 if entity.type == EntityType.CAT else 0)
+    attack_range = spec_cfg.attack_range if spec_cfg else (8 if entity.type == EntityType.CAT else 0)
     capabilities = {
         "vision_radius": vision_radius,
         "attack_range": attack_range,

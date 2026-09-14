@@ -236,7 +236,7 @@
     if (!cat || !cat.alive) return;
     const catRange = (settingCatAttackRange && settingCatAttackRange.value)
       ? parseInt(settingCatAttackRange.value, 10)
-      : (state.species?.cat?.attack_range ?? 2);
+      : (state.species?.cat?.attack_range ?? 8);
     const aoeTiles = getSlashAoeTiles(cat.position, cat.facing, catRange, state.width, state.height, state.topology);
 
     const catPx = (cat.position.x + 0.5) * cellW;
@@ -1373,7 +1373,7 @@
       if (cat) {
         const range = (settingCatAttackRange && settingCatAttackRange.value)
           ? parseInt(settingCatAttackRange.value, 10)
-          : (currentState.species?.cat?.attack_range ?? 2);
+          : (currentState.species?.cat?.attack_range ?? 8);
         const aoe = getSlashAoeTiles(cat.position, cat.facing, range, currentState.width, currentState.height, currentState.topology);
         enqueueSlashAnimation({
           id: `manual_${Date.now()}`,
@@ -1566,10 +1566,10 @@
       }
       if (data.cat) {
         if (settingCatMove) settingCatMove.value = data.cat.move_cooldown ?? 3;
-        if (settingCatAttackRange) settingCatAttackRange.value = data.cat.attack_range ?? 2;
+        if (settingCatAttackRange) settingCatAttackRange.value = data.cat.attack_range ?? 8;
         if (settingCatAttackCd) settingCatAttackCd.value = data.cat.attack_cooldown ?? 3;
         if (settingCatLungeCd) settingCatLungeCd.value = data.cat.lunge_cooldown ?? 2;
-        if (settingCatVision) settingCatVision.value = data.cat.vision_radius ?? 4;
+        if (settingCatVision) settingCatVision.value = data.cat.vision_radius ?? 10;
         if (settingCatWeight) settingCatWeight.value = data.cat.weight ?? 10;
       }
       if (data.mouse) {
@@ -1591,10 +1591,10 @@
 
   function resetSettingsToDefaults() {
     if (settingCatMove) settingCatMove.value = 3;
-    if (settingCatAttackRange) settingCatAttackRange.value = 2;
+    if (settingCatAttackRange) settingCatAttackRange.value = 8;
     if (settingCatAttackCd) settingCatAttackCd.value = 3;
     if (settingCatLungeCd) settingCatLungeCd.value = 2;
-    if (settingCatVision) settingCatVision.value = 4;
+    if (settingCatVision) settingCatVision.value = 10;
     if (settingCatWeight) settingCatWeight.value = 10;
 
     if (settingMouseMove) settingMouseMove.value = 2;
@@ -1609,10 +1609,10 @@
 
     const catPayload = {
       move_cooldown: parseIntDefault(settingCatMove?.value, 3, 1),
-      attack_range: parseIntDefault(settingCatAttackRange?.value, 2, 0),
+      attack_range: parseIntDefault(settingCatAttackRange?.value, 8, 0),
       attack_cooldown: parseIntDefault(settingCatAttackCd?.value, 3, 0),
       lunge_cooldown: parseIntDefault(settingCatLungeCd?.value, 2, 0),
-      vision_radius: parseIntDefault(settingCatVision?.value, 4, 1),
+      vision_radius: parseIntDefault(settingCatVision?.value, 10, 1),
       weight: parseIntDefault(settingCatWeight?.value, 10, 1)
     };
 

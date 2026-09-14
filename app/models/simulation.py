@@ -35,10 +35,10 @@ class SimulationConfig(BaseModel):
     species: Dict[str, SpeciesConfig] = Field(
         default_factory=lambda: {
             "cat": SpeciesConfig(
-                vision_radius=4,
+                vision_radius=10,
                 action_budget=2,
                 weight=10,
-                attack_range=2,
+                attack_range=8,
                 move_cooldown=3,
                 attack_cooldown=3,
                 lunge_cooldown=2,
