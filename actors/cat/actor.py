@@ -81,28 +81,67 @@ _llm_lock = asyncio.Lock()
 _auth_cache: Dict[str, Any] = {"timestamp": 0.0, "result": None}
 
 
-def mark_auth_error(error_msg: str):
-    """Updates the cached authentication state immediately upon encountering an error."""
+def is_auth_error(error_msg: str) -> bool:
+    """True only for failures that genuinely indicate bad or expired credentials.
+
+    Deliberately narrow. Everything the model layer can throw -- timeouts, 429
+    quota, 503, malformed responses -- used to land here too, which flipped the
+    agent into a "credentials expired" state it would then report to the user for
+    the next five seconds. A transient blip must not look like a dead token.
+
+    Note the absence of a bare "token" test: it previously matched messages such
+    as "max output tokens exceeded", classifying an ordinary generation-limit
+    error as an expired credential.
+    """
+    if not error_msg:
+        return False
+    low = error_msg.lower()
+    return (
+        "refresherror" in low
+        # Stem match: gcloud emits "Reauthentication is needed", not "reauthenticate".
+        or "reauthenticat" in low
+        or "invalid_grant" in low
+        or "unauthorized" in low
+        or "unauthenticated" in low
+        or "permission_denied" in low
+        or "permission denied" in low
+        or "401" in error_msg
+        or "403" in error_msg
+        or ("expired" in low and "token" in low)        # "token has expired"
+        or "default credentials" in low
+        or "could not automatically determine credentials" in low
+        # An unusable API key is a credential problem, not a transient blip.
+        or "api key not valid" in low
+        or "invalid api key" in low
+        or "api_key_invalid" in low
+    )
+
+
+def mark_auth_error(error_msg: str) -> bool:
+    """Records a failure, poisoning the auth cache only if it is truly an auth failure.
+
+    Returns whether the error was treated as an authentication problem, so callers
+    can distinguish "credentials are broken" from "that one call failed".
+    """
+    if not is_auth_error(error_msg):
+        # Not a credential problem. Leave the cached auth verdict untouched so the
+        # next tick is free to use Gemini again instead of being forced down the
+        # unauthenticated fallback path.
+        return False
+
     now = time.time()
     mode = get_gemini_auth_mode()
-    is_expired = (
-        "RefreshError" in error_msg
-        or "reauthenticate" in error_msg.lower()
-        or "invalid_grant" in error_msg.lower()
-        or "token" in error_msg.lower()
-        or "401" in error_msg
-        or "unauthorized" in error_msg.lower()
-    )
     res = {
         "mode": mode,
         "authenticated": False,
-        "status": "expired" if is_expired else "error",
+        "status": "expired",
         "error": error_msg,
         "reauth_command": "gcloud auth application-default login" if mode == "vertex_ai" else None,
         "details": error_msg,
     }
     _auth_cache["timestamp"] = now
     _auth_cache["result"] = res
+    return True
 
 
 def check_gemini_auth_health(force_refresh: bool = False) -> Dict[str, Any]:
@@ -390,13 +429,26 @@ async def query_adk_gemini(
             if isinstance(decision, dict):
                 decision = CatTacticalDecision(**decision)
 
+            # Every exit below reports *why* it gave up. Returning a bare None here
+            # was what made fallbacks undiagnosable: the UI could only say "not
+            # Gemini" and guessed at the cause, invariably blaming auth.
             if decision and decision.action:
                 chosen_clean = decision.action.strip().lower()
                 if chosen_clean in legal:
                     decision.action = chosen_clean
                     return decision, "adk_gemini", None
                 else:
-                    print(f"[ADK Warning] Model selected '{chosen_clean}' which is not in {legal}", flush=True)
+                    reason = (
+                        f"model chose '{chosen_clean}', which is not legal this tick "
+                        f"(legal: {legal})"
+                    )
+                    print(f"[ADK Warning] {reason}", flush=True)
+                    return None, "heuristic_fallback", reason
+
+        except asyncio.TimeoutError:
+            reason = "Gemini call exceeded the 8s deliberation budget"
+            print(f"[ADK Timeout] {reason} (falling back to heuristics)", flush=True)
+            return None, "heuristic_fallback", reason
 
         except Exception as exc:
             err_msg = str(exc)
@@ -404,7 +456,7 @@ async def query_adk_gemini(
             print(f"[ADK Error] Gemini execution failure: {err_msg} (falling back to heuristics)", flush=True)
             return None, "heuristic_fallback", err_msg
 
-    return None, "heuristic_fallback", None
+    return None, "heuristic_fallback", "model returned no parseable decision"
 
 
 async def interrogate_adk_gemini(

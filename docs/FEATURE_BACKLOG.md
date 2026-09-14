@@ -71,30 +71,44 @@ A living backlog tracking architectural initiatives, gameplay mechanics, and age
   - Prey alarm calls alerting nearby mice of approaching predators.
 
 ### `AI-04`: Trajectory History Retroactively Relabels Fallback Ticks as Gemini
-- **Status**: 🐞 Bug — Backlog (Low Effort, Root Cause Identified)
-- **Target**: Cat Workbench UI (`actors/cat/static/workbench.js`)
-- **Symptom**: When a Gemini request fails and the tick is served by the heuristic
-  fallback, the affected rows in the trajectory history are labelled
+- **Status**: ✅ Fixed — the reported UI defect was the visible half of a
+  client/server pair, and diagnosis uncovered two further mislabels.
+- **Target**: `actors/cat/static/workbench.js`, `actors/cat/api.py`, `actors/cat/actor.py`
+- **Symptom**: When a Gemini request failed and the tick was served by the heuristic
+  fallback, the affected rows in the trajectory history were labelled
   `Fallback (Auth Error)` as expected — but the moment credentials or connectivity
-  are restored, those **same historical rows flip to `ADK Gemini`**. Past ticks
-  change their attribution retroactively. Intermittent in practice because it is
-  only visible if you happen to be watching the history table across an auth recovery.
-- **Root Cause**: The render predicate ORs the per-item source with the *current,
-  global* auth flag, so a healthy auth state overrides what each tick actually recorded:
-  ```js
-  // workbench.js:531 (history rows) and :448 (current response badge)
-  const itemIsAdk = (item.source === 'adk_gemini' || hasAuth) && !isOverride;
-  //                                              ^^^^^^^^^^^ current state, not the tick's
-  ```
-  `hasAuth` is recomputed from `cachedState` on every render, so every past row is
-  re-evaluated against the present.
-- **Data Integrity**: ✅ Unaffected. The server records the true per-tick `source`
-  in both `state.history[i].source` and the on-disk transcript. This is purely a
-  display defect — but it makes the history table misreport which ticks Gemini
-  actually drove, which undermines its use for debugging the reflexion loop.
-- **Fix**: Drop `|| hasAuth` from both predicates so the badge reflects the recorded
-  source. Needs a third state so a genuine "deliberating / unknown" tick is not
-  mislabelled as a fallback, plus a cachebuster bump on `workbench.js`.
+  were restored, those **same historical rows flipped to `ADK Gemini`**. Past ticks
+  changed their attribution retroactively.
+- **Root Causes** (four, all confirmed):
+  1. **Client relabel.** The render predicate ORed the per-item source with the
+     *current, global* auth flag, so a healthy auth state overrode what each tick
+     actually recorded:
+     ```js
+     const itemIsAdk = (item.source === 'adk_gemini' || hasAuth) && !isOverride;
+     //                                              ^^^^^^^^^^^ current state, not the tick's
+     ```
+     `hasAuth` is recomputed from `cachedState` on every render, so every past row
+     was re-evaluated against the present.
+  2. **Server erases evidence.** `get_agent_state` force-set
+     `last_engine_source = "adk_gemini"` and cleared `last_engine_error` on *every
+     poll* whenever auth looked healthy — the server-side twin of cause 1.
+  3. **Over-broad auth classification.** `mark_auth_error` treated ANY ADK exception
+     as a credential failure and poisoned a 5s cache. Its test included a bare
+     `"token" in error_msg.lower()`, so `max output tokens exceeded` was reported
+     as an expired credential.
+  4. **Opposite mislabel.** The decoupled WebSocket reflex path set
+     `engine = "adk_gemini"` for what is a purely local System-1 decision, crediting
+     the model for ticks it never saw.
+- **Data Integrity**: ✅ The on-disk transcript always held the true per-tick
+  `source`; no historical data was corrupted.
+- **Fix**: A single `describeSource()` helper in `workbench.js` derives the badge
+  purely from the recorded source and is never passed auth state; the server stops
+  rewriting `last_engine_source`; `is_auth_error()` is now narrow and separate from
+  "this one call failed"; the reflex path reports `heuristic_reflex`. Each tick now
+  also records a `fallback_reason` explaining *why* it fell back, which makes future
+  fallbacks self-diagnosing.
+- **Tests**: `tests/test_workbench_badges.py` (executes the real JS under
+  JavaScriptCore, since `node` is unavailable) and `tests/test_fallback_and_reset.py`.
 
 ---
 

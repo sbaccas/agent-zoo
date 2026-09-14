@@ -46,6 +46,7 @@ from actors.cat.actor import (
     get_skills_instruction,
     has_gemini_credentials,
     interrogate_adk_gemini,
+    is_auth_error,
     is_gemini_authenticated,
     mark_auth_error,
     query_adk_gemini as model_query_adk_gemini,
@@ -95,7 +96,16 @@ class AgentWorkbenchState:
         initial_health = check_gemini_auth_health()
         self.last_engine_source: str = "adk_gemini" if initial_health.get("authenticated") else "heuristic_fallback"
         self.last_engine_error: Optional[str] = initial_health.get("error") if not initial_health.get("authenticated") else None
+        # Why the most recent tick did not use Gemini. Distinct from
+        # `last_engine_error`: a rejected action is a fallback reason but not an
+        # error, and without it the UI can only guess (it used to blame auth).
+        self.last_fallback_reason: Optional[str] = None
         self.last_evaluated_tick: Optional[int] = None
+        # The last tick the game server actually reported. Tracked separately from
+        # `history[-1]["tick"]` because the poller advances its own tick past the
+        # server's while the game is paused; comparing against the workbench's own
+        # invented tick made it detect a "rewind" that never happened.
+        self.last_server_tick: Optional[int] = None
 
         # Decoupled Deliberation & System 1/2 Architecture (AI-02)
         self.active_directive: Optional[Dict[str, Any]] = None
@@ -121,14 +131,23 @@ state = AgentWorkbenchState()
 
 async def query_adk_gemini(obs: Observation) -> Optional[CatTacticalDecision]:
     """Wraps model execution, updating agent workbench diagnostic state."""
-    decision, source, err = await model_query_adk_gemini(
+    decision, source, reason = await model_query_adk_gemini(
         obs,
         history=state.history,
         agent_id=state.agent_id,
         history_window_size=state.history_window_size,
     )
     state.last_engine_source = source
-    state.last_engine_error = err
+    if decision is not None:
+        # A success clears prior diagnostics. Anything else preserves the reason so
+        # it survives long enough to be displayed.
+        state.last_engine_error = None
+        state.last_fallback_reason = None
+    else:
+        state.last_fallback_reason = reason
+        # Only surface it as an engine *error* if it really is one; a rejected
+        # action is an expected outcome, not a malfunction.
+        state.last_engine_error = reason if is_auth_error(reason or "") else None
     return decision
 
 
@@ -150,17 +169,23 @@ async def _run_background_deliberation(obs: Observation):
     """Executes Gemini LLM macro-deliberation in the background without stalling the game clock."""
     try:
         state.is_deliberating = True
-        decision, source, err = await model_query_adk_gemini(
+        decision, _source, reason = await model_query_adk_gemini(
             obs,
             history=state.history,
             agent_id=state.agent_id,
             history_window_size=state.history_window_size,
         )
-        state.last_engine_source = source
-        state.last_engine_error = err
-        if err:
-            mark_auth_error(err)
+        # NOTE: deliberately does NOT set `state.last_engine_source`.
+        #
+        # This runs detached from the tick loop and produces a decision for a
+        # FUTURE tick. Labelling the engine here overwrote the source of the tick
+        # that was actually just decided -- observed live as
+        # `last_engine_source='adk_gemini'` while the only recorded row was
+        # `heuristic_reflex`. Only `act_async` may attribute a decision, because
+        # only it knows which decision was actually executed.
         if decision:
+            state.last_engine_error = None
+            state.last_fallback_reason = None
             state.latest_deliberated_decision = decision
             state.active_directive = {
                 "strategy": decision.strategy,
@@ -169,11 +194,20 @@ async def _run_background_deliberation(obs: Observation):
                 "action": decision.action,
                 "tick": obs.tick,
             }
+        else:
+            state.last_fallback_reason = reason
+            # `mark_auth_error` now ignores anything that is not a credential
+            # problem, so a timeout here no longer disables Gemini for 5 seconds.
+            if reason and mark_auth_error(reason):
+                state.last_engine_error = reason
+            else:
+                state.last_engine_error = None
     except Exception as exc:
         err_msg = str(exc)
-        state.last_engine_error = err_msg
-        state.last_engine_source = "heuristic_fallback"
-        mark_auth_error(err_msg)
+        # Same reasoning: a failed background call does not change how the last
+        # tick was decided. The next tick will fall back and label itself.
+        state.last_fallback_reason = err_msg
+        state.last_engine_error = err_msg if mark_auth_error(err_msg) else None
     finally:
         state.is_deliberating = False
 
@@ -247,16 +281,22 @@ def maybe_dispatch_evaluation(current_tick: int) -> None:
         )
 
 
-def reset_reflexion_state() -> None:
+def reset_reflexion_state(current_tick: Optional[int] = None) -> None:
     """Wipes the transcript and coaching notes. Called whenever the game resets.
 
     Both must go together: a fresh game must not inherit the previous game's
     standing orders, and the evaluator must never read a transcript that spans two
     unrelated games.
+
+    `current_tick` rebases the evaluation clock. Leaving it at 0 meant the very
+    next tick satisfied `tick - 0 >= interval` for any tick past the interval, so
+    a reset late in a game immediately fired an evaluation against a transcript
+    holding a single record -- and those one-tick conclusions became the cat's
+    standing orders.
     """
     store.reset_transcript()
     store.reset_coaching_notes()
-    state.last_eval_dispatch_tick = 0
+    state.last_eval_dispatch_tick = int(current_tick or 0)
     state.last_eval_result = None
     # Drop any queued request; it was raised against the previous game's transcript.
     state.eval_pending = False
@@ -275,9 +315,11 @@ async def act_async(obs: Observation, decoupled: bool = False) -> ActionResponse
 
     auth_health = check_gemini_auth_health()
     is_authenticated = bool(auth_health.get("authenticated", False))
-    if is_authenticated:
-        state.last_engine_error = None
+    # Deliberately NOT clearing `state.last_engine_error` here. Healthy credentials
+    # say nothing about whether the last call succeeded, and wiping it on every
+    # tick destroyed the only record of why a fallback happened.
     auth_err = None if is_authenticated else (auth_health.get("error") or state.last_engine_error)
+    fallback_reason: Optional[str] = None
 
     if decoupled and is_authenticated:
         # System 1 / System 2 Decoupled Deliberation (AI-02):
@@ -296,14 +338,23 @@ async def act_async(obs: Observation, decoupled: bool = False) -> ActionResponse
             state.last_engine_source = "adk_gemini"
         else:
             # 2. Fast Reflex System 1 (Strike-Zone pounce / target-lock pursuit / roaming)
+            #
+            # This is a heuristic decision and is now labelled as one. It used to
+            # report `adk_gemini`, which meant most WebSocket ticks were credited
+            # to the model even though the model had not answered yet.
             auto_action, auto_thought, auto_meta = compute_reflex_decision(
                 obs, locked_target_id=locked_target, strategy=active_strat
             )
-            auto_meta["engine"] = "adk_gemini"
+            auto_meta["engine"] = "heuristic_reflex"
             auto_meta["strategy"] = active_strat
             auto_meta["target_id"] = locked_target
             auto_meta["phase"] = active_strat
-            state.last_engine_source = "adk_gemini"
+            state.last_engine_source = "heuristic_reflex"
+            fallback_reason = (
+                "Gemini still deliberating; acted on System-1 reflex within tick budget"
+                if state.is_deliberating
+                else "no completed Gemini decision available for this tick"
+            )
 
         # 3. Trigger background deliberation task if free
         if not state.is_deliberating and (state.deliberation_task is None or state.deliberation_task.done()):
@@ -331,14 +382,22 @@ async def act_async(obs: Observation, decoupled: bool = False) -> ActionResponse
             else:
                 auto_meta["engine"] = "heuristic_fallback"
                 state.last_engine_source = "heuristic_fallback"
+                # Set by `query_adk_gemini`; carries the real cause (timeout,
+                # rejected action, API error) rather than an assumed auth failure.
+                fallback_reason = state.last_fallback_reason
         elif has_gemini_credentials() or auth_err:
             auto_meta["engine"] = "heuristic_fallback"
             state.last_engine_source = "heuristic_fallback"
+            fallback_reason = auth_err or "credentials present but not currently valid"
             if not state.last_engine_error and auth_err:
                 state.last_engine_error = auth_err
         else:
             auto_meta["engine"] = "heuristic"
             state.last_engine_source = "heuristic"
+            fallback_reason = "no Gemini credentials configured"
+
+    auto_meta["fallback_reason"] = fallback_reason
+    state.last_fallback_reason = fallback_reason
 
     # 3. Check for human manual override
     chosen_action = auto_action
@@ -376,6 +435,7 @@ async def act_async(obs: Observation, decoupled: bool = False) -> ActionResponse
             "action": chosen_action,
             "thought": chosen_thought,
             "source": source,
+            "fallback_reason": fallback_reason,
             "resulting_posture": posture,
         },
         "source": source,
@@ -462,7 +522,7 @@ class WsClientManager:
             new_id = cat_id.strip()
             if new_id != self.assigned_id:
                 state.history.clear()
-                reset_reflexion_state()
+                reset_reflexion_state(state.active_tick)
                 state.total_ticks_processed = 0
                 state.latest_observation = None
                 state.latest_response = None
@@ -593,20 +653,33 @@ async def sync_live_observation(agent_id: Optional[str] = None) -> bool:
 
                 if state.simulation_id and sim_id and state.simulation_id != sim_id:
                     state.history.clear()
-                    reset_reflexion_state()
+                    reset_reflexion_state(server_tick)
                     state.total_ticks_processed = 0
                     state.last_evaluated_tick = None
+                    state.last_server_tick = None
                     await reset_adk_session(target_id)
                 state.simulation_id = sim_id
 
-                last_history_tick = state.history[-1]["tick"] if state.history else 0
-                if server_tick < last_history_tick:
+                # A genuine rewind is the GAME's tick going backwards. Compare
+                # against the last tick the server itself reported, never against
+                # `history[-1]`: the block below deliberately advances the
+                # workbench past the server while the game is paused, so comparing
+                # with local history made this branch fire on its own output and
+                # destroy the entire transcript on a single poll.
+                if state.last_server_tick is not None and server_tick < state.last_server_tick:
+                    logger.info(
+                        "Game rewound (server tick %s -> %s); resetting reflexion state.",
+                        state.last_server_tick,
+                        server_tick,
+                    )
                     state.history.clear()
-                    reset_reflexion_state()
+                    reset_reflexion_state(server_tick)
                     state.total_ticks_processed = 0
                     state.last_evaluated_tick = None
-                    last_history_tick = 0
                     await reset_adk_session(target_id)
+
+                state.last_server_tick = server_tick
+                last_history_tick = state.history[-1]["tick"] if state.history else 0
 
                 if state.history and last_history_tick >= server_tick:
                     upcoming_tick = last_history_tick + 1
@@ -753,10 +826,13 @@ async def get_agent_state(sync: bool = False, agent_id: Optional[str] = None) ->
     auth_health = check_gemini_auth_health()
     is_auth = bool(auth_health.get("authenticated", False))
     auth_mode = auth_health.get("mode", "none")
-    if is_auth:
-        state.last_engine_error = None
-        state.last_engine_source = "adk_gemini"
-    auth_err = None if is_auth else (state.last_engine_error or auth_health.get("error"))
+    # NOTE: do NOT overwrite `state.last_engine_source` / `last_engine_error` here.
+    # Healthy credentials right now say nothing about how the last decision was
+    # actually made. Force-setting them made every past tick claim it came from
+    # Gemini the moment auth recovered (see AI-04).
+    #
+    # `auth_err` is strictly the *current credential* problem, if any.
+    auth_err = None if is_auth else (auth_health.get("error") or state.last_engine_error)
 
     return {
         "connected": (state.latest_observation is not None) or ws_client.connected,
@@ -784,7 +860,8 @@ async def get_agent_state(sync: bool = False, agent_id: Optional[str] = None) ->
         "reauth_command": auth_health.get("reauth_command") or "gcloud auth application-default login",
         "gcp_project": os.environ.get("GOOGLE_CLOUD_PROJECT", ""),
         "last_engine_source": state.last_engine_source,
-        "last_engine_error": auth_err,
+        "last_engine_error": state.last_engine_error,
+        "last_fallback_reason": state.last_fallback_reason,
         "is_deliberating": state.is_deliberating,
         "active_directive": state.active_directive,
         "history_window_size": state.history_window_size,
@@ -806,11 +883,14 @@ async def verify_auth_endpoint() -> Dict[str, Any]:
     """Force-checks authentication status and clears errors if reauthenticated."""
     health = check_gemini_auth_health(force_refresh=True)
     if health.get("authenticated"):
+        # The credential problem is genuinely resolved, so the error goes. But we
+        # do NOT touch `last_engine_source`: no Gemini decision has been made yet.
+        # It will correct itself on the next tick that actually reaches the model.
         state.last_engine_error = None
-        state.last_engine_source = "adk_gemini"
     else:
         state.last_engine_error = health.get("error")
         state.last_engine_source = "heuristic_fallback"
+        state.last_fallback_reason = health.get("error")
     return health
 
 
@@ -857,8 +937,9 @@ def set_api_key(req: ApiKeyRequest) -> Dict[str, Any]:
         # When explicit API key is saved, disable vertex flag so it uses Gemini API directly
         os.environ["GOOGLE_GENAI_USE_VERTEXAI"] = "false"
         health = check_gemini_auth_health(force_refresh=True)
+        # Clear the credential error only. `last_engine_source` describes the last
+        # decision that actually happened and is not ours to rewrite here.
         state.last_engine_error = None
-        state.last_engine_source = "adk_gemini"
         return {"status": "ok", "has_api_key": True, "auth_health": health}
     else:
         os.environ.pop("GEMINI_API_KEY", None)
@@ -905,7 +986,7 @@ def clear_history() -> Dict[str, str]:
     state.history.clear()
     # A manual history wipe is a deliberate fresh start, so the durable transcript
     # and any standing orders derived from it go too.
-    reset_reflexion_state()
+    reset_reflexion_state(state.active_tick)
     return {"status": "ok"}
 
 

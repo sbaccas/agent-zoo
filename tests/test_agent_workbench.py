@@ -606,7 +606,11 @@ def test_clear_history_wipes_transcript_and_notes():
 
     assert store.transcript_tick_count() == 0
     assert store.read_coaching_notes() == ""
-    assert state.last_eval_dispatch_tick == 0
+    # The eval clock rebases to the current tick, NOT to 0. Zeroing it meant
+    # `tick - 0 >= interval` was already true, so the next tick fired an
+    # evaluation against a transcript holding a single record.
+    assert state.last_eval_dispatch_tick == state.active_tick
+    assert state.last_eval_dispatch_tick != 0
     assert state.last_eval_result is None
 
 

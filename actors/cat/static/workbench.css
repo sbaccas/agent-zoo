@@ -932,10 +932,31 @@ body {
   font-weight: 600;
 }
 
+.history-source-badge.heuristic-plain {
+  background: #f8fafc;
+  color: #475569;
+  border: 1px solid #e2e8f0;
+  font-weight: 600;
+}
+
 .chip-window-tag.fallback {
   background-color: #fee2e2;
   color: #991b1b;
   border: 1px solid #fca5a5;
+}
+
+/* A System-1 reflex is a normal, healthy fast path -- not an error.
+   It must not share the red treatment used for genuine failures. */
+.chip-window-tag.reflex {
+  background-color: #eff6ff;
+  color: #1d4ed8;
+  border: 1px solid #bfdbfe;
+}
+
+.chip-window-tag.heuristic-plain {
+  background-color: #f8fafc;
+  color: #475569;
+  border: 1px solid #e2e8f0;
 }
 
 /* Lunge Badges */
