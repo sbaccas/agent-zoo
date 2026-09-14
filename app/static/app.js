@@ -1041,9 +1041,56 @@
     }
   }
 
+  /**
+   * Point the tick-rate dropdown at the rate the simulation is actually using.
+   *
+   * The dropdown used to be write-only: app.js read speedSelect.value when the
+   * user changed it and never wrote it back, so the control displayed whichever
+   * <option> carried the hardcoded `selected` attribute regardless of the real
+   * rate. On a server already running at 5 ticks/sec the UI read "10 ticks /
+   * sec", and reloading the page did not correct it.
+   *
+   * Exposed on `window` so it can be tested in isolation.
+   */
+  function syncSpeedSelect(selectEl, rate) {
+    if (!selectEl) return;
+    if (typeof rate !== 'number' || !isFinite(rate) || rate <= 0) return;
+
+    // Never yank the value out from under someone who has the menu open.
+    if (typeof document !== 'undefined' && document.activeElement === selectEl) return;
+
+    const wanted = String(rate);
+    if (selectEl.value === wanted) return;
+
+    const options = Array.from(selectEl.options);
+    const match = options.find((o) => o.value === wanted);
+
+    if (!match) {
+      // The rate was set out of band (direct API call, another browser tab, a
+      // config default). Showing the nearest preset would be a lie, so surface
+      // the real value instead.
+      const opt = document.createElement('option');
+      opt.value = wanted;
+      opt.textContent = rate + ' ticks / sec (custom)';
+      opt.dataset.customRate = 'true';
+      selectEl.appendChild(opt);
+    } else {
+      // Drop any stale custom option now that a preset is in effect again.
+      options
+        .filter((o) => o.dataset && o.dataset.customRate === 'true')
+        .forEach((o) => o.remove());
+    }
+
+    selectEl.value = wanted;
+  }
+  window.syncSpeedSelect = syncSpeedSelect;
+
   function updateUI(state) {
     const prevState = currentState;
     currentState = state;
+
+    // Keep the tick-rate control honest: the server is the source of truth.
+    syncSpeedSelect(speedSelect, state.tick_rate);
 
     // Detect new slash events to animate
     if (state.recent_events) {

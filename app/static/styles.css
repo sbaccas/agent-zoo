@@ -220,6 +220,16 @@ body {
   gap: 10px;
 }
 
+/* Uses --text-secondary rather than --text-muted: the latter is referenced
+   elsewhere in this file but is not defined in :root, so it resolves to
+   nothing and inherits the default colour. */
+.speed-hint {
+  margin: 8px 0 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+
 .form-select {
   background-color: #ffffff;
   color: var(--text-primary);

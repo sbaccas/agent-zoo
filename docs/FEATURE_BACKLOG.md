@@ -110,6 +110,58 @@ A living backlog tracking architectural initiatives, gameplay mechanics, and age
 - **Tests**: `tests/test_workbench_badges.py` (executes the real JS under
   JavaScriptCore, since `node` is unavailable) and `tests/test_fallback_and_reset.py`.
 
+### `AI-05`: Sticky Movesets — Persistent Standing Orders Instead of Per-Tick Choices
+- **Status**: 📋 Backlog (High Priority)
+- **Target**: `actors/cat/api.py`, `actors/cat/heuristic.py`
+- **Problem**: The Cat re-decides from scratch every tick, but Gemini can only answer
+  about one tick in eight (see `AI-06`). The model's intent is therefore discarded
+  almost immediately: it says "go west", the reflex overrides the next seven ticks,
+  and the decision never compounds into a trajectory.
+- **Concept**: Model the Cat less like a turn-based actor and more like a vehicle that
+  does not stop. A Gemini decision sets a **standing heading** that persists across
+  every subsequent tick until Gemini issues a different one. The model steers; it does
+  not need to be present for every tick to stay in control.
+- **Key Capabilities**:
+  - A durable `current_moveset` (heading / intent) on the agent state, set only by the
+    deliberation path and never cleared by the reflex.
+  - The reflex demotes from *decision-maker* to *executor*: it continues the standing
+    order and handles only genuinely reflexive interrupts (mouse in the strike zone, a
+    wall directly ahead) rather than inventing its own roaming direction.
+  - Interrupt precedence needs defining: which events may override a standing order,
+    and whether an interrupt ends the moveset or suspends and resumes it.
+  - Staleness policy: whether a moveset expires after N ticks or persists until replaced.
+- **Why it matters**: This is what makes the coaching dossier reachable. Directives
+  like "sweep east along row 12" are trajectory-shaped, and a trajectory cannot be
+  expressed by an agent that only controls one tick in eight.
+- **Open questions**: Does a moveset survive a round reset? Should the evaluator be
+  able to set one directly, or only influence the model that sets it?
+
+### `AI-06`: Reflex Heuristic Decides the Overwhelming Majority of Ticks
+- **Status**: 🩹 Mitigated (tick-rate stopgap shipped); root fix tracked by `AI-05`
+- **Target**: `actors/cat/api.py`, `app/static/index.html`
+- **Measured**: Over 755 recorded ticks the decision source split was
+  `heuristic_reflex` **86.1%** vs `adk_gemini` **13.9%**. The dominant
+  `fallback_reason` was *"Gemini still deliberating; acted on System-1 reflex within
+  tick budget"* — never auth, never an illegal action.
+- **Cause**: A race, not a failure. `act_async` consumes a completed background
+  deliberation if one is ready and otherwise fires the reflex immediately. At the
+  default 5 ticks/sec the budget is 200ms per tick while Gemini takes 1.6–2.2s, so the
+  model is lapped roughly eight times over.
+- **Consequence**: The evaluator's coaching notes only influence the ~14% of ticks
+  Gemini decides. Worse, the evaluator has been writing directives aimed at behaviour
+  the model does not control — *"Do not revert to exploring territory"* targets the
+  string literal in `heuristic.compute_reflex_decision`'s roaming branch, which cannot
+  read coaching notes at all.
+- **Mitigation shipped**: Sub-1 tick rates (`0.5` = 1 tick / 2s, `0.25` = 1 tick / 4s)
+  added to the Execution Speed dropdown, giving Gemini a budget longer than its
+  latency. Also fixed the dropdown itself, which was write-only and displayed a
+  hardcoded default rather than the simulation's real rate.
+- **Remaining work**: The reflex's attack rung fires whenever a mouse is within
+  `abs(offaxis) <= 1`, which includes diagonals, so it swings and misses — precisely
+  the alignment problem the evaluator keeps flagging. Tightening that rung is
+  independent of `AI-05` and worth doing on its own.
+- **Tests**: `tests/test_tick_rate_control.py`.
+
 ---
 
 ## 🎮 Game Features
