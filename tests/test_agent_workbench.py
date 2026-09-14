@@ -205,7 +205,45 @@ def test_adk_agent_configuration():
     assert adk_agent.model == "gemini-2.5-flash"
     assert adk_agent.output_schema == CatTacticalDecision
     assert adk_agent.output_key == "decision"
-    assert "Cat and Mouse" in adk_agent.instruction
+    # `instruction` is an ADK InstructionProvider, not a baked string -- see
+    # test_skills_instruction_is_read_per_call for why.
+    assert callable(adk_agent.instruction)
+    assert "Cat and Mouse" in adk_agent.instruction(None)
+
+
+def test_skills_instruction_is_read_per_call():
+    """The manual must be re-read on every call, never captured at import.
+
+    When it was captured at import, editing actor_skills.md or eval_skills.md had
+    no effect on a running server: uvicorn's --reload only watches .py files. The
+    skills endpoints read the file directly, so the workbench displayed the new
+    rules while the agents kept obeying the old ones -- silently, with no error.
+    """
+    from actors.cat.actor import adk_agent, adk_interrogator_agent, SKILLS_PATH
+    from actors.cat.subagents.eval import eval_agent, EVAL_SKILLS_PATH
+
+    for agent, path in (
+        (adk_agent, SKILLS_PATH),
+        (adk_interrogator_agent, SKILLS_PATH),
+        (eval_agent, EVAL_SKILLS_PATH),
+    ):
+        assert callable(agent.instruction), (
+            f"{agent.name} froze its instruction at import; edits to "
+            f"{path.name} will not take effect on a running server"
+        )
+
+        original = path.read_text(encoding="utf-8")
+        sentinel = "ZZZ_SENTINEL_INSTRUCTION_MARKER_ZZZ"
+        try:
+            path.write_text(original + f"\n\n{sentinel}\n", encoding="utf-8")
+            assert sentinel in agent.instruction(None), (
+                f"{agent.name} did not pick up a live edit to {path.name}"
+            )
+        finally:
+            path.write_text(original, encoding="utf-8")
+
+        assert path.read_text(encoding="utf-8") == original
+        assert sentinel not in agent.instruction(None)
 
 
 def test_act_adk_decision_mocked():

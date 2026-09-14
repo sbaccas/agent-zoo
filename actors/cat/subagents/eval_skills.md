@@ -78,8 +78,32 @@ hundred ticks better than the last hundred.
 ### What Makes Advice Useful
 
 - **Say what you actually saw.** Ground every point in the transcript. Cite real
-  coordinates, real ticks, real repeated sequences. Never speak in generalities
+  coordinates, real regions, real repeated sequences. Never speak in generalities
   the Actor could have guessed on its own.
+- **Never cite tick numbers.** This is the single most common way to waste a
+  directive. The Actor sees only a very short sliding window of its own recent
+  history — roughly the last 25 ticks — so a reference to "tick 23" or
+  "ticks 40-95" points at something it cannot see and cannot check. It reads as
+  noise. You are describing *its* past to *it*, and its past is exactly the thing
+  it has no access to.
+
+  Translate every temporal observation into something the Actor can evaluate
+  against the observation in front of it right now:
+
+  | Instead of | Write |
+  |---|---|
+  | "At ticks 61-62 you lunged needlessly" | "You lunge at mice that are already within slash range. Only lunge when the target is beyond range 2 and moving away." |
+  | "Ticks 40-95 oscillated between (3,4) and (3,5)" | "You oscillate between (3,4) and (3,5). Leave that pocket: head east and do not turn back west of x=6." |
+  | "You attacked at ticks 15, 16, 23, 27... with no score change" | "Your score is still 0 after roughly 40 attacks. You are swinging at mice that are in range but not inside your forward cone — align your facing to the mouse's exact row or column first." |
+
+  Counts and durations are fine — "roughly 40 attacks", "for at least 6
+  consecutive ticks", "for the last third of the game". It is the *specific tick
+  index* that is unusable. Forward-looking durations the Actor can count off are
+  encouraged; backward references to when something happened are not.
+- **Write conditions, not history.** The Actor applies your notes to a single
+  present moment. A directive shaped as a trigger ("when a mouse is within 2 tiles
+  but not aligned to your facing, turn first, then attack") survives contact with
+  any tick. A directive shaped as a report ("you did X at tick 40") survives none.
 - **Be directive.** The Actor consumes your notes as standing orders. Prefer
   "sweep east along row 12 toward (18, 12), you have never been past x=11" over
   "consider exploring more".
@@ -88,8 +112,17 @@ hundred ticks better than the last hundred.
   misapply.
 - **Stay within the rules of the game.** Only recommend the actions listed above.
   Respect walls, cooldowns, and the forward-cone nature of both vision and attack.
-- **Be short.** A handful of directives the Actor will actually follow beats an
-  exhaustive analysis it will drown in. Aim for three to five points.
+- **Let the list grow with the game.** Your notes are a cumulative dossier, not a
+  fixed-size summary. Early on you have seen little, so you will only have a few
+  directives. As the game goes on and the transcript lengthens, you will have
+  learned more about the arena, the Cat's habits, and where the mice actually
+  are — so you should have **more** to say, not the same amount rephrased. There
+  is no target number and no upper limit. Write as many directives as the
+  evidence genuinely supports, and no more.
+- **Earn every bullet.** Growth must come from new evidence, not from padding or
+  from restating an existing directive in different words. If the transcript
+  revealed nothing new on some topic, carry the old directive forward unchanged
+  rather than inventing a variation of it.
 - **Let the transcript set the topic.** If the Cat is hunting well, say so and
   sharpen it. If it is stuck, say how to get unstuck. Do not force observations
   into fixed categories — write about whatever the long horizon actually reveals.
@@ -102,14 +135,34 @@ Return **markdown only** — no preamble, no JSON, no code fences around the who
 response. Your text is injected directly into the Actor's context on every
 subsequent tick, so write it as standing orders addressed to the Cat.
 
-Use a short bulleted list. Lead each bullet with a bolded label, then the
-directive:
+Use a bulleted list. Lead each bullet with a bolded label, then the directive.
+Order the list with the most urgent directives first, since that is the order the
+Cat reads them in:
 
 ```
 - **Unexplored Ground**: You have never crossed x=11. Sweep east along row 12
   toward (18, 12); the entire eastern third of the arena is unobserved.
-- **Break the Corner Loop**: Ticks 40-95 oscillated between (3, 4) and (3, 5).
+- **Break the Corner Loop**: You keep oscillating between (3, 4) and (3, 5).
   Commit to a single heading for at least 6 consecutive ticks before reassessing.
+- **Align Before Swinging**: Your score is still 0 despite roughly 40 attacks.
+  You are swinging while the mouse sits diagonally off your facing. Match the
+  mouse's row or column first, then attack.
 ```
+
+Note what those bullets do *not* contain: a single tick index. Compare against
+the same advice written badly, which is unusable to the Cat:
+
+```
+- **Improve Attack Accuracy**: You attacked at ticks 15, 16, 23, 27, 28, 31, 32,
+  33, 34, 55, 56, 64, 65, 69, 83, 90, 91, 92, 93, 98, 104 but your score did not
+  increase.
+```
+
+That bullet spends most of its length on numbers the Cat cannot look up, and
+leaves it with nothing to actually do differently.
+
+The good example above shows the *format*, not the expected length. Two or three
+bullets is a reasonable opening dossier; by late game a well-observed run should
+carry considerably more.
 
 Write only the bullets. Nothing else.

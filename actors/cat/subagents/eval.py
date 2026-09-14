@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from google.adk.agents import LlmAgent
+from google.adk.agents.readonly_context import ReadonlyContext
 from google.adk import Runner
 from google.adk.sessions import InMemorySessionService
 from google.genai import types
@@ -55,10 +56,23 @@ def get_eval_instruction() -> str:
     )
 
 
+def _eval_instruction_provider(_ctx: ReadonlyContext) -> str:
+    """Re-reads the manual on every run so edits take effect immediately.
+
+    This used to be `instruction=get_eval_instruction()`, evaluated once when the
+    module was imported. Because uvicorn's --reload only watches .py files, an
+    edit to eval_skills.md changed nothing until some unrelated Python file
+    happened to be touched. Worse, GET /api/agent/evaluator/skills reads the file
+    directly, so the workbench displayed the new rules while the agent kept
+    obeying the old ones -- the file looked applied when it was not.
+    """
+    return get_eval_instruction()
+
+
 eval_agent = LlmAgent(
     name="cat_evaluator",
     model=EVAL_MODEL,
-    instruction=get_eval_instruction(),
+    instruction=_eval_instruction_provider,
     generate_content_config=types.GenerateContentConfig(
         thinking_config=types.ThinkingConfig(thinking_budget=0)
     ),
@@ -74,7 +88,20 @@ _eval_lock = asyncio.Lock()
 
 
 def format_transcript(records: List[Dict[str, Any]]) -> str:
-    """Renders transcript records as readable lines for the model."""
+    """Renders transcript records as readable lines for the model.
+
+    Deliberately emits NO absolute tick index.
+
+    The Actor only ever sees a ~25-tick sliding window, so a directive citing
+    "tick 26" refers to something it cannot look up; those citations are pure
+    noise in its context. Telling the evaluator not to cite ticks helped but did
+    not eliminate it -- the model kept reaching for the numbers because every
+    line it read was labelled with one. Not showing it an index is deterministic
+    where an instruction is merely probable.
+
+    Ordering is preserved by line order, so runs, oscillations and durations
+    remain fully analysable ("roughly 40 attacks", "for the last third").
+    """
     lines = []
     for r in records:
         visible = r.get("visible") or []
@@ -87,8 +114,8 @@ def format_transcript(records: List[Dict[str, Any]]) -> str:
         action = (r.get("action") or "stay").upper()
         thought = r.get("thought") or ""
         lines.append(
-            f"Tick {r.get('tick')}: at ({r.get('x')},{r.get('y')}) facing "
-            f"{r.get('facing')} | saw {seen} | did {action}"
+            f"at ({r.get('x')},{r.get('y')}) facing "
+            f"{r.get('facing')} | score {r.get('score', 0)} | saw {seen} | did {action}"
             + (f' | reasoning: "{thought}"' if thought else "")
         )
     return "\n".join(lines)
@@ -129,6 +156,59 @@ def _summarise_without_model(records: List[Dict[str, Any]]) -> str:
     return "\n".join(bullets)
 
 
+def build_eval_prompt(records: List[Dict[str, Any]], previous: str) -> str:
+    """Assembles the full evaluator prompt.
+
+    Extracted from evaluate() purely so it can be tested. While this was inline,
+    mutation testing showed the tick range could be put back into the header
+    with the entire suite still green: the tests could only reach
+    format_transcript, and the header is the other route by which an absolute
+    tick index reaches the model.
+    """
+    previous_block = ""
+    if previous:
+        previous_count = sum(
+            1 for ln in previous.splitlines() if ln.strip().startswith("-")
+        )
+        # The wording here governs how the list evolves. It used to offer
+        # only "keep / drop / replace" -- three operations that all
+        # preserve cardinality -- so the list could never grow. Measured
+        # live: feeding in 2 bullets produced 2-3 back, 6 produced 5.
+        # Output tracked input almost exactly. Adding must be named as an
+        # explicit, expected operation or it does not happen.
+        previous_block = (
+            "--- YOUR STANDING DIRECTIVES SO FAR ---\n"
+            f"{previous}\n\n"
+            "This is your accumulated dossier, not a draft to be rewritten. "
+            "Assess whether the Cat actually followed each directive, then "
+            "produce the updated dossier:\n"
+            "  - CARRY FORWARD every directive that still holds, reproduced "
+            "verbatim. This is the default; most directives should survive.\n"
+            "  - DROP only a directive the Cat has demonstrably completed or "
+            "that the transcript has proven wrong.\n"
+            "  - SHARPEN a directive the Cat ignored, making it more concrete "
+            "and easier to act on.\n"
+            "  - ADD new directives for everything this stretch of transcript "
+            "revealed that your dossier does not yet cover.\n\n"
+            f"You currently have {previous_count} directive(s). The dossier is "
+            "expected to grow as the game progresses and you learn more; a "
+            "later evaluation covering more of the game should normally return "
+            "more directives than an earlier one. Do not shrink it to hit some "
+            "imagined length, and do not pad it to look thorough.\n\n"
+        )
+
+    # No tick indices reach the model -- not on the lines, not in this
+    # header. See format_transcript() for why.
+    return (
+        f"{previous_block}"
+        f"--- CAT TRANSCRIPT ({len(records)} consecutive ticks, "
+        f"oldest first) ---\n"
+        f"{format_transcript(records)}\n\n"
+        "Write your standing orders for the Cat now, as markdown bullets. "
+        "Do not refer to tick numbers; the Cat cannot see them."
+    )
+
+
 async def evaluate(records: List[Dict[str, Any]]) -> Tuple[str, str]:
     """Runs one evaluation pass over a transcript.
 
@@ -145,8 +225,10 @@ async def evaluate(records: List[Dict[str, Any]]) -> Tuple[str, str]:
     if not has_gemini_credentials():
         return _summarise_without_model(records), "offline_fallback"
 
-    first_tick = records[0].get("tick")
-    last_tick = records[-1].get("tick")
+    # NOTE: no tick bounds are computed here on purpose. They previously fed the
+    # prompt header and were the last route by which an absolute tick index
+    # reached the model. The published `tick_range` is derived separately in
+    # evaluate_and_publish(), which is metadata for the UI, not model input.
     user_id = "cat_evaluator"
     session_id = "session_cat_evaluator"
 
@@ -163,24 +245,7 @@ async def evaluate(records: List[Dict[str, Any]]) -> Tuple[str, str]:
                 app_name="cat_evaluator_app", user_id=user_id, session_id=session_id
             )
 
-            previous = store.read_coaching_notes()
-            previous_block = ""
-            if previous:
-                previous_block = (
-                    "--- YOUR PREVIOUS DIRECTIVES ---\n"
-                    f"{previous}\n\n"
-                    "Assess whether the Cat actually followed these. Keep what is "
-                    "still relevant, drop what it has completed, and replace what "
-                    "it ignored with something more concrete.\n\n"
-                )
-
-            prompt = (
-                f"{previous_block}"
-                f"--- CAT TRANSCRIPT (ticks {first_tick} to {last_tick}, "
-                f"{len(records)} ticks) ---\n"
-                f"{format_transcript(records)}\n\n"
-                "Write your standing orders for the Cat now, as markdown bullets."
-            )
+            prompt = build_eval_prompt(records, store.read_coaching_notes())
 
             msg = types.Content(role="user", parts=[types.Part.from_text(text=prompt)])
             chunks: List[str] = []

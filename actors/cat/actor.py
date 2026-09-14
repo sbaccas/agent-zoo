@@ -12,6 +12,7 @@ if "GOOGLE_CLOUD_REGION" in os.environ and "GOOGLE_CLOUD_LOCATION" not in os.env
     os.environ["GOOGLE_CLOUD_LOCATION"] = os.environ["GOOGLE_CLOUD_REGION"]
 
 from google.adk.agents import LlmAgent
+from google.adk.agents.readonly_context import ReadonlyContext
 from google.adk import Runner
 from google.adk.sessions import InMemorySessionService
 from google.genai import types
@@ -32,11 +33,37 @@ def get_skills_instruction() -> str:
     )
 
 
+def _actor_instruction_provider(_ctx: ReadonlyContext) -> str:
+    """Re-reads actor_skills.md on every decision so edits apply immediately.
+
+    Previously the manual was read once at import. uvicorn's --reload only
+    watches .py files, so editing the markdown changed nothing until an unrelated
+    Python file was touched -- silently, with no error and no warning.
+    """
+    return get_skills_instruction()
+
+
+def _interrogator_instruction_provider(_ctx: ReadonlyContext) -> str:
+    """Same as above, plus the Commander radio persona."""
+    return (
+        get_skills_instruction()
+        + "\n\n"
+        + "--- INTERROGATION & COMMANDER RADIO CHANNEL ---\n"
+        + "You are directly communicating with your human Commander/Operator who is monitoring the Cat and Mouse simulation.\n"
+        + "The Commander can ask you anything: why you are making specific moves, what your thoughts are, why you aren't exploring more of the board, or issue strategic suggestions.\n"
+        + "Address the Commander directly, truthfully, and tactically in character as an intelligent hunting cat.\n"
+        + "Ground your answer in your spatial reality: reference your coordinates (x, y), facing direction, vision cone limits, and recent movement history.\n"
+        + "Explain your rationale for why you moved the way you did (e.g. searching for scent, sweeping vision, avoiding walls, patrolling) and what you plan to do next.\n"
+        + "If the Commander gives you a suggestion or directive (e.g. 'explore south', 'head toward center'), state how you will adapt your path to honor it.\n"
+        + "Keep your response focused, clear, and informative (2 to 4 concise paragraphs or bullet points)."
+    )
+
+
 # Initialize ADK Agent and Runner
 adk_agent = LlmAgent(
     name="cat_tactician",
     model="gemini-2.5-flash",
-    instruction=get_skills_instruction(),
+    instruction=_actor_instruction_provider,
     output_schema=CatTacticalDecision,
     output_key="decision",
     generate_content_config=types.GenerateContentConfig(
@@ -54,18 +81,7 @@ adk_runner = Runner(
 adk_interrogator_agent = LlmAgent(
     name="cat_interrogator",
     model="gemini-2.5-flash",
-    instruction=(
-        get_skills_instruction()
-        + "\n\n"
-        + "--- INTERROGATION & COMMANDER RADIO CHANNEL ---\n"
-        + "You are directly communicating with your human Commander/Operator who is monitoring the Cat and Mouse simulation.\n"
-        + "The Commander can ask you anything: why you are making specific moves, what your thoughts are, why you aren't exploring more of the board, or issue strategic suggestions.\n"
-        + "Address the Commander directly, truthfully, and tactically in character as an intelligent hunting cat.\n"
-        + "Ground your answer in your spatial reality: reference your coordinates (x, y), facing direction, vision cone limits, and recent movement history.\n"
-        + "Explain your rationale for why you moved the way you did (e.g. searching for scent, sweeping vision, avoiding walls, patrolling) and what you plan to do next.\n"
-        + "If the Commander gives you a suggestion or directive (e.g. 'explore south', 'head toward center'), state how you will adapt your path to honor it.\n"
-        + "Keep your response focused, clear, and informative (2 to 4 concise paragraphs or bullet points)."
-    ),
+    instruction=_interrogator_instruction_provider,
     generate_content_config=types.GenerateContentConfig(
         thinking_config=types.ThinkingConfig(thinking_budget=0)
     ),
