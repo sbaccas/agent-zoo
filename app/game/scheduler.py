@@ -3,8 +3,8 @@ import math
 import random
 from typing import List, Optional
 import httpx
-from actors.cat_agent import act as cat_agent_act, Observation as CatObservation
-from actors.mouse_agent import act as mouse_agent_act, Observation as MouseObservation
+from actors.cat.api import act as cat_agent_act, Observation as CatObservation
+from actors.mouse.heuristic import act as mouse_agent_act, Observation as MouseObservation
 from app.game.actions import ActionHandler
 from app.game.entities import EntityManager
 from app.game.world import World

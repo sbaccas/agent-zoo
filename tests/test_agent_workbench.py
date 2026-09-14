@@ -1,6 +1,7 @@
 import pytest
 from starlette.testclient import TestClient
-from actors.cat_agent import app, state, Observation
+from actors.cat.api import app, state, Observation
+from actors.cat import store
 
 
 @pytest.fixture(autouse=True)
@@ -13,6 +14,17 @@ def reset_agent_state():
     state.override_mode = "once"
     state.active_tick = 0
     state.total_ticks_processed = 0
+    state.history_window_size = 25
+    # Reflexion loop: the transcript is on disk, so it must be wiped between tests
+    # or records leak across cases.
+    store.reset_transcript()
+    store.reset_coaching_notes()
+    state.eval_interval = 100
+    state.eval_enabled = True
+    state.last_eval_dispatch_tick = 0
+    state.last_eval_result = None
+    state.eval_pending = False
+    state.is_evaluating = False
 
 
 def test_workbench_html_served():
@@ -87,7 +99,7 @@ def test_workbench_override_and_act():
 @pytest.mark.asyncio
 async def test_workbench_live_sync():
     from unittest.mock import patch, AsyncMock
-    from actors.cat_agent import sync_live_observation
+    from actors.cat.api import sync_live_observation
 
     # Mock response from Game Server (:8000)
     mock_obs_data = {
@@ -188,7 +200,7 @@ def test_set_api_key_endpoint():
 
 
 def test_adk_agent_configuration():
-    from actors.cat_agent import adk_agent, CatTacticalDecision
+    from actors.cat.api import adk_agent, CatTacticalDecision
     assert adk_agent.name == "cat_tactician"
     assert adk_agent.model == "gemini-2.5-flash"
     assert adk_agent.output_schema == CatTacticalDecision
@@ -198,7 +210,7 @@ def test_adk_agent_configuration():
 
 def test_act_adk_decision_mocked():
     from unittest.mock import patch
-    from actors.cat_agent import CatTacticalDecision
+    from actors.cat.api import CatTacticalDecision
     client = TestClient(app)
 
     mock_decision = CatTacticalDecision(
@@ -216,7 +228,7 @@ def test_act_adk_decision_mocked():
         "legal_actions": ["stay", "north", "south", "east", "west", "attack", "lunge"],
     }
 
-    with patch("actors.cat_agent.query_adk_gemini", return_value=mock_decision):
+    with patch("actors.cat.api.query_adk_gemini", return_value=mock_decision):
         with patch.dict("os.environ", {"GEMINI_API_KEY": "fake-key"}):
             resp = client.post("/act", json=cat_obs)
             assert resp.status_code == 200
@@ -268,7 +280,7 @@ def test_workbench_server_connection_endpoints():
 
 
 def test_reflex_decision_and_target_lock():
-    from actors.cat_heuristic import compute_reflex_decision
+    from actors.cat.heuristic import compute_reflex_decision
 
     # 1. Test immediate strike zone attack reflex
     obs_strike = Observation(
@@ -303,7 +315,7 @@ def test_reflex_decision_and_target_lock():
 
 @pytest.mark.asyncio
 async def test_decoupled_act_async_execution():
-    from actors.cat_agent import act_async, state
+    from actors.cat.api import act_async, state
     from unittest.mock import patch, AsyncMock
     from actors.models import CatTacticalDecision
 
@@ -317,7 +329,7 @@ async def test_decoupled_act_async_execution():
 
     # In decoupled mode with credentials, it should respond reflexively in < 5ms without blocking
     with patch.dict("os.environ", {"GEMINI_API_KEY": "test-key"}):
-        with patch("actors.cat_agent.model_query_adk_gemini", new_callable=AsyncMock) as mock_llm:
+        with patch("actors.cat.api.model_query_adk_gemini", new_callable=AsyncMock) as mock_llm:
             mock_llm.return_value = (
                 CatTacticalDecision(action="east", thought="Flanking mouse-1", strategy="STALKING", target_mouse_id="mouse-1"),
                 "adk_gemini",
@@ -335,7 +347,7 @@ async def test_decoupled_act_async_execution():
 
 
 def test_dynamic_attack_range_in_heuristic():
-    from actors.cat_heuristic import compute_heuristic_decision, compute_reflex_decision
+    from actors.cat.heuristic import compute_heuristic_decision, compute_reflex_decision
 
     # Mouse is 5 tiles ahead (distance 5)
     # Default range (2) would NOT attack
@@ -373,10 +385,10 @@ def test_dynamic_attack_range_in_heuristic():
 def test_history_window_endpoint():
     client = TestClient(app)
 
-    # Initial state should have history_window_size == 3
+    # Initial state should have history_window_size == 25
     state_resp = client.get("/api/agent/state")
     assert state_resp.status_code == 200
-    assert state_resp.json()["history_window_size"] == 3
+    assert state_resp.json()["history_window_size"] == 25
 
     # Update to 10
     update_resp = client.post("/api/agent/history-window", json={"history_window_size": 10})
@@ -388,9 +400,13 @@ def test_history_window_endpoint():
     state_resp2 = client.get("/api/agent/state")
     assert state_resp2.json()["history_window_size"] == 10
 
-    # Reset back to 3
-    client.post("/api/agent/history-window", json={"history_window_size": 3})
-    assert state.history_window_size == 3
+    # The slider spans 1-50, so both ends must be accepted unclamped.
+    assert client.post("/api/agent/history-window", json={"history_window_size": 1}).json()["history_window_size"] == 1
+    assert client.post("/api/agent/history-window", json={"history_window_size": 50}).json()["history_window_size"] == 50
+
+    # Reset back to the default
+    client.post("/api/agent/history-window", json={"history_window_size": 25})
+    assert state.history_window_size == 25
 
 
 def test_interrogate_agent_endpoint():
@@ -427,3 +443,163 @@ def test_interrogate_agent_endpoint():
     assert clear_resp.status_code == 200
     assert len(state.chat_history) == 0
 
+
+
+# ---------------------------------------------------------------------------
+# Reflexion loop: transcript -> evaluator -> coaching notes -> actor
+# ---------------------------------------------------------------------------
+
+
+def _obs(tick, x=3, y=4, facing="east"):
+    return {
+        "tick": tick,
+        "round": 1,
+        "self": {"id": "cat-1", "position": {"x": x, "y": y}, "facing": facing},
+        "visible_entities": [],
+        "legal_actions": ["stay", "north", "south", "east", "west"],
+        "capabilities": {"attack_range": 2, "vision_radius": 4},
+    }
+
+
+def test_actor_and_evaluator_have_separate_skills_files():
+    """The evaluator must not share the actor's skills manual."""
+    from actors.cat import actor
+    from actors.cat.subagents import eval as evaluator
+
+    assert actor.SKILLS_PATH.name == "actor_skills.md"
+    assert evaluator.EVAL_SKILLS_PATH.name == "eval_skills.md"
+    assert actor.SKILLS_PATH != evaluator.EVAL_SKILLS_PATH
+    assert actor.SKILLS_PATH.exists()
+    assert evaluator.EVAL_SKILLS_PATH.exists()
+
+
+def test_transcript_persists_every_tick_beyond_memory_cap():
+    """The disk transcript must outlive the in-memory history cap.
+
+    This is the whole point of moving it to disk: a 100-tick evaluation cannot
+    run off a 50-entry rolling buffer.
+    """
+    client = TestClient(app)
+    state.max_history = 5
+
+    try:
+        for tick in range(1, 21):
+            assert client.post("/act", json=_obs(tick)).status_code == 200
+
+        assert len(state.history) == 5, "in-memory history should stay capped"
+        assert store.transcript_tick_count() == 20, "disk transcript must keep every tick"
+    finally:
+        state.max_history = 50
+
+
+def test_transcript_records_are_compact():
+    """Each record carries the trajectory fields the evaluator reasons over."""
+    client = TestClient(app)
+    client.post("/act", json=_obs(1, x=7, y=9, facing="north"))
+
+    records = store.read_transcript_records()
+    assert len(records) == 1
+    rec = records[0]
+    assert set(rec) == {"tick", "x", "y", "facing", "action", "thought", "source", "visible"}
+    assert rec["tick"] == 1
+    assert rec["action"] in ("stay", "north", "south", "east", "west", "lunge", "attack")
+
+
+def test_evaluator_interval_is_adjustable():
+    client = TestClient(app)
+    resp = client.post("/api/agent/evaluator/interval", json={"interval": 25})
+    assert resp.status_code == 200
+    assert resp.json()["interval"] == 25
+    assert state.eval_interval == 25
+
+    # Out-of-range values are clamped rather than rejected outright.
+    client.post("/api/agent/evaluator/interval", json={"interval": 1})
+    assert state.eval_interval == 1
+
+
+def test_evaluator_can_be_disabled():
+    client = TestClient(app)
+    client.post("/api/agent/evaluator/interval", json={"interval": 2, "enabled": False})
+    assert state.eval_enabled is False
+
+    for tick in range(1, 8):
+        client.post("/act", json=_obs(tick))
+
+    assert state.eval_pending is False, "disabled evaluator must not queue work"
+
+
+def test_evaluation_queued_on_interval_boundary():
+    """Crossing the interval raises a request for the background worker."""
+    client = TestClient(app)
+    client.post("/api/agent/evaluator/interval", json={"interval": 5})
+
+    for tick in range(1, 5):
+        client.post("/act", json=_obs(tick))
+    assert state.eval_pending is False, "must not fire before the boundary"
+
+    client.post("/act", json=_obs(5))
+    assert state.eval_pending is True, "must fire on the boundary"
+    assert state.last_eval_dispatch_tick == 5
+
+
+def test_forced_evaluation_publishes_notes_for_actor():
+    """The full hand-off: transcript in, coaching notes out, actor reads them."""
+    from actors.cat import actor
+
+    client = TestClient(app)
+    for tick in range(1, 7):
+        client.post("/act", json=_obs(tick, x=3 + tick, y=4))
+
+    assert store.read_coaching_notes() == "", "no notes before evaluation"
+
+    resp = client.post("/api/agent/evaluator/run")
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "ok"
+
+    notes = store.read_coaching_notes()
+    assert notes, "evaluator published no notes"
+    # The actor must read the same notes the evaluator wrote.
+    assert actor.store.read_coaching_notes() == notes
+
+    result = state.last_eval_result
+    assert result["ticks_evaluated"] == 6
+    assert result["source"] in ("adk_gemini", "offline_fallback")
+
+
+def test_evaluator_status_endpoint():
+    client = TestClient(app)
+    client.post("/api/agent/evaluator/interval", json={"interval": 40})
+    for tick in range(1, 4):
+        client.post("/act", json=_obs(tick))
+
+    data = client.get("/api/agent/evaluator").json()
+    assert data["enabled"] is True
+    assert data["interval"] == 40
+    assert data["transcript_ticks"] == 3
+    assert data["next_dispatch_tick"] == 40
+
+
+def test_clear_history_wipes_transcript_and_notes():
+    """A reset must not let a new game inherit the old game's standing orders."""
+    client = TestClient(app)
+    for tick in range(1, 5):
+        client.post("/act", json=_obs(tick))
+    client.post("/api/agent/evaluator/run")
+
+    assert store.transcript_tick_count() == 4
+    assert store.read_coaching_notes() != ""
+
+    client.post("/api/agent/clear-history")
+
+    assert store.transcript_tick_count() == 0
+    assert store.read_coaching_notes() == ""
+    assert state.last_eval_dispatch_tick == 0
+    assert state.last_eval_result is None
+
+
+def test_state_endpoint_exposes_evaluator():
+    client = TestClient(app)
+    data = client.get("/api/agent/state").json()
+    assert "evaluator" in data
+    assert data["evaluator"]["interval"] == 100
+    assert data["evaluator"]["enabled"] is True

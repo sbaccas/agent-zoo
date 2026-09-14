@@ -121,10 +121,19 @@ agent-zoo/
 │   └── static/                 # Board visualizer & simulation control panel
 │
 ├── actors/                     # Autonomous Agents & Workbenches
-│   ├── cat_agent.py            # Google ADK Cat Agent & Workbench service (:8001)
-│   ├── mouse_agent.py          # Mouse agent heuristics & behaviors
-│   ├── skills.md               # Prompt engineering handbook & tactical rules
-│   └── static/                 # Workbench UI (interactive controls & logs)
+│   ├── models.py               # Pydantic models shared across all actors
+│   ├── cat/
+│   │   ├── api.py              # Cat API server & Workbench service (:8001)
+│   │   ├── actor.py            # Cat actor agent (Gem1) — tick-by-tick decisions
+│   │   ├── heuristic.py        # Non-LLM reflex engine & fallback
+│   │   ├── store.py            # On-disk transcript & coaching-notes store
+│   │   ├── actor_skills.md     # Actor prompt handbook & tactical rules
+│   │   ├── subagents/
+│   │   │   ├── eval.py         # Evaluator (Gem2) — long-horizon advisor
+│   │   │   └── eval_skills.md  # Evaluator prompt handbook (advisory role)
+│   │   └── static/             # Workbench UI (interactive controls & logs)
+│   └── mouse/
+│       └── api.py              # Mouse brain: pure heuristic (flee/forage), no LLM
 │
 ├── scripts/
 │   └── launch_workbench.sh     # Preflight check (ADC token) & workbench launcher

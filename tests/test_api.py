@@ -115,8 +115,8 @@ async def test_agents_api_lifecycle():
 
 @pytest.mark.asyncio
 async def test_actor_microservices_logic():
-    from actors.cat_agent import act as cat_act, Observation as CatObs
-    from actors.mouse_agent import act as mouse_act, Observation as MouseObs
+    from actors.cat.api import act as cat_act, Observation as CatObs
+    from actors.mouse.heuristic import act as mouse_act, Observation as MouseObs
 
     # Test Cat Agent decisions
     cat_obs = CatObs(

@@ -21,6 +21,7 @@ from actors.models import (
     ApiKeyRequest,
     CatTacticalDecision,
     ConnectServerRequest,
+    EvalIntervalRequest,
     HistoryWindowRequest,
     InterrogateRequest,
     InterrogateResponse,
@@ -29,14 +30,14 @@ from actors.models import (
 )
 
 # Heuristic tactical engine
-from actors.cat_heuristic import (
+from actors.cat.heuristic import (
     compute_heuristic_decision,
     compute_reflex_decision,
     compute_resulting_posture,
 )
 
 # Model / LLM tactical engine
-from actors.cat_model import (
+from actors.cat.actor import (
     SKILLS_PATH,
     adk_agent,
     adk_runner,
@@ -52,7 +53,21 @@ from actors.cat_model import (
     session_service,
 )
 
+# Runtime transcript / coaching-notes store (shared with the evaluator subagent)
+from actors.cat import store
+
+# Long-horizon evaluator subagent
+from actors.cat.subagents.eval import (
+    DEFAULT_EVAL_INTERVAL,
+    EVAL_SKILLS_PATH,
+    evaluate_and_publish,
+    get_eval_instruction,
+)
+
 logger = logging.getLogger("cat_agent")
+
+# How often the evaluation worker checks for queued work.
+EVAL_WORKER_POLL_SECONDS = 1.0
 
 # Backwards compatibility alias for heuristic decision function
 compute_autonomous_decision = compute_heuristic_decision
@@ -63,7 +78,7 @@ class AgentWorkbenchState:
 
     def __init__(self, max_history: int = 50):
         self.max_history = max_history
-        self.history_window_size: int = 3
+        self.history_window_size: int = 25
         self.agent_id: str = "cat-1"
         self.simulation_id: Optional[str] = None
         self.active_tick: int = 0
@@ -87,6 +102,17 @@ class AgentWorkbenchState:
         self.deliberation_task: Optional[asyncio.Task] = None
         self.latest_deliberated_decision: Optional[CatTacticalDecision] = None
         self.is_deliberating: bool = False
+
+        # Reflexion loop: long-horizon evaluator subagent.
+        # `eval_interval` is how many ticks of play accumulate before the transcript
+        # is pushed to the evaluator. Adjustable at runtime via the API.
+        self.eval_interval: int = DEFAULT_EVAL_INTERVAL
+        self.eval_enabled: bool = True
+        self.last_eval_dispatch_tick: int = 0
+        self.eval_pending: bool = False
+        self.eval_worker_task: Optional[asyncio.Task] = None
+        self.is_evaluating: bool = False
+        self.last_eval_result: Optional[Dict[str, Any]] = None
 
 
 # Singleton in-memory state
@@ -150,6 +176,92 @@ async def _run_background_deliberation(obs: Observation):
         mark_auth_error(err_msg)
     finally:
         state.is_deliberating = False
+
+
+async def _run_evaluation_cycle():
+    """Pushes the transcript to the evaluator subagent and stores the result.
+
+    Runs detached from the game loop: an evaluation reads a long transcript and can
+    take several seconds, which must never stall tick processing.
+    """
+    try:
+        state.is_evaluating = True
+        result = await evaluate_and_publish()
+        state.last_eval_result = result
+    except Exception as exc:
+        logger.warning("Evaluation cycle failed: %s", exc)
+    finally:
+        state.is_evaluating = False
+
+
+async def _evaluation_worker():
+    """Long-lived worker that drains evaluation requests.
+
+    Owned by the app lifespan rather than by a request handler. Tick processing
+    arrives on two different loops -- the uvicorn loop for HTTP `/act`, and a
+    throwaway loop for the scheduler's synchronous `act()` -- so a task spawned at
+    the point of dispatch is not guaranteed to survive long enough to publish.
+    Raising a flag and letting this worker do the work is safe from both.
+    """
+    logger.info("Evaluation worker started.")
+    while True:
+        try:
+            await asyncio.sleep(EVAL_WORKER_POLL_SECONDS)
+            if state.eval_pending and not state.is_evaluating:
+                state.eval_pending = False
+                await _run_evaluation_cycle()
+        except asyncio.CancelledError:
+            logger.info("Evaluation worker stopped.")
+            raise
+        except Exception as exc:
+            # A worker that dies takes the whole reflexion loop with it.
+            logger.warning("Evaluation worker error: %s", exc)
+
+
+def dispatch_evaluation() -> bool:
+    """Requests an evaluation. Returns False if one is already queued or running.
+
+    Setting a flag is the stand-in for a pub/sub publish. When that lands, only
+    this function changes: the evaluator already communicates purely through the
+    transcript and coaching-notes files and never reaches back into the actor.
+    """
+    if state.is_evaluating or state.eval_pending:
+        return False
+    state.eval_pending = True
+    return True
+
+
+def maybe_dispatch_evaluation(current_tick: int) -> None:
+    """Requests an evaluation once the configured tick interval has elapsed."""
+    if not state.eval_enabled:
+        return
+    interval = max(1, state.eval_interval)
+    if current_tick - state.last_eval_dispatch_tick < interval:
+        return
+    # Record the attempt regardless of whether dispatch succeeds, so a busy
+    # evaluator cannot cause a retry storm on every subsequent tick.
+    state.last_eval_dispatch_tick = current_tick
+    if dispatch_evaluation():
+        logger.info(
+            "Queued evaluation at tick %s (interval=%s)", current_tick, interval
+        )
+
+
+def reset_reflexion_state() -> None:
+    """Wipes the transcript and coaching notes. Called whenever the game resets.
+
+    Both must go together: a fresh game must not inherit the previous game's
+    standing orders, and the evaluator must never read a transcript that spans two
+    unrelated games.
+    """
+    store.reset_transcript()
+    store.reset_coaching_notes()
+    state.last_eval_dispatch_tick = 0
+    state.last_eval_result = None
+    # Drop any queued request; it was raised against the previous game's transcript.
+    state.eval_pending = False
+
+
 
 
 async def act_async(obs: Observation, decoupled: bool = False) -> ActionResponse:
@@ -290,6 +402,12 @@ async def act_async(obs: Observation, decoupled: bool = False) -> ActionResponse
     if len(state.history) > state.max_history:
         state.history.pop(0)
 
+    # The in-memory history above stays a short rolling window for the live UI.
+    # The durable transcript lives on disk, so the evaluator's horizon is not
+    # limited by `max_history`.
+    store.append_tick(exchange)
+    maybe_dispatch_evaluation(obs.tick)
+
     return ActionResponse(action=chosen_action, thought=chosen_thought)
 
 
@@ -344,6 +462,7 @@ class WsClientManager:
             new_id = cat_id.strip()
             if new_id != self.assigned_id:
                 state.history.clear()
+                reset_reflexion_state()
                 state.total_ticks_processed = 0
                 state.latest_observation = None
                 state.latest_response = None
@@ -474,6 +593,7 @@ async def sync_live_observation(agent_id: Optional[str] = None) -> bool:
 
                 if state.simulation_id and sim_id and state.simulation_id != sim_id:
                     state.history.clear()
+                    reset_reflexion_state()
                     state.total_ticks_processed = 0
                     state.last_evaluated_tick = None
                     await reset_adk_session(target_id)
@@ -482,6 +602,7 @@ async def sync_live_observation(agent_id: Optional[str] = None) -> bool:
                 last_history_tick = state.history[-1]["tick"] if state.history else 0
                 if server_tick < last_history_tick:
                     state.history.clear()
+                    reset_reflexion_state()
                     state.total_ticks_processed = 0
                     state.last_evaluated_tick = None
                     last_history_tick = 0
@@ -576,7 +697,19 @@ async def lifespan(app: FastAPI):
     # Auto-connect WebSocket client in background if enabled
     if os.environ.get("CAT_AGENT_AUTO_CONNECT", "1") != "0":
         asyncio.create_task(ws_client.connect())
+
+    # Long-horizon reflexion loop. Owned here so it outlives any single request.
+    state.eval_worker_task = asyncio.create_task(_evaluation_worker())
+
     yield
+
+    if state.eval_worker_task:
+        state.eval_worker_task.cancel()
+        try:
+            await state.eval_worker_task
+        except asyncio.CancelledError:
+            pass
+        state.eval_worker_task = None
     await ws_client.disconnect()
 
 
@@ -650,6 +783,15 @@ async def get_agent_state(sync: bool = False, agent_id: Optional[str] = None) ->
         "is_deliberating": state.is_deliberating,
         "active_directive": state.active_directive,
         "history_window_size": state.history_window_size,
+        "evaluator": {
+            "enabled": state.eval_enabled,
+            "interval": state.eval_interval,
+            "is_evaluating": state.is_evaluating,
+            "last_dispatch_tick": state.last_eval_dispatch_tick,
+            "transcript_ticks": store.transcript_tick_count(),
+            "coaching_notes": store.read_coaching_notes(),
+            "last_result": state.last_eval_result,
+        },
         "chat_history": state.chat_history[-50:],
     }
 
@@ -756,7 +898,55 @@ def set_history_window(req: HistoryWindowRequest) -> Dict[str, Any]:
 @app.post("/api/agent/clear-history")
 def clear_history() -> Dict[str, str]:
     state.history.clear()
+    # A manual history wipe is a deliberate fresh start, so the durable transcript
+    # and any standing orders derived from it go too.
+    reset_reflexion_state()
     return {"status": "ok"}
+
+
+@app.get("/api/agent/evaluator")
+def get_evaluator_status() -> Dict[str, Any]:
+    """Current state of the long-horizon reflexion loop."""
+    interval = max(1, state.eval_interval)
+    return {
+        "enabled": state.eval_enabled,
+        "interval": interval,
+        "is_evaluating": state.is_evaluating,
+        "last_dispatch_tick": state.last_eval_dispatch_tick,
+        "next_dispatch_tick": state.last_eval_dispatch_tick + interval,
+        "transcript_ticks": store.transcript_tick_count(),
+        "coaching_notes": store.read_coaching_notes(),
+        "last_result": state.last_eval_result,
+    }
+
+
+@app.post("/api/agent/evaluator/interval")
+def set_evaluator_interval(req: EvalIntervalRequest) -> Dict[str, Any]:
+    """Adjusts how many ticks accumulate before an evaluation fires."""
+    state.eval_interval = max(1, min(10000, req.interval))
+    if req.enabled is not None:
+        state.eval_enabled = req.enabled
+    return {
+        "status": "ok",
+        "interval": state.eval_interval,
+        "enabled": state.eval_enabled,
+    }
+
+
+@app.get("/api/agent/evaluator/skills")
+def get_evaluator_skills() -> Dict[str, str]:
+    """The evaluator's instruction manual, distinct from the actor's."""
+    return {"content": get_eval_instruction(), "path": str(EVAL_SKILLS_PATH)}
+
+
+@app.post("/api/agent/evaluator/run")
+async def run_evaluator_now() -> Dict[str, Any]:
+    """Forces an evaluation immediately, ignoring the tick boundary."""
+    if state.is_evaluating:
+        return {"status": "busy", "detail": "An evaluation is already running."}
+    state.eval_pending = False
+    await _run_evaluation_cycle()
+    return {"status": "ok", "result": state.last_eval_result}
 
 
 @app.post("/api/agent/prompt", response_model=InterrogateResponse)
@@ -872,4 +1062,4 @@ if __name__ == "__main__":
     print(f"   • Workbench Dashboard: http://127.0.0.1:{port}", flush=True)
     print(f"   • API Observation Endpoint: http://127.0.0.1:{port}/act", flush=True)
     print(f"=======================================================\n", flush=True)
-    uvicorn.run("actors.cat_agent:app", host="127.0.0.1", port=port, reload=True, log_level="warning")
+    uvicorn.run("actors.cat.api:app", host="127.0.0.1", port=port, reload=True, log_level="warning")

@@ -17,9 +17,10 @@ from google.adk.sessions import InMemorySessionService
 from google.genai import types
 
 from actors.models import CatTacticalDecision, Observation
+from actors.cat import store
 
 # Skills manual path and loader
-SKILLS_PATH = Path(__file__).parent / "skills.md"
+SKILLS_PATH = Path(__file__).parent / "actor_skills.md"
 
 
 def get_skills_instruction() -> str:
@@ -311,6 +312,20 @@ async def query_adk_gemini(
                     + "\n\n"
                 )
 
+            # Standing orders published by the evaluator subagent. These summarise a
+            # far longer horizon than the sliding window above, so they lead the
+            # prompt and frame the immediate decision rather than compete with it.
+            coaching_notes = store.read_coaching_notes()
+            coaching_context = ""
+            if coaching_notes:
+                coaching_context = (
+                    "--- STANDING ORDERS FROM YOUR STRATEGIC EVALUATOR ---\n"
+                    "These directives were derived from your full movement history over a much\n"
+                    "longer horizon than you can personally recall. Honour them unless the\n"
+                    "current observation gives you an immediate reason to override.\n"
+                    f"{coaching_notes}\n\n"
+                )
+
             caps = obs.capabilities or {}
             atk_range = caps.get("attack_range", 2)
             vision_rad = caps.get("vision_radius", 4)
@@ -319,6 +334,7 @@ async def query_adk_gemini(
             lunge_cd = caps.get("lunge_cooldown", 2)
 
             prompt = (
+                f"{coaching_context}"
                 f"{history_context}"
                 f"--- CURRENT OBSERVATION (Tick {obs.tick}, Round {obs.round}) ---\n"
                 f"Agent ID: {obs.self.get('id', agent_id)}\n"

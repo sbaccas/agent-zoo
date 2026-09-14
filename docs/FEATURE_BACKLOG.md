@@ -41,7 +41,7 @@ A living backlog tracking architectural initiatives, gameplay mechanics, and age
 
 ### `AI-01`: Three-Laned Cognitive Memory Architecture
 - **Status**: 📋 Backlog (High Priority)
-- **Target**: Autonomous Agents (`actors/cat_agent.py`, `actors/mouse_agent.py`)
+- **Target**: Autonomous Agents (`actors/cat/`, `actors/mouse/`)
 - **Description**: Replace the flat 3-tick sliding window with a three-tiered cognitive memory system that balances immediate responsiveness with historical depth.
 - **Key Capabilities**:
   - **Lane 1: Working Memory**: Immediate high-fidelity tactical state (current tick, visible prey, legal actions, immediate target, recent 2-3 moves) injected directly into Gemini's prompt context.

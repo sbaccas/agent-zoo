@@ -810,6 +810,144 @@
   }
 
   // Render the full live state received from /api/agent/state
+  // DOM Elements - Box 6: Strategic Evaluator (Gem2)
+  const evalStateBadge = document.getElementById('evalStateBadge');
+  const evalTranscriptTicks = document.getElementById('evalTranscriptTicks');
+  const evalLastRun = document.getElementById('evalLastRun');
+  const evalNextTick = document.getElementById('evalNextTick');
+  const evalSource = document.getElementById('evalSource');
+  const evalIntervalBadge = document.getElementById('evalIntervalBadge');
+  const sliderEvalInterval = document.getElementById('sliderEvalInterval');
+  const checkEvalEnabled = document.getElementById('checkEvalEnabled');
+  const evalNotesContent = document.getElementById('evalNotesContent');
+  const btnRunEvalNow = document.getElementById('btnRunEvalNow');
+  const btnCopyEvalNotes = document.getElementById('btnCopyEvalNotes');
+  const btnViewEvalSkills = document.getElementById('btnViewEvalSkills');
+  const skillsModalTitle = document.getElementById('skillsModalTitle');
+
+  // True while the user is dragging the interval slider, so incoming poll data
+  // does not yank the handle out from under them.
+  let isDraggingEvalSlider = false;
+  let rawEvalNotes = '';
+
+  // Splits the evaluator's markdown into directives. Continuation lines (any line
+  // that does not start a new bullet) are folded into the preceding directive.
+  function parseDirectives(markdown) {
+    const out = [];
+    const lines = String(markdown || '').split('\n');
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      const bullet = trimmed.match(/^[-*]\s+(.*)$/);
+      if (bullet) {
+        out.push(bullet[1]);
+      } else if (out.length) {
+        out[out.length - 1] += ' ' + trimmed;
+      } else {
+        out.push(trimmed);
+      }
+    }
+    return out;
+  }
+
+  // Renders directives as discrete DOM nodes. Model output is untrusted text and
+  // is never assigned as markup.
+  function renderEvalNotes(notes) {
+    rawEvalNotes = notes || '';
+    while (evalNotesContent.firstChild) {
+      evalNotesContent.removeChild(evalNotesContent.firstChild);
+    }
+
+    const directives = parseDirectives(notes);
+    if (!directives.length) {
+      evalNotesContent.classList.add('eval-notes-empty');
+      evalNotesContent.textContent =
+        'No coaching notes yet. The evaluator publishes its first set of standing orders once the interval above elapses.';
+      return;
+    }
+
+    evalNotesContent.classList.remove('eval-notes-empty');
+    for (const directive of directives) {
+      const row = document.createElement('div');
+      row.className = 'eval-directive';
+
+      const dot = document.createElement('span');
+      dot.className = 'eval-directive-bullet';
+      dot.textContent = '\u25b8';
+      row.appendChild(dot);
+
+      const body = document.createElement('span');
+      body.className = 'eval-directive-text';
+
+      // Pull out a leading "**Label**:" so it can be emphasised separately.
+      const labelled = directive.match(/^\*\*(.+?)\*\*:?\s*(.*)$/);
+      if (labelled) {
+        const label = document.createElement('span');
+        label.className = 'eval-directive-label';
+        label.textContent = labelled[1] + ': ';
+        body.appendChild(label);
+        body.appendChild(document.createTextNode(labelled[2].replace(/\*\*/g, '')));
+      } else {
+        body.textContent = directive.replace(/\*\*/g, '');
+      }
+
+      row.appendChild(body);
+      evalNotesContent.appendChild(row);
+    }
+  }
+
+  function renderEvaluator(ev) {
+    if (!ev || !evalStateBadge) return;
+
+    const interval = ev.interval || 100;
+    const enabled = ev.enabled !== false;
+
+    if (!isDraggingEvalSlider && sliderEvalInterval) {
+      sliderEvalInterval.value = String(Math.min(500, Math.max(10, interval)));
+    }
+    if (evalIntervalBadge) evalIntervalBadge.textContent = interval + ' ticks';
+    if (checkEvalEnabled) checkEvalEnabled.checked = enabled;
+
+    const ticks = ev.transcript_ticks || 0;
+    evalTranscriptTicks.textContent = ticks + (ticks === 1 ? ' tick' : ' ticks');
+
+    const last = ev.last_result;
+    if (last) {
+      evalLastRun.textContent = last.tick_range ? 'ticks ' + last.tick_range : last.ticks_evaluated + ' ticks';
+      evalSource.textContent = last.source === 'adk_gemini' ? 'ADK Gemini' : 'Offline Fallback';
+    } else {
+      evalLastRun.textContent = 'Never';
+      evalSource.textContent = '--';
+    }
+
+    const nextTick = (ev.last_dispatch_tick || 0) + interval;
+    evalNextTick.textContent = enabled ? String(nextTick) : 'Disabled';
+
+    if (ev.is_evaluating) {
+      evalStateBadge.className = 'engine-badge eval-running';
+      evalStateBadge.textContent = '\u23f3 Evaluating...';
+    } else if (!enabled) {
+      evalStateBadge.className = 'engine-badge eval-offline';
+      evalStateBadge.textContent = '\u23f8 Disabled';
+    } else if (last && last.source === 'adk_gemini') {
+      evalStateBadge.className = 'engine-badge eval-fresh';
+      evalStateBadge.textContent = '\u2728 Advice Published';
+    } else if (last) {
+      evalStateBadge.className = 'engine-badge eval-offline';
+      evalStateBadge.textContent = '\ud83e\udd16 Offline Fallback';
+    } else {
+      evalStateBadge.className = 'engine-badge';
+      evalStateBadge.textContent = 'Idle';
+    }
+
+    // Only re-render the notes when they actually change, so the user can scroll
+    // and select text without the 500ms poll wiping it out.
+    const notes = ev.coaching_notes || '';
+    if (notes !== rawEvalNotes) {
+      renderEvalNotes(notes);
+    }
+  }
+
   function renderLiveState(state) {
     cachedState = state;
 
@@ -820,6 +958,8 @@
       headerTick.textContent = '--';
     }
     headerCycles.textContent = state.total_ticks_processed || '0';
+
+    renderEvaluator(state.evaluator);
 
     const conn = state.server_connection || {};
     const isWsConnected = Boolean(state.server_connected || conn.connected);
@@ -1169,6 +1309,9 @@
   if (btnViewSkills && skillsModal) {
     btnViewSkills.addEventListener('click', async () => {
       skillsModal.style.display = 'flex';
+      if (skillsModalTitle) {
+        skillsModalTitle.textContent = '\ud83d\udcd6 Cat Agent Skills & Tactical Hunting Manual (actor_skills.md)';
+      }
       skillsManualContent.textContent = 'Loading skills manual from server...';
       const res = await api('/api/agent/skills');
       if (res && res.content) {
@@ -1424,6 +1567,71 @@
   });
 
   // Start polling on boot
+  // Event Listeners - Box 6: Strategic Evaluator
+  if (sliderEvalInterval) {
+    sliderEvalInterval.addEventListener('input', () => {
+      isDraggingEvalSlider = true;
+      evalIntervalBadge.textContent = sliderEvalInterval.value + ' ticks';
+    });
+    sliderEvalInterval.addEventListener('change', async () => {
+      await api('/api/agent/evaluator/interval', 'POST', {
+        interval: parseInt(sliderEvalInterval.value, 10),
+        enabled: checkEvalEnabled ? checkEvalEnabled.checked : true,
+      });
+      isDraggingEvalSlider = false;
+      await pollAgentState();
+    });
+  }
+
+  if (checkEvalEnabled) {
+    checkEvalEnabled.addEventListener('change', async () => {
+      await api('/api/agent/evaluator/interval', 'POST', {
+        interval: parseInt(sliderEvalInterval.value, 10),
+        enabled: checkEvalEnabled.checked,
+      });
+      await pollAgentState();
+    });
+  }
+
+  if (btnRunEvalNow) {
+    btnRunEvalNow.addEventListener('click', async () => {
+      const original = btnRunEvalNow.textContent;
+      btnRunEvalNow.disabled = true;
+      btnRunEvalNow.textContent = '\u23f3 Evaluating...';
+      try {
+        await api('/api/agent/evaluator/run', 'POST', {});
+        await pollAgentState();
+      } finally {
+        btnRunEvalNow.disabled = false;
+        btnRunEvalNow.textContent = original;
+      }
+    });
+  }
+
+  if (btnCopyEvalNotes) {
+    btnCopyEvalNotes.addEventListener('click', () => {
+      navigator.clipboard.writeText(rawEvalNotes || '').then(() => {
+        flashCopied(btnCopyEvalNotes, '\u2713 Copied!');
+      });
+    });
+  }
+
+  if (btnViewEvalSkills && skillsModal) {
+    btnViewEvalSkills.addEventListener('click', async () => {
+      skillsModal.style.display = 'flex';
+      if (skillsModalTitle) {
+        skillsModalTitle.textContent = '\ud83e\udde0 Cat Evaluator \u2014 Long-Horizon Advisory Manual (eval_skills.md)';
+      }
+      skillsManualContent.textContent = 'Loading evaluator manual from server...';
+      const res = await api('/api/agent/evaluator/skills');
+      if (res && res.content) {
+        skillsManualContent.textContent = res.content;
+      } else {
+        skillsManualContent.textContent = 'Failed to load evaluator manual from server.';
+      }
+    });
+  }
+
   pollIntervalId = setInterval(pollAgentState, 500);
   pollAgentState();
 })();

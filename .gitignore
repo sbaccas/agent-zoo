@@ -43,3 +43,6 @@ htmlcov/
 .env
 .env.example
 *.env
+
+# Cat agent runtime scratch (per-game transcript & coaching notes)
+actors/cat/runtime/

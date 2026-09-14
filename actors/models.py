@@ -38,7 +38,12 @@ class CatTacticalDecision(BaseModel):
 
 
 class HistoryWindowRequest(BaseModel):
-    history_window_size: int = Field(default=3, ge=1, le=50, description="Sliding window size N for history sent to LLM")
+    history_window_size: int = Field(default=25, ge=1, le=50, description="Sliding window size N for history sent to LLM")
+
+
+class EvalIntervalRequest(BaseModel):
+    interval: int = Field(default=100, ge=1, le=10000, description="Ticks of play between long-horizon evaluations")
+    enabled: Optional[bool] = Field(default=None, description="Toggle the reflexion loop on or off; omit to leave unchanged")
 
 
 class InterrogateRequest(BaseModel):
