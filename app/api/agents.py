@@ -102,6 +102,8 @@ async def get_agent_observation(sim_id: str, agent_id: str):
         visible_entities=visible,
         legal_actions=legal_actions,
         capabilities=capabilities,
+        score=sim.scheduler.scores.get(agent_id, 0),
+        scoreboard=sim.scheduler.get_scoreboard(),
     )
 
 

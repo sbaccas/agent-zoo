@@ -500,9 +500,22 @@ def test_transcript_records_are_compact():
     records = store.read_transcript_records()
     assert len(records) == 1
     rec = records[0]
-    assert set(rec) == {"tick", "x", "y", "facing", "action", "thought", "source", "visible"}
+    assert set(rec) == {
+        "tick",
+        "x",
+        "y",
+        "facing",
+        "action",
+        "thought",
+        "source",
+        "visible",
+        "score",
+    }
     assert rec["tick"] == 1
     assert rec["action"] in ("stay", "north", "south", "east", "west", "lunge", "attack")
+    # The evaluator infers hit/miss from the score delta across records, so the
+    # counter must survive compaction rather than being dropped as noise.
+    assert isinstance(rec["score"], int)
 
 
 def test_evaluator_interval_is_adjustable():
@@ -603,3 +616,173 @@ def test_state_endpoint_exposes_evaluator():
     assert "evaluator" in data
     assert data["evaluator"]["interval"] == 100
     assert data["evaluator"]["enabled"] is True
+
+
+# ---------------------------------------------------------------------------
+# Outcome feedback: the score must survive the whole path from the game server
+# to the text the model actually reads.
+# ---------------------------------------------------------------------------
+
+
+def _score_obs(tick, score=0, scoreboard=None, action_hint=None):
+    payload = _obs(tick)
+    payload["score"] = score
+    payload["scoreboard"] = scoreboard if scoreboard is not None else {"cat-1": score}
+    if action_hint:
+        payload["legal_actions"] = action_hint
+    return payload
+
+
+def test_observation_model_accepts_score_and_scoreboard():
+    """The WebSocket path splats the raw payload straight into Observation."""
+    obs = Observation(**_score_obs(1, score=3, scoreboard={"cat-1": 3, "cat-2": 1}))
+    assert obs.score == 3
+    assert obs.scoreboard == {"cat-1": 3, "cat-2": 1}
+
+
+def test_observation_score_defaults_to_zero_when_absent():
+    """Older payloads without a score must not blow up the agent."""
+    obs = Observation(**_obs(1))
+    assert obs.score == 0
+    assert obs.scoreboard == {}
+
+
+def test_score_reaches_history_and_transcript():
+    client = TestClient(app)
+    client.post("/act", json=_score_obs(1, score=0))
+    client.post("/act", json=_score_obs(2, score=1))
+
+    assert state.history[-1]["observation"]["score"] == 1
+    records = store.read_transcript_records()
+    assert [r["score"] for r in records] == [0, 1]
+
+
+def test_http_sync_forwards_score_from_game_server():
+    """The polled path whitelists fields, so it can silently drop new ones.
+
+    The WebSocket path splats the payload wholesale and would keep working,
+    which is exactly what makes a regression here easy to miss.
+    """
+    import asyncio
+    from unittest.mock import AsyncMock, patch
+
+    import actors.cat.api as cat_api
+
+    server_payload = {
+        "simulation_id": "sim-test",
+        "tick": 7,
+        "round": 1,
+        "self": {"id": "cat-1", "position": {"x": 2, "y": 2}, "facing": "east"},
+        "visible_entities": [],
+        "legal_actions": ["stay", "north", "south", "east", "west"],
+        "capabilities": {"attack_range": 2, "vision_radius": 4},
+        "score": 5,
+        "scoreboard": {"cat-1": 5, "cat-2": 2},
+    }
+
+    mock_resp = AsyncMock()
+    mock_resp.status_code = 200
+    mock_resp.json = lambda: server_payload
+
+    with patch("httpx.AsyncClient.get", new=AsyncMock(return_value=mock_resp)):
+        ok = asyncio.run(cat_api.sync_live_observation("cat-1"))
+
+    assert ok is True, "sync failed outright; the assertions below would be vacuous"
+    assert state.latest_observation["score"] == 5
+    assert state.latest_observation["scoreboard"] == {"cat-1": 5, "cat-2": 2}
+
+
+def _capture_prompt(obs_payload, history, window=25):
+    """Run the real prompt builder, intercepting the message bound for Gemini."""
+    import asyncio
+    import os
+    from unittest.mock import AsyncMock, patch
+
+    from actors.cat import actor
+
+    captured = {}
+
+    async def fake_run_async(*, user_id, session_id, new_message):
+        captured["prompt"] = new_message.parts[0].text
+        return
+        yield  # noqa: unreachable -- makes this an async generator
+
+    env = dict(os.environ)
+    env["ENABLE_LIVE_LLM_TESTS"] = "1"
+    with patch.dict(os.environ, env, clear=True), \
+            patch.object(actor, "has_gemini_credentials", lambda: True), \
+            patch.object(actor.session_service, "delete_session", new=AsyncMock()), \
+            patch.object(actor.session_service, "create_session", new=AsyncMock()), \
+            patch.object(actor.adk_runner, "run_async", new=fake_run_async):
+        asyncio.run(
+            actor.query_adk_gemini(
+                Observation(**obs_payload),
+                history=history,
+                agent_id="cat-1",
+                history_window_size=window,
+            )
+        )
+    return captured.get("prompt", "")
+
+
+def test_score_is_rendered_into_every_history_line():
+    """Without a per-tick score the model cannot compute a delta.
+
+    The history renderer emits a hand-picked subset of each observation, so a
+    field present in the payload is not necessarily present in the prompt. The
+    current score alone is useless -- there is nothing to compare it against --
+    so the value must appear on each historical line.
+    """
+    history = [
+        {"tick": 10, "observation": _score_obs(10, score=0),
+         "response": {"action": "attack", "thought": "swing"}},
+        {"tick": 11, "observation": _score_obs(11, score=1),
+         "response": {"action": "east", "thought": "reposition"}},
+    ]
+    prompt = _capture_prompt(_score_obs(12, score=1), history)
+
+    assert prompt, "prompt was never built; the interception point has moved"
+    assert "Tick 10" in prompt and "Tick 11" in prompt
+    # The delta 0 -> 1 straddling the attack is the entire signal.
+    assert "SCORE: 0" in prompt
+    assert "SCORE: 1" in prompt
+
+
+def test_current_score_and_rivals_are_stated_in_the_prompt():
+    prompt = _capture_prompt(
+        _score_obs(12, score=4, scoreboard={"cat-1": 4, "cat-2": 9}), history=[]
+    )
+
+    assert "YOUR SCORE: 4" in prompt
+    assert "cat-2: 9" in prompt
+    assert "cat-1: 4" not in prompt.split("Rival Cats:")[1].split("\n")[0], (
+        "the cat's own score was listed among its rivals"
+    )
+
+
+def test_prompt_does_not_interpret_the_outcome_for_the_model():
+    """Tripwire: the prompt should hand over raw state, not a verdict.
+
+    The design deliberately withholds any hit/miss label so the model infers the
+    outcome by diffing the counter itself. This checks for the specific phrasings
+    from the rejected 'last_action_result' approach.
+
+    It is a tripwire, not a proof. Narration cannot be enumerated, so a novel
+    phrasing will slip past this test. Treat a pass as "the known regression did
+    not recur", not as "the prompt is free of interpretation".
+    """
+    history = [
+        {"tick": 10, "observation": _score_obs(10, score=0),
+         "response": {"action": "attack", "thought": "swing"}},
+    ]
+    prompt = _capture_prompt(_score_obs(11, score=0), history).lower()
+
+    assert prompt, "prompt was never built; these assertions would pass vacuously"
+    verdicts = (
+        "you missed", "you hit", "attack missed", "attack hit",
+        "last action result", "struck nothing", "hit nothing",
+        "did not connect", "was a miss", "was a hit", "connected with",
+        "your attack failed", "outcome:", "result of your last",
+    )
+    for verdict in verdicts:
+        assert verdict not in prompt, f"prompt is interpreting the outcome: {verdict!r}"

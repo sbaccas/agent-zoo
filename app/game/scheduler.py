@@ -1,7 +1,7 @@
 import logging
 import math
 import random
-from typing import List, Optional
+from typing import Dict, List, Optional
 import httpx
 from actors.cat.api import act as cat_agent_act, Observation as CatObservation
 from actors.mouse.heuristic import act as mouse_agent_act, Observation as MouseObservation
@@ -24,8 +24,24 @@ class Scheduler:
         self.tick: int = 0
         self.round: int = 0
         self.captures: int = 0
+        # Per-cat cumulative capture counts, keyed by entity id. Kept separate from
+        # the global `captures` total because an agent diffing a *shared* counter
+        # would credit itself for a rival cat's kill and reinforce its own misses.
+        self.scores: Dict[str, int] = {}
         self.events: List[GameEvent] = []
         self.consecutive_http_errors: dict = {}
+
+    def get_scoreboard(self) -> Dict[str, int]:
+        """Cumulative captures for every cat on the board, including those on zero.
+
+        Cats absent from `self.scores` have simply not scored yet; they must still
+        appear so the agent can see a complete, stable leaderboard from tick 1.
+        """
+        return {
+            e.id: self.scores.get(e.id, 0)
+            for e in self.entity_manager.entities.values()
+            if e.type == EntityType.CAT
+        }
 
     def step_logical_clock(self) -> int:
         self.tick += 1
@@ -104,6 +120,10 @@ class Scheduler:
             "capabilities": capabilities,
             "visible_entities": visible,
             "legal_actions": legal_actions,
+            # Raw outcome state. Deliberately not interpreted: the agent infers
+            # hit/miss by diffing its own `score` against the previous tick.
+            "score": self.scores.get(entity.id, 0),
+            "scoreboard": self.get_scoreboard(),
         }
 
     async def execute_simulation_step(self, skip_entity_id: Optional[str] = None, advance_clock: bool = True) -> int:
@@ -192,6 +212,7 @@ class Scheduler:
                     ))
                     if res.affected_entities:
                         self.captures += len(res.affected_entities)
+                        self.scores[cat.id] = self.scores.get(cat.id, 0) + len(res.affected_entities)
                         for victim_id in res.affected_entities:
                             victim = self.entity_manager.entities.get(victim_id)
                             v_pos = f"({victim.position.x}, {victim.position.y})" if victim else "?"

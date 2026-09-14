@@ -15,12 +15,17 @@ scratch data for a single game and is wiped whenever the game resets.
 from datetime import datetime, timezone
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger("cat_agent")
 
-RUNTIME_DIR = Path(__file__).parent / "runtime"
+# Overridable so that a test run cannot share these files with a live workbench
+# server. Both resolve the same module-level constant, so without an override a
+# `pytest` run truncates the running agent's transcript, and the running agent
+# appends records into the middle of a test. Tests point this at a temp dir.
+RUNTIME_DIR = Path(os.environ.get("CAT_AGENT_RUNTIME_DIR") or (Path(__file__).parent / "runtime"))
 TRANSCRIPT_PATH = RUNTIME_DIR / "transcript.jsonl"
 COACHING_NOTES_PATH = RUNTIME_DIR / "coaching_notes.md"
 
@@ -66,6 +71,9 @@ def _compact_record(exchange: Dict[str, Any]) -> Dict[str, Any]:
         "thought": resp.get("thought"),
         "source": resp.get("source") or exchange.get("source"),
         "visible": visible,
+        # Cumulative captures at this tick. The evaluator reads the whole arc, so
+        # it can see exactly which attacks converted and which swung at nothing.
+        "score": obs.get("score", 0),
     }
 
 

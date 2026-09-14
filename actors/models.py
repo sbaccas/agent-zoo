@@ -9,6 +9,11 @@ class Observation(BaseModel):
     visible_entities: List[Dict[str, Any]] = []
     legal_actions: List[str] = []
     capabilities: Optional[Dict[str, Any]] = None
+    # Cumulative captures for this cat, and the full per-cat leaderboard. These are
+    # raw counters: the agent infers whether an attack landed by diffing `score`
+    # against the previous tick, rather than being told "hit" or "miss".
+    score: int = 0
+    scoreboard: Dict[str, int] = Field(default_factory=dict)
 
 
 class ActionResponse(BaseModel):

@@ -285,23 +285,28 @@ async def query_adk_gemini(
             entities = obs.visible_entities
             legal = obs.legal_actions or ["stay", "north", "south", "east", "west"]
 
-            # Format N-tick sliding context window: recent moves and reasons
+            # Format N-tick sliding context window: recent moves and reasons.
+            # The running score is included on every line on purpose -- the agent
+            # determines whether an attack landed by comparing this value across
+            # consecutive ticks, so a single current value would be useless.
             window_size = max(1, history_window_size)
             recent_slice = history[-window_size:] if history else []
             history_lines = []
             for h in recent_slice:
+                h_obs = h.get("observation", {})
                 h_tick = h.get("tick", "?")
-                h_self = h.get("observation", {}).get("self", {})
+                h_self = h_obs.get("self", {})
                 h_pos = h_self.get("position", {})
                 h_facing = h_self.get("facing", "north")
-                h_vis = h.get("observation", {}).get("visible_entities", [])
+                h_vis = h_obs.get("visible_entities", [])
+                h_score = h_obs.get("score", 0)
                 h_resp = h.get("response", {})
                 h_act = (h_resp.get("action") or "stay").upper()
                 h_thought = h_resp.get("thought", "")
                 vis_info = f"{len(h_vis)} visible ({[m.get('id') for m in h_vis]})" if h_vis else "0 visible"
                 history_lines.append(
                     f"  • Tick {h_tick}: Pos ({h_pos.get('x',0)}, {h_pos.get('y',0)}) facing {h_facing}. "
-                    f"Context: {vis_info}. Move: {h_act} (Reason: \"{h_thought}\")"
+                    f"SCORE: {h_score}. Context: {vis_info}. Move: {h_act} (Reason: \"{h_thought}\")"
                 )
 
             history_context = ""
@@ -333,6 +338,10 @@ async def query_adk_gemini(
             atk_cd = caps.get("attack_cooldown", 3)
             lunge_cd = caps.get("lunge_cooldown", 2)
 
+            # Rivals only; the cat's own score is already stated on its own line.
+            rivals = {k: v for k, v in (obs.scoreboard or {}).items() if k != obs.self.get("id", agent_id)}
+            rival_text = ", ".join(f"{cid}: {sc}" for cid, sc in sorted(rivals.items())) if rivals else "none"
+
             prompt = (
                 f"{coaching_context}"
                 f"{history_context}"
@@ -340,6 +349,11 @@ async def query_adk_gemini(
                 f"Agent ID: {obs.self.get('id', agent_id)}\n"
                 f"Current Position: (x={pos.get('x', 0)}, y={pos.get('y', 0)})\n"
                 f"Current Facing: {facing}\n"
+                f"YOUR SCORE: {obs.score} total captures this game.\n"
+                f"Rival Cats: {rival_text}\n"
+                f"SCORING: Your score rises by 1 for every mouse your slash kills, and never falls.\n"
+                f"  Compare the SCORE values across the ticks listed above against the moves you made.\n"
+                f"  That comparison is your only evidence of whether an attack actually connected.\n"
                 f"Dynamic Capabilities & Range Parameters:\n"
                 f"  • Slash Attack Range (`attack`): reaches {atk_range} tile(s) in an expanding 60° sweeping cone forward! (Strikes all targets across range 1 to {atk_range} inside the sweeping forward cone arc)\n"
                 f"  • Vision Perception Radius: {vision_rad} tiles\n"

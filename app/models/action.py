@@ -40,6 +40,10 @@ class ObservationResponse(BaseModel):
     visible_entities: List[Entity]
     legal_actions: List[ActionType]
     capabilities: Optional[Dict[str, Any]] = None
+    # Cumulative captures for this agent, and for every cat on the board. Raw
+    # counters only -- the agent infers hit/miss by diffing across ticks.
+    score: int = 0
+    scoreboard: Dict[str, int] = Field(default_factory=dict)
 
 
 

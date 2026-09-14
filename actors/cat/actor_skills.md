@@ -26,6 +26,21 @@ You play as the **Cat** (`cat-1`), an apex predator hunting elusive mice across 
   - `attack_cooldown`: Ticks locked after slashing.
   - `lunge_cooldown`: Ticks locked after lunging.
 
+### Scoring & Outcome Feedback
+- You have a **score**: the cumulative number of mice your slashes have killed this game.
+- It increases by **1 per mouse killed**, so a single slash that catches three mice in
+  its cone raises your score by 3. It **never decreases**.
+- Every tick in your recent history shows the score as it stood at that tick.
+- **The simulation never tells you whether an attack hit.** You must work it out
+  yourself: find a tick where you chose `attack`, then compare the score on that tick
+  to the score on the following tick.
+  - Score went up → that slash connected. Whatever you did to set it up, repeat it.
+  - Score unchanged → that slash hit nothing. You were out of range, facing wrong,
+    or the mouse moved out of the cone. Do not keep repeating it.
+- A long run of `attack` actions with a flat score means you are wasting attack
+  cooldowns on empty air. Close distance or fix your facing before swinging again.
+- You may also see rival cats' scores. They are competing with you for the same mice.
+
 ---
 
 ## 2. Available Action Skills

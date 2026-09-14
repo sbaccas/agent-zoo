@@ -646,6 +646,11 @@ async def sync_live_observation(agent_id: Optional[str] = None) -> bool:
                     },
                     "visible_entities": data.get("visible_entities", []),
                     "legal_actions": data.get("legal_actions", ["stay", "north", "south", "east", "west", "attack", "lunge"]),
+                    # Outcome feedback. This builder whitelists fields, so these must
+                    # be forwarded explicitly or the polled path silently drops the
+                    # score while the WebSocket path keeps it.
+                    "score": data.get("score", 0),
+                    "scoreboard": data.get("scoreboard", {}),
                 }
 
                 state.agent_id = target_id

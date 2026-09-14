@@ -40,6 +40,21 @@ Actions are rate-limited by cooldowns (`move_cooldown`, `attack_cooldown`,
 `lunge_cooldown`) supplied in the Cat's capabilities. A spent action locks the Cat
 for some number of ticks, so a wasted action costs more than the tick it occupied.
 
+### The Score
+
+Every tick in the transcript carries the Cat's cumulative **score** — the number of
+mice its slashes have killed so far this game. It rises by one per mouse killed and
+never falls.
+
+This is the only record of whether the Cat is actually catching anything. The
+transcript does not label attacks as hits or misses; the score is what distinguishes
+them. An `attack` followed by a rise in score connected. An `attack` followed by an
+unchanged score struck empty air.
+
+Because you see the whole game rather than a few ticks, you can see things the Cat
+cannot: whether its accuracy is improving, which approaches precede its kills, and
+whether it is burning attack cooldowns on nothing.
+
 ---
 
 ## 2. Your Role

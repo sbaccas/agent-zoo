@@ -17,12 +17,16 @@ logger = logging.getLogger("simulation")
 
 
 class SimulationSnapshot:
-    def __init__(self, tick: int, round: int, captures: int, entities: list, events: list):
+    def __init__(self, tick: int, round: int, captures: int, entities: list, events: list,
+                 scores: Optional[dict] = None):
         self.tick = tick
         self.round = round
         self.captures = captures
         self.entities = entities
         self.events = events
+        # Per-cat scores must rewind with everything else, or a step-back leaves
+        # scores inflated while the mice come back to life.
+        self.scores = dict(scores or {})
 
 
 class Simulation:
@@ -68,6 +72,7 @@ class Simulation:
             captures=self.scheduler.captures,
             entities=[e.model_copy(deep=True) for e in self.entity_manager.entities.values()],
             events=list(self.scheduler.events),
+            scores=dict(self.scheduler.scores),
         )
         self.history.append(snapshot)
         if len(self.history) > self.max_history:
@@ -145,6 +150,7 @@ class Simulation:
             self.scheduler.tick = snapshot.tick
             self.scheduler.round = snapshot.round
             self.scheduler.captures = snapshot.captures
+            self.scheduler.scores = dict(snapshot.scores)
             self.scheduler.events = list(snapshot.events)
             self.entity_manager.entities = {
                 e.id: e.model_copy(deep=True) for e in snapshot.entities
@@ -171,6 +177,7 @@ class Simulation:
             self.scheduler.tick = 0
             self.scheduler.round = 0
             self.scheduler.captures = 0
+            self.scheduler.scores.clear()
             self.scheduler.events.clear()
             self.status = SimulationStatus.CREATED
 
