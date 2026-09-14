@@ -70,6 +70,32 @@ A living backlog tracking architectural initiatives, gameplay mechanics, and age
   - Predator pack coordination (e.g. Cat-1 flanks while Cat-2 flushes prey).
   - Prey alarm calls alerting nearby mice of approaching predators.
 
+### `AI-04`: Trajectory History Retroactively Relabels Fallback Ticks as Gemini
+- **Status**: 🐞 Bug — Backlog (Low Effort, Root Cause Identified)
+- **Target**: Cat Workbench UI (`actors/cat/static/workbench.js`)
+- **Symptom**: When a Gemini request fails and the tick is served by the heuristic
+  fallback, the affected rows in the trajectory history are labelled
+  `Fallback (Auth Error)` as expected — but the moment credentials or connectivity
+  are restored, those **same historical rows flip to `ADK Gemini`**. Past ticks
+  change their attribution retroactively. Intermittent in practice because it is
+  only visible if you happen to be watching the history table across an auth recovery.
+- **Root Cause**: The render predicate ORs the per-item source with the *current,
+  global* auth flag, so a healthy auth state overrides what each tick actually recorded:
+  ```js
+  // workbench.js:531 (history rows) and :448 (current response badge)
+  const itemIsAdk = (item.source === 'adk_gemini' || hasAuth) && !isOverride;
+  //                                              ^^^^^^^^^^^ current state, not the tick's
+  ```
+  `hasAuth` is recomputed from `cachedState` on every render, so every past row is
+  re-evaluated against the present.
+- **Data Integrity**: ✅ Unaffected. The server records the true per-tick `source`
+  in both `state.history[i].source` and the on-disk transcript. This is purely a
+  display defect — but it makes the history table misreport which ticks Gemini
+  actually drove, which undermines its use for debugging the reflexion loop.
+- **Fix**: Drop `|| hasAuth` from both predicates so the badge reflects the recorded
+  source. Needs a third state so a genuine "deliberating / unknown" tick is not
+  mislabelled as a fallback, plus a cachebuster bump on `workbench.js`.
+
 ---
 
 ## 🎮 Game Features
