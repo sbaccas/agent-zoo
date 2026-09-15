@@ -303,6 +303,7 @@ def build_decision_prompt(
     agent_id: str = "cat-1",
     history_window_size: int = 3,
     capture: Optional[Dict[str, Any]] = None,
+    commander_directive: Optional[Dict[str, Any]] = None,
 ) -> str:
     """Assembles the exact user-turn text handed to Gemini for one decision.
 
@@ -310,6 +311,13 @@ def build_decision_prompt(
     without a network call. `query_adk_gemini` short-circuits under pytest and
     without credentials, which previously made the prompt -- the thing the whole
     inspector exists to show -- unreachable from a test.
+
+    Three advisory sources feed the decision, in ascending order of authority:
+    the evaluator's standing orders (long horizon, published to disk), the recent
+    history window, and the commander's live radio order. The commander block is
+    placed LAST, immediately before the model answers, because that is the
+    position a model weights most heavily -- and the reported symptom was
+    precisely that commander orders were being ignored.
 
     When `capture` is supplied it is filled in as an out-parameter with the
     prompt broken down by contributing source. It is an out-parameter rather
@@ -399,14 +407,41 @@ def build_decision_prompt(
         f"TACTICAL RULE: If 'attack' is legal and prey is within your {atk_range}-tile forward slash range (or if attack range is very large), prioritize 'attack' to instantly strike prey! Choose the single best action strictly from legal actions."
     )
 
-    prompt = f"{coaching_context}{history_context}{observation_context}"
+    # The commander's live radio order. Deliberately placed last: it is the most
+    # authoritative input and the reported failure was that it got ignored, so
+    # it sits immediately before the model commits to an action.
+    #
+    # Raw order text only. The issuing tick and its age are stated as plain
+    # numbers so the model can judge staleness itself; no "this order is old"
+    # verdict is supplied.
+    commander_context = ""
+    directive_text = (commander_directive or {}).get("directive") or ""
+    if directive_text.strip():
+        issued_tick = (commander_directive or {}).get("tick")
+        if isinstance(issued_tick, int):
+            age = max(0, obs.tick - issued_tick)
+            issued_line = f"Issued at tick {issued_tick}; {age} tick(s) ago.\n"
+        else:
+            issued_line = ""
+        commander_context = (
+            "\n--- LIVE ORDER FROM YOUR COMMANDER (RADIO) ---\n"
+            "A human commander is watching this game and has radioed you directly.\n"
+            f"{issued_line}"
+            "This order OUTRANKS your evaluator's standing orders and your own\n"
+            "judgement. It stands until the commander replaces or cancels it.\n\n"
+            f'  COMMANDER: "{directive_text.strip()}"\n\n'
+            "Comply this tick if a legal action does so. If no legal action complies\n"
+            "yet, choose the legal action that makes the most progress toward\n"
+            "complying, and state in `thought` how it serves the order. Only\n"
+            "disregard the order if following it is impossible, and say why.\n"
+        )
+
+    prompt = f"{coaching_context}{history_context}{observation_context}{commander_context}"
 
     if capture is not None:
         # Recorded as separate sections rather than one blob so the
-        # workbench can show which source contributed what. The
-        # commander entry is the interesting one: it is reported as
-        # not delivered, because query_adk_gemini has no parameter for
-        # it and the decision prompt genuinely never receives it.
+        # workbench can show which source contributed what -- and, just as
+        # importantly, which source contributed nothing on this tick.
         capture.update({
             "built_at_tick": obs.tick,
             "model": getattr(adk_agent, "model", "unknown"),
@@ -424,13 +459,12 @@ def build_decision_prompt(
                     "text": coaching_context or "(no coaching notes published yet)",
                 },
                 "commander_directive": {
-                    "label": "Commander: live directive from the radio",
-                    "delivered": False,
-                    "text": (
-                        "NOT DELIVERED. query_adk_gemini() accepts no directive "
-                        "argument, so commander messages never reach the decision "
-                        "prompt. They only reach the chat reply via "
-                        "interrogate_adk_gemini()."
+                    "label": "Commander: live order from the radio",
+                    "delivered": bool(commander_context),
+                    "text": commander_context or (
+                        "No standing order. The commander has not radioed one, or "
+                        "cancelled the last one. This is an empty radio, not a "
+                        "broken one."
                     ),
                 },
                 "history_window": {
@@ -456,9 +490,15 @@ async def query_adk_gemini(
     agent_id: str = "cat-1",
     history_window_size: int = 3,
     capture: Optional[Dict[str, Any]] = None,
+    commander_directive: Optional[Dict[str, Any]] = None,
 ) -> Tuple[Optional[CatTacticalDecision], str, Optional[str]]:
     """
     Queries Gemini via Google ADK using the skills handbook.
+
+    `commander_directive` is the human operator's standing radio order, shaped
+    `{"directive": str, "tick": int}`. Its absence from this signature was the
+    reason radio orders never influenced a decision: they reached only the chat
+    reply, never the tick loop.
 
     Returns:
       (decision, engine_source, engine_error)
@@ -496,6 +536,7 @@ async def query_adk_gemini(
                 agent_id=agent_id,
                 history_window_size=history_window_size,
                 capture=capture,
+                commander_directive=commander_directive,
             )
 
             msg = types.Content(role="user", parts=[types.Part.from_text(text=prompt)])
@@ -582,9 +623,13 @@ async def interrogate_adk_gemini(
     facing = obs.self.get("facing", "north") if obs else "north"
     tick = obs.tick if obs else 0
     round_num = obs.round if obs else 0
-    entities = obs.visible_entities if obs else []
-    caps = obs.capabilities if obs else {}
-    legal = obs.legal_actions if obs else []
+    # `or {}` / `or []` matter here, not just the `if obs` guard: these fields are
+    # Optional on the model and default to None. A radio message sent while the
+    # latest observation carried no capabilities crashed this endpoint outright
+    # on `caps.get(...)`.
+    entities = (obs.visible_entities or []) if obs else []
+    caps = (obs.capabilities or {}) if obs else {}
+    legal = (obs.legal_actions or []) if obs else []
 
     if "PYTEST_CURRENT_TEST" in os.environ and not os.environ.get("ENABLE_LIVE_LLM_TESTS"):
         return (

@@ -256,26 +256,21 @@ def test_capture_records_every_section_separately():
         assert isinstance(sec["text"], str) and sec["text"], f"{key} has no text"
 
 
-def test_commander_directive_is_reported_as_not_delivered():
-    """The finding the inspector exists to surface.
+def test_commander_section_reports_an_empty_radio_when_no_order_stands():
+    """`delivered` must track reality, not be hardcoded either way.
 
-    `query_adk_gemini` has no directive parameter, so commander radio messages
-    never reach the decision prompt -- they only reach the chat reply via
-    `interrogate_adk_gemini`. Until that plumbing exists, this section must keep
-    saying so.
+    This section used to be hardwired to False because `query_adk_gemini` had no
+    directive parameter at all. It does now, so False here has to mean "the
+    commander has not radioed anything", and nothing stronger. The delivered
+    case is covered in tests/test_commander_radio.py.
     """
     capture = {}
-    build_decision_prompt(_observation(), history=[], capture=capture)
+    build_decision_prompt(_observation(), history=[], commander_directive=None, capture=capture)
 
     commander = capture["sections"]["commander_directive"]
-    assert commander["delivered"] is False, (
-        "the inspector now claims commander directives reach the decision "
-        "prompt; if that is genuinely true the delivery path must be tested, "
-        "and if it is not, the UI is lying about the exact thing it was built "
-        "to expose"
-    )
+    assert commander["delivered"] is False
     assert commander["text"] not in capture["full_prompt"], (
-        "the not-delivered explanation leaked into the real prompt"
+        "the placeholder text leaked into the real prompt"
     )
 
 

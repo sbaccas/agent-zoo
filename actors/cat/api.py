@@ -109,6 +109,13 @@ class AgentWorkbenchState:
 
         # Decoupled Deliberation & System 1/2 Architecture (AI-02)
         self.active_directive: Optional[Dict[str, Any]] = None
+        # The human commander's standing radio order, deliberately kept in its OWN
+        # slot. It used to share `active_directive` with the model, but
+        # `_run_background_deliberation` overwrites that slot with Gemini's own
+        # decision every time it runs, so a commander order survived a tick or two
+        # at most. That single shared slot was the reason radio orders appeared to
+        # be ignored. Shaped `{"directive": str, "tick": int, "issued_at": str}`.
+        self.commander_directive: Optional[Dict[str, Any]] = None
         self.deliberation_task: Optional[asyncio.Task] = None
         self.latest_deliberated_decision: Optional[CatTacticalDecision] = None
         # Travels with the decision above. A background deliberation builds its
@@ -161,6 +168,7 @@ async def query_adk_gemini(obs: Observation) -> Optional[CatTacticalDecision]:
         agent_id=state.agent_id,
         history_window_size=state.history_window_size,
         capture=bundle,
+        commander_directive=state.commander_directive,
     )
     state.last_engine_source = source
     if decision is not None:
@@ -203,6 +211,7 @@ async def _run_background_deliberation(obs: Observation):
             agent_id=state.agent_id,
             history_window_size=state.history_window_size,
             capture=bundle,
+            commander_directive=state.commander_directive,
         )
         # NOTE: deliberately does NOT set `state.last_engine_source`.
         #
@@ -332,6 +341,11 @@ def reset_reflexion_state(current_tick: Optional[int] = None) -> None:
     # transcript, and it grows far faster, so it must not survive a reset.
     store.reset_prompts()
     state.latest_deliberated_prompt = None
+    # The commander's standing order goes too. It names positions and mouse IDs
+    # from a world that no longer exists, and once the tick counter rewinds to 0
+    # the order's stated age becomes permanently wrong. Re-radio it if it still
+    # applies.
+    state.commander_directive = None
     state.last_eval_dispatch_tick = int(current_tick or 0)
     state.last_eval_result = None
     # Drop any queued request; it was raised against the previous game's transcript.
@@ -1094,6 +1108,33 @@ def get_prompt_log_stats() -> Dict[str, Any]:
     return {"status": "ok", **store.prompt_log_size(), "path": str(store.PROMPTS_PATH)}
 
 
+@app.get("/api/agent/directive")
+def get_commander_directive() -> Dict[str, Any]:
+    """The commander's standing radio order, if one is in force.
+
+    Reported separately from `active_directive`, which holds the model's own
+    strategy. Conflating the two is what let the model erase the commander.
+    """
+    directive = state.commander_directive
+    if not directive:
+        return {"status": "ok", "directive": None, "age_ticks": None}
+    issued = directive.get("tick")
+    age = (state.active_tick - issued) if isinstance(issued, int) else None
+    return {"status": "ok", "directive": directive, "age_ticks": age}
+
+
+@app.delete("/api/agent/directive")
+def clear_commander_directive() -> Dict[str, Any]:
+    """Rescinds the standing radio order.
+
+    Orders stand until replaced or cancelled, so without this an order issued
+    once would steer the cat for the remainder of the game.
+    """
+    had = state.commander_directive is not None
+    state.commander_directive = None
+    return {"status": "ok", "cleared": had}
+
+
 @app.get("/api/agent/evaluator/skills")
 def get_evaluator_skills() -> Dict[str, str]:
     """The evaluator's instruction manual, distinct from the actor's."""
@@ -1136,17 +1177,21 @@ async def interrogate_agent(req: InterrogateRequest) -> InterrogateResponse:
         history=state.history,
         agent_id=state.agent_id,
         history_window_size=state.history_window_size,
-        active_directive=state.active_directive,
+        # A standing radio order outranks the model's own strategy, so the chat
+        # reply should answer in light of it rather than contradicting it.
+        active_directive=state.commander_directive or state.active_directive,
     )
 
     adopted = None
     if req.steer_directive:
-        state.active_directive = {
-            "strategy": "ROAMING",
+        # Its OWN slot, not `active_directive`. The model's background
+        # deliberation overwrites `active_directive` wholesale, which is exactly
+        # how commander orders used to get erased within a tick or two.
+        state.commander_directive = {
             "directive": clean_prompt,
-            "thought": f"Commander Directive: {clean_prompt}",
-            "source": "commander_prompt",
             "tick": state.active_tick,
+            "issued_at": datetime.now(timezone.utc).isoformat(),
+            "source": "commander_radio",
         }
         adopted = clean_prompt
 
