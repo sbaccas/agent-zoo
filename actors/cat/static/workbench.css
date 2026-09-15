@@ -1465,3 +1465,83 @@ body {
   color: #475569;
   border: 1px solid #cbd5e1;
 }
+
+/* ---- Gemini Payload Inspector ------------------------------------------ */
+/* Shows the exact prompt the model received for one decision, split by the
+   source that contributed each block. Sections that were NOT sent are styled
+   as loudly as the ones that were, because "nothing arrived here" is usually
+   the interesting finding. */
+
+.btn-payload {
+  margin-left: 6px;
+  color: #6b21a8;
+  border-color: #c084fc;
+  background-color: #faf5ff;
+}
+
+.btn-payload:hover {
+  background-color: #f3e8ff;
+  border-color: #a855f7;
+}
+
+.prompt-meta {
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  background-color: var(--bg-subtle);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 8px 12px;
+  margin-bottom: 12px;
+  line-height: 1.5;
+}
+
+.prompt-section {
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  margin-bottom: 8px;
+  background-color: var(--bg-card);
+  overflow: hidden;
+}
+
+.prompt-section > summary {
+  cursor: pointer;
+  padding: 8px 12px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  background-color: var(--bg-subtle);
+  user-select: none;
+  list-style: revert;
+}
+
+.prompt-section > summary:hover {
+  background-color: #e2e8f0;
+}
+
+/* A section that never made it into the prompt. */
+.prompt-section.not-delivered {
+  border-color: #fca5a5;
+}
+
+.prompt-section.not-delivered > summary {
+  background-color: #fef2f2;
+  color: var(--danger-color);
+}
+
+.prompt-section.not-delivered > summary:hover {
+  background-color: #fee2e2;
+}
+
+.prompt-section-body {
+  margin: 0;
+  padding: 10px 12px;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 320px;
+  overflow-y: auto;
+  border-top: 1px solid var(--border-color);
+}

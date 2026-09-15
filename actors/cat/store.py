@@ -28,6 +28,8 @@ logger = logging.getLogger("cat_agent")
 RUNTIME_DIR = Path(os.environ.get("CAT_AGENT_RUNTIME_DIR") or (Path(__file__).parent / "runtime"))
 TRANSCRIPT_PATH = RUNTIME_DIR / "transcript.jsonl"
 COACHING_NOTES_PATH = RUNTIME_DIR / "coaching_notes.md"
+# Full model inputs, one record per Gemini call, for the workbench's inspector.
+PROMPTS_PATH = RUNTIME_DIR / "prompts.jsonl"
 
 
 def _ensure_runtime_dir() -> None:
@@ -121,6 +123,80 @@ def read_transcript_records() -> List[Dict[str, Any]]:
 
 def transcript_tick_count() -> int:
     return len(read_transcript_records())
+
+
+def append_prompt(record: Dict[str, Any]) -> None:
+    """Records the full model input behind one Gemini decision.
+
+    Keyed by `applied_at_tick`: the tick whose decision this prompt actually
+    produced. That is deliberately not always the tick the prompt was built
+    from. In the decoupled path a deliberation starts during one tick and is
+    consumed a tick or more later, so `built_at_tick` is recorded separately.
+    The workbench inspector looks up by the applied tick, because that is the
+    row the user clicks in the trajectory.
+
+    Reflex ticks never call Gemini and so have no record here at all; that
+    absence is the honest representation and the UI offers no inspect button
+    for them.
+    """
+    try:
+        _ensure_runtime_dir()
+        with PROMPTS_PATH.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(record, separators=(",", ":")) + "\n")
+    except Exception as exc:
+        # Same contract as the transcript: diagnostics never break a tick.
+        logger.warning("Failed to append prompt record: %s", exc)
+
+
+def read_prompt_for_tick(tick: int) -> Optional[Dict[str, Any]]:
+    """Returns the prompt behind the decision applied at `tick`, if captured.
+
+    Scans backwards so that if a tick somehow has more than one record the
+    most recent wins, matching what the trajectory row ended up showing.
+    """
+    if not PROMPTS_PATH.exists():
+        return None
+    try:
+        with PROMPTS_PATH.open("r", encoding="utf-8") as fh:
+            lines = fh.readlines()
+    except Exception as exc:
+        logger.warning("Failed to read prompt log: %s", exc)
+        return None
+
+    for line in reversed(lines):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rec = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if rec.get("applied_at_tick") == tick:
+            return rec
+    return None
+
+
+def prompt_log_size() -> Dict[str, Any]:
+    """Byte size and record count, so the UI can warn before the file gets silly."""
+    if not PROMPTS_PATH.exists():
+        return {"bytes": 0, "records": 0}
+    try:
+        size = PROMPTS_PATH.stat().st_size
+        with PROMPTS_PATH.open("r", encoding="utf-8") as fh:
+            count = sum(1 for ln in fh if ln.strip())
+        return {"bytes": size, "records": count}
+    except Exception as exc:
+        logger.warning("Failed to stat prompt log: %s", exc)
+        return {"bytes": 0, "records": 0}
+
+
+def reset_prompts() -> None:
+    """Wipes the prompt log. Called whenever the game resets."""
+    try:
+        if PROMPTS_PATH.exists():
+            PROMPTS_PATH.unlink()
+    except Exception as exc:
+        logger.warning("Failed to reset prompt log: %s", exc)
 
 
 def write_coaching_notes(notes: str, tick_range: Optional[str] = None) -> None:

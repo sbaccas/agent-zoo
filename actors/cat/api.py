@@ -1,6 +1,6 @@
 from contextlib import asynccontextmanager
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 import logging
 import os
@@ -111,6 +111,10 @@ class AgentWorkbenchState:
         self.active_directive: Optional[Dict[str, Any]] = None
         self.deliberation_task: Optional[asyncio.Task] = None
         self.latest_deliberated_decision: Optional[CatTacticalDecision] = None
+        # Travels with the decision above. A background deliberation builds its
+        # prompt during one tick but the decision is consumed on a later one, so
+        # the prompt cannot be logged until we know which tick actually used it.
+        self.latest_deliberated_prompt: Optional[Dict[str, Any]] = None
         self.is_deliberating: bool = False
 
         # Reflexion loop: long-horizon evaluator subagent.
@@ -129,13 +133,34 @@ class AgentWorkbenchState:
 state = AgentWorkbenchState()
 
 
+def _record_prompt(
+    bundle: Optional[Dict[str, Any]],
+    applied_at_tick: Optional[int],
+    source: str,
+) -> None:
+    """Persists one captured prompt, stamped with the tick that consumed it.
+
+    `bundle` is empty when the model was never actually called (no credentials,
+    a pytest run, or a mocked query), so there is nothing to record.
+    """
+    if not bundle or applied_at_tick is None:
+        return
+    record = dict(bundle)
+    record["applied_at_tick"] = int(applied_at_tick)
+    record["source"] = source
+    record["recorded_at"] = datetime.now(timezone.utc).isoformat()
+    store.append_prompt(record)
+
+
 async def query_adk_gemini(obs: Observation) -> Optional[CatTacticalDecision]:
     """Wraps model execution, updating agent workbench diagnostic state."""
+    bundle: Dict[str, Any] = {}
     decision, source, reason = await model_query_adk_gemini(
         obs,
         history=state.history,
         agent_id=state.agent_id,
         history_window_size=state.history_window_size,
+        capture=bundle,
     )
     state.last_engine_source = source
     if decision is not None:
@@ -143,6 +168,8 @@ async def query_adk_gemini(obs: Observation) -> Optional[CatTacticalDecision]:
         # it survives long enough to be displayed.
         state.last_engine_error = None
         state.last_fallback_reason = None
+        # Synchronous path: built and applied on the same tick.
+        _record_prompt(bundle, obs.tick, source)
     else:
         state.last_fallback_reason = reason
         # Only surface it as an engine *error* if it really is one; a rejected
@@ -169,11 +196,13 @@ async def _run_background_deliberation(obs: Observation):
     """Executes Gemini LLM macro-deliberation in the background without stalling the game clock."""
     try:
         state.is_deliberating = True
+        bundle: Dict[str, Any] = {}
         decision, _source, reason = await model_query_adk_gemini(
             obs,
             history=state.history,
             agent_id=state.agent_id,
             history_window_size=state.history_window_size,
+            capture=bundle,
         )
         # NOTE: deliberately does NOT set `state.last_engine_source`.
         #
@@ -187,6 +216,9 @@ async def _run_background_deliberation(obs: Observation):
             state.last_engine_error = None
             state.last_fallback_reason = None
             state.latest_deliberated_decision = decision
+            # Logged by act_async, not here: only the consuming tick knows the
+            # `applied_at_tick` this prompt should be filed under.
+            state.latest_deliberated_prompt = bundle or None
             state.active_directive = {
                 "strategy": decision.strategy,
                 "target_mouse_id": decision.target_mouse_id,
@@ -296,6 +328,10 @@ def reset_reflexion_state(current_tick: Optional[int] = None) -> None:
     """
     store.reset_transcript()
     store.reset_coaching_notes()
+    # The prompt log is scoped to a single game for the same reason as the
+    # transcript, and it grows far faster, so it must not survive a reset.
+    store.reset_prompts()
+    state.latest_deliberated_prompt = None
     state.last_eval_dispatch_tick = int(current_tick or 0)
     state.last_eval_result = None
     # Drop any queued request; it was raised against the previous game's transcript.
@@ -327,6 +363,12 @@ async def act_async(obs: Observation, decoupled: bool = False) -> ActionResponse
         if state.latest_deliberated_decision and state.latest_deliberated_decision.action in legal:
             llm_decision = state.latest_deliberated_decision
             state.latest_deliberated_decision = None
+            # This is the moment the applied tick becomes known. The prompt was
+            # built during an earlier tick, which is why the record carries both
+            # `built_at_tick` and `applied_at_tick`. Clear it either way so a
+            # subsequent reflex tick cannot inherit a stale prompt.
+            _record_prompt(state.latest_deliberated_prompt, obs.tick, "adk_gemini")
+            state.latest_deliberated_prompt = None
             auto_action = llm_decision.action
             auto_thought = llm_decision.thought
             auto_meta = {
@@ -1017,6 +1059,39 @@ def set_evaluator_interval(req: EvalIntervalRequest) -> Dict[str, Any]:
         "interval": state.eval_interval,
         "enabled": state.eval_enabled,
     }
+
+
+@app.get("/api/agent/prompt/{tick}")
+def get_prompt_for_tick(tick: int) -> Dict[str, Any]:
+    """Returns the full model input behind the decision applied at `tick`.
+
+    A miss is not an error. Most ticks are decided by the System-1 reflex, which
+    never calls Gemini and therefore has no prompt to show. The response
+    distinguishes that expected case from an empty log so the UI can say
+    something truthful instead of just failing.
+    """
+    record = store.read_prompt_for_tick(tick)
+    if record:
+        return {"status": "ok", "tick": tick, "record": record}
+
+    size = store.prompt_log_size()
+    if size["records"] == 0:
+        detail = (
+            "No prompts have been captured yet. The log is wiped on game reset, "
+            "and only ticks decided by Gemini produce a record."
+        )
+    else:
+        detail = (
+            f"Tick {tick} has no captured prompt. It was almost certainly decided "
+            f"by the System-1 reflex heuristic, which never calls Gemini."
+        )
+    return {"status": "not_found", "tick": tick, "record": None, "detail": detail}
+
+
+@app.get("/api/agent/prompt-log/stats")
+def get_prompt_log_stats() -> Dict[str, Any]:
+    """Size of the prompt log, so the UI can show growth without downloading it."""
+    return {"status": "ok", **store.prompt_log_size(), "path": str(store.PROMPTS_PATH)}
 
 
 @app.get("/api/agent/evaluator/skills")

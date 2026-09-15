@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Cat Agent Workbench (Port 8001)</title>
-  <link rel="stylesheet" href="/static/workbench.css">
+  <link rel="stylesheet" href="/static/workbench.css?v=22">
 </head>
 <body>
   <div class="workbench-layout">
@@ -413,6 +413,24 @@
     </div>
   </div>
 
+  <!-- Gemini Prompt Inspector Modal -->
+  <div id="promptModal" class="wb-modal-overlay" style="display: none;">
+    <div class="wb-modal-dialog modal-lg">
+      <div class="wb-modal-header">
+        <div class="wb-modal-title" id="promptModalTitle">🔬 Gemini Payload</div>
+        <button id="btnClosePrompt" class="btn btn-sm" title="Close modal">✕</button>
+      </div>
+      <div class="wb-modal-body">
+        <div id="promptModalMeta" class="prompt-meta"></div>
+        <div id="promptModalSections"></div>
+      </div>
+      <div class="wb-modal-footer">
+        <button id="btnCopyPrompt" class="btn btn-sm">📋 Copy Full Prompt</button>
+        <button id="btnClosePromptFooter" class="btn btn-sm btn-primary">Close</button>
+      </div>
+    </div>
+  </div>
+
   <!-- API Key Config Modal -->
   <div id="apiKeyModal" class="wb-modal-overlay" style="display: none;">
     <div class="wb-modal-dialog">
@@ -495,6 +513,6 @@
     </div>
   </div>
 
-  <script src="/static/workbench.js?v=21"></script>
+  <script src="/static/workbench.js?v=22"></script>
 </body>
 </html>

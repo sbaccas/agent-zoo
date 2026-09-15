@@ -297,11 +297,165 @@ async def reset_adk_session(agent_id: str):
         pass
 
 
+def build_decision_prompt(
+    obs: Observation,
+    history: Optional[List[Dict[str, Any]]] = None,
+    agent_id: str = "cat-1",
+    history_window_size: int = 3,
+    capture: Optional[Dict[str, Any]] = None,
+) -> str:
+    """Assembles the exact user-turn text handed to Gemini for one decision.
+
+    Extracted from `query_adk_gemini` so the payload can be inspected and tested
+    without a network call. `query_adk_gemini` short-circuits under pytest and
+    without credentials, which previously made the prompt -- the thing the whole
+    inspector exists to show -- unreachable from a test.
+
+    When `capture` is supplied it is filled in as an out-parameter with the
+    prompt broken down by contributing source. It is an out-parameter rather
+    than part of the return value because three test modules mock this call
+    chain and assert on its arity.
+    """
+    pos = obs.self.get("position", {})
+    facing = obs.self.get("facing", "north")
+    entities = obs.visible_entities
+    legal = obs.legal_actions or ["stay", "north", "south", "east", "west"]
+
+    # Format N-tick sliding context window: recent moves and reasons.
+    # The running score is included on every line on purpose -- the agent
+    # determines whether an attack landed by comparing this value across
+    # consecutive ticks, so a single current value would be useless.
+    window_size = max(1, history_window_size)
+    recent_slice = history[-window_size:] if history else []
+    history_lines = []
+    for h in recent_slice:
+        h_obs = h.get("observation", {})
+        h_tick = h.get("tick", "?")
+        h_self = h_obs.get("self", {})
+        h_pos = h_self.get("position", {})
+        h_facing = h_self.get("facing", "north")
+        h_vis = h_obs.get("visible_entities", [])
+        h_score = h_obs.get("score", 0)
+        h_resp = h.get("response", {})
+        h_act = (h_resp.get("action") or "stay").upper()
+        h_thought = h_resp.get("thought", "")
+        vis_info = f"{len(h_vis)} visible ({[m.get('id') for m in h_vis]})" if h_vis else "0 visible"
+        history_lines.append(
+            f"  • Tick {h_tick}: Pos ({h_pos.get('x',0)}, {h_pos.get('y',0)}) facing {h_facing}. "
+            f"SCORE: {h_score}. Context: {vis_info}. Move: {h_act} (Reason: \"{h_thought}\")"
+        )
+
+    history_context = ""
+    if history_lines:
+        history_context = (
+            f"--- RECENT TACTICAL CONTEXT (Last {len(history_lines)} Ticks) ---\n"
+            + "\n".join(history_lines)
+            + "\n\n"
+        )
+
+    # Standing orders published by the evaluator subagent. These summarise a
+    # far longer horizon than the sliding window above, so they lead the
+    # prompt and frame the immediate decision rather than compete with it.
+    coaching_notes = store.read_coaching_notes()
+    coaching_context = ""
+    if coaching_notes:
+        coaching_context = (
+            "--- STANDING ORDERS FROM YOUR STRATEGIC EVALUATOR ---\n"
+            "These directives were derived from your full movement history over a much\n"
+            "longer horizon than you can personally recall. Honour them unless the\n"
+            "current observation gives you an immediate reason to override.\n"
+            f"{coaching_notes}\n\n"
+        )
+
+    caps = obs.capabilities or {}
+    atk_range = caps.get("attack_range", 2)
+    vision_rad = caps.get("vision_radius", 4)
+    move_cd = caps.get("move_cooldown", 3)
+    atk_cd = caps.get("attack_cooldown", 3)
+    lunge_cd = caps.get("lunge_cooldown", 2)
+
+    # Rivals only; the cat's own score is already stated on its own line.
+    rivals = {k: v for k, v in (obs.scoreboard or {}).items() if k != obs.self.get("id", agent_id)}
+    rival_text = ", ".join(f"{cid}: {sc}" for cid, sc in sorted(rivals.items())) if rivals else "none"
+
+    observation_context = (
+        f"--- CURRENT OBSERVATION (Tick {obs.tick}, Round {obs.round}) ---\n"
+        f"Agent ID: {obs.self.get('id', agent_id)}\n"
+        f"Current Position: (x={pos.get('x', 0)}, y={pos.get('y', 0)})\n"
+        f"Current Facing: {facing}\n"
+        f"YOUR SCORE: {obs.score} total captures this game.\n"
+        f"Rival Cats: {rival_text}\n"
+        f"SCORING: Your score rises by 1 for every mouse your slash kills, and never falls.\n"
+        f"  Compare the SCORE values across the ticks listed above against the moves you made.\n"
+        f"  That comparison is your only evidence of whether an attack actually connected.\n"
+        f"Dynamic Capabilities & Range Parameters:\n"
+        f"  • Slash Attack Range (`attack`): reaches {atk_range} tile(s) in an expanding 60° sweeping cone forward! (Strikes all targets across range 1 to {atk_range} inside the sweeping forward cone arc)\n"
+        f"  • Vision Perception Radius: {vision_rad} tiles\n"
+        f"  • Move Pacing / Lock: 1 tile every {move_cd} tick(s)\n"
+        f"  • Attack Recovery Lock: {atk_cd} tick(s)\n"
+        f"  • Lunge Recovery Lock: {lunge_cd} tick(s)\n"
+        f"Visible Entities in Vision Cone: {entities}\n"
+        f"Legal Actions this tick: {legal}\n"
+        f"TACTICAL RULE: If 'attack' is legal and prey is within your {atk_range}-tile forward slash range (or if attack range is very large), prioritize 'attack' to instantly strike prey! Choose the single best action strictly from legal actions."
+    )
+
+    prompt = f"{coaching_context}{history_context}{observation_context}"
+
+    if capture is not None:
+        # Recorded as separate sections rather than one blob so the
+        # workbench can show which source contributed what. The
+        # commander entry is the interesting one: it is reported as
+        # not delivered, because query_adk_gemini has no parameter for
+        # it and the decision prompt genuinely never receives it.
+        capture.update({
+            "built_at_tick": obs.tick,
+            "model": getattr(adk_agent, "model", "unknown"),
+            "agent_id": agent_id,
+            "history_window_size": window_size,
+            "sections": {
+                "system_instruction": {
+                    "label": "Skills manual (actor_skills.md)",
+                    "delivered": True,
+                    "text": get_skills_instruction(),
+                },
+                "coaching_notes": {
+                    "label": "Coach: standing orders from the evaluator",
+                    "delivered": bool(coaching_notes),
+                    "text": coaching_context or "(no coaching notes published yet)",
+                },
+                "commander_directive": {
+                    "label": "Commander: live directive from the radio",
+                    "delivered": False,
+                    "text": (
+                        "NOT DELIVERED. query_adk_gemini() accepts no directive "
+                        "argument, so commander messages never reach the decision "
+                        "prompt. They only reach the chat reply via "
+                        "interrogate_adk_gemini()."
+                    ),
+                },
+                "history_window": {
+                    "label": f"Recent tactical context (last {len(history_lines)} ticks)",
+                    "delivered": bool(history_context),
+                    "text": history_context or "(no history yet)",
+                },
+                "current_observation": {
+                    "label": "Current observation",
+                    "delivered": True,
+                    "text": observation_context,
+                },
+            },
+            "full_prompt": prompt,
+        })
+
+    return prompt
+
+
 async def query_adk_gemini(
     obs: Observation,
     history: Optional[List[Dict[str, Any]]] = None,
     agent_id: str = "cat-1",
     history_window_size: int = 3,
+    capture: Optional[Dict[str, Any]] = None,
 ) -> Tuple[Optional[CatTacticalDecision], str, Optional[str]]:
     """
     Queries Gemini via Google ADK using the skills handbook.
@@ -335,93 +489,18 @@ async def query_adk_gemini(
                 app_name="cat_agent_app", user_id=user_id, session_id=session_id
             )
 
-            pos = obs.self.get("position", {})
-            facing = obs.self.get("facing", "north")
-            entities = obs.visible_entities
             legal = obs.legal_actions or ["stay", "north", "south", "east", "west"]
-
-            # Format N-tick sliding context window: recent moves and reasons.
-            # The running score is included on every line on purpose -- the agent
-            # determines whether an attack landed by comparing this value across
-            # consecutive ticks, so a single current value would be useless.
-            window_size = max(1, history_window_size)
-            recent_slice = history[-window_size:] if history else []
-            history_lines = []
-            for h in recent_slice:
-                h_obs = h.get("observation", {})
-                h_tick = h.get("tick", "?")
-                h_self = h_obs.get("self", {})
-                h_pos = h_self.get("position", {})
-                h_facing = h_self.get("facing", "north")
-                h_vis = h_obs.get("visible_entities", [])
-                h_score = h_obs.get("score", 0)
-                h_resp = h.get("response", {})
-                h_act = (h_resp.get("action") or "stay").upper()
-                h_thought = h_resp.get("thought", "")
-                vis_info = f"{len(h_vis)} visible ({[m.get('id') for m in h_vis]})" if h_vis else "0 visible"
-                history_lines.append(
-                    f"  • Tick {h_tick}: Pos ({h_pos.get('x',0)}, {h_pos.get('y',0)}) facing {h_facing}. "
-                    f"SCORE: {h_score}. Context: {vis_info}. Move: {h_act} (Reason: \"{h_thought}\")"
-                )
-
-            history_context = ""
-            if history_lines:
-                history_context = (
-                    f"--- RECENT TACTICAL CONTEXT (Last {len(history_lines)} Ticks) ---\n"
-                    + "\n".join(history_lines)
-                    + "\n\n"
-                )
-
-            # Standing orders published by the evaluator subagent. These summarise a
-            # far longer horizon than the sliding window above, so they lead the
-            # prompt and frame the immediate decision rather than compete with it.
-            coaching_notes = store.read_coaching_notes()
-            coaching_context = ""
-            if coaching_notes:
-                coaching_context = (
-                    "--- STANDING ORDERS FROM YOUR STRATEGIC EVALUATOR ---\n"
-                    "These directives were derived from your full movement history over a much\n"
-                    "longer horizon than you can personally recall. Honour them unless the\n"
-                    "current observation gives you an immediate reason to override.\n"
-                    f"{coaching_notes}\n\n"
-                )
-
-            caps = obs.capabilities or {}
-            atk_range = caps.get("attack_range", 2)
-            vision_rad = caps.get("vision_radius", 4)
-            move_cd = caps.get("move_cooldown", 3)
-            atk_cd = caps.get("attack_cooldown", 3)
-            lunge_cd = caps.get("lunge_cooldown", 2)
-
-            # Rivals only; the cat's own score is already stated on its own line.
-            rivals = {k: v for k, v in (obs.scoreboard or {}).items() if k != obs.self.get("id", agent_id)}
-            rival_text = ", ".join(f"{cid}: {sc}" for cid, sc in sorted(rivals.items())) if rivals else "none"
-
-            prompt = (
-                f"{coaching_context}"
-                f"{history_context}"
-                f"--- CURRENT OBSERVATION (Tick {obs.tick}, Round {obs.round}) ---\n"
-                f"Agent ID: {obs.self.get('id', agent_id)}\n"
-                f"Current Position: (x={pos.get('x', 0)}, y={pos.get('y', 0)})\n"
-                f"Current Facing: {facing}\n"
-                f"YOUR SCORE: {obs.score} total captures this game.\n"
-                f"Rival Cats: {rival_text}\n"
-                f"SCORING: Your score rises by 1 for every mouse your slash kills, and never falls.\n"
-                f"  Compare the SCORE values across the ticks listed above against the moves you made.\n"
-                f"  That comparison is your only evidence of whether an attack actually connected.\n"
-                f"Dynamic Capabilities & Range Parameters:\n"
-                f"  • Slash Attack Range (`attack`): reaches {atk_range} tile(s) in an expanding 60° sweeping cone forward! (Strikes all targets across range 1 to {atk_range} inside the sweeping forward cone arc)\n"
-                f"  • Vision Perception Radius: {vision_rad} tiles\n"
-                f"  • Move Pacing / Lock: 1 tile every {move_cd} tick(s)\n"
-                f"  • Attack Recovery Lock: {atk_cd} tick(s)\n"
-                f"  • Lunge Recovery Lock: {lunge_cd} tick(s)\n"
-                f"Visible Entities in Vision Cone: {entities}\n"
-                f"Legal Actions this tick: {legal}\n"
-                f"TACTICAL RULE: If 'attack' is legal and prey is within your {atk_range}-tile forward slash range (or if attack range is very large), prioritize 'attack' to instantly strike prey! Choose the single best action strictly from legal actions."
+            prompt = build_decision_prompt(
+                obs,
+                history=history,
+                agent_id=agent_id,
+                history_window_size=history_window_size,
+                capture=capture,
             )
 
             msg = types.Content(role="user", parts=[types.Part.from_text(text=prompt)])
             decision = None
+            _started = time.monotonic()
 
             async with asyncio.timeout(8.0):
                 agen = adk_runner.run_async(user_id=user_id, session_id=session_id, new_message=msg)
@@ -445,6 +524,9 @@ async def query_adk_gemini(
             if isinstance(decision, dict):
                 decision = CatTacticalDecision(**decision)
 
+            if capture is not None:
+                capture["latency_ms"] = round((time.monotonic() - _started) * 1000)
+
             # Every exit below reports *why* it gave up. Returning a bare None here
             # was what made fallbacks undiagnosable: the UI could only say "not
             # Gemini" and guessed at the cause, invariably blaming auth.
@@ -452,6 +534,13 @@ async def query_adk_gemini(
                 chosen_clean = decision.action.strip().lower()
                 if chosen_clean in legal:
                     decision.action = chosen_clean
+                    if capture is not None:
+                        capture["decision"] = {
+                            "action": decision.action,
+                            "thought": decision.thought,
+                            "strategy": decision.strategy,
+                            "target_mouse_id": decision.target_mouse_id,
+                        }
                     return decision, "adk_gemini", None
                 else:
                     reason = (

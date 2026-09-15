@@ -98,6 +98,13 @@
 
   // DOM Elements - Modals
   const skillsModal = document.getElementById('skillsModal');
+  const promptModal = document.getElementById('promptModal');
+  const promptModalTitle = document.getElementById('promptModalTitle');
+  const promptModalMeta = document.getElementById('promptModalMeta');
+  const promptModalSections = document.getElementById('promptModalSections');
+  const btnClosePrompt = document.getElementById('btnClosePrompt');
+  const btnClosePromptFooter = document.getElementById('btnClosePromptFooter');
+  const btnCopyPrompt = document.getElementById('btnCopyPrompt');
   const btnCloseSkills = document.getElementById('btnCloseSkills');
   const btnCloseSkillsFooter = document.getElementById('btnCloseSkillsFooter');
   const btnCopySkills = document.getElementById('btnCopySkills');
@@ -652,6 +659,18 @@
       btnInspect.textContent = inspectingTick === item.tick ? 'Viewing' : 'Inspect';
       btnInspect.addEventListener('click', () => inspectHistoryItem(item));
       tdInspect.appendChild(btnInspect);
+
+      // Only Gemini ticks have a payload. The reflex never calls the model, so
+      // offering the button there would promise something that cannot exist.
+      if (item.source === 'adk_gemini') {
+        const btnPayload = document.createElement('button');
+        btnPayload.className = 'btn btn-sm btn-payload';
+        btnPayload.textContent = 'Payload';
+        btnPayload.title = 'Show the exact prompt Gemini received for this decision';
+        btnPayload.addEventListener('click', () => openPromptModal(item.tick));
+        tdInspect.appendChild(btnPayload);
+      }
+
       tr.appendChild(tdInspect);
 
       rows.push(tr);
@@ -803,6 +822,95 @@
   }
 
   // Inspect a specific past tick
+  // ---- Gemini payload inspector -----------------------------------------
+  // Answers "what exactly did the model see when it decided this tick?".
+  // Sections are kept separate rather than shown as one blob so it is obvious
+  // which source contributed what -- and, just as importantly, which source
+  // contributed nothing.
+  let lastPromptRecord = null;
+
+  function openPromptModal(tick) {
+    if (!promptModal) return;
+    promptModalTitle.textContent = `🔬 Gemini Payload — decision applied at tick #${tick}`;
+    promptModalMeta.textContent = 'Loading…';
+    promptModalSections.replaceChildren();
+    promptModal.style.display = 'flex';
+
+    fetch(`/api/agent/prompt/${tick}`)
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.status !== 'ok' || !data.record) {
+          lastPromptRecord = null;
+          promptModalMeta.textContent = data.detail || 'No prompt recorded for this tick.';
+          return;
+        }
+        lastPromptRecord = data.record;
+        renderPromptRecord(data.record);
+      })
+      .catch((err) => {
+        lastPromptRecord = null;
+        promptModalMeta.textContent = `Failed to load prompt: ${err}`;
+      });
+  }
+
+  function renderPromptRecord(rec) {
+    const built = rec.built_at_tick;
+    const applied = rec.applied_at_tick;
+    const lagNote = (built !== applied)
+      // Worth calling out explicitly: the model reasoned about an older world
+      // than the one its decision was applied to.
+      ? ` — built from tick ${built}'s observation, applied ${applied - built} tick(s) later`
+      : ' — built and applied on the same tick';
+
+    promptModalMeta.replaceChildren();
+    const meta = document.createElement('div');
+    const line1 = document.createElement('div');
+    line1.textContent = `${rec.model} · ${rec.latency_ms ?? '?'}ms${lagNote}`;
+    meta.appendChild(line1);
+
+    if (rec.decision) {
+      const line2 = document.createElement('div');
+      line2.textContent = `Returned: ${(rec.decision.action || '').toUpperCase()} — ${rec.decision.thought || ''}`;
+      meta.appendChild(line2);
+    }
+    promptModalMeta.appendChild(meta);
+
+    const order = [
+      'system_instruction',
+      'coaching_notes',
+      'commander_directive',
+      'history_window',
+      'current_observation',
+    ];
+    const sections = rec.sections || {};
+    const blocks = [];
+
+    order.forEach((key) => {
+      const sec = sections[key];
+      if (!sec) return;
+
+      const details = document.createElement('details');
+      details.className = sec.delivered ? 'prompt-section' : 'prompt-section not-delivered';
+      // The skills manual is ~7KB and identical every tick; collapsing it keeps
+      // the parts that actually vary in view.
+      details.open = sec.delivered && key !== 'system_instruction';
+
+      const summary = document.createElement('summary');
+      const status = sec.delivered ? '✓' : '✗ NOT SENT';
+      summary.textContent = `${status}  ${sec.label}  (${sec.text.length} chars)`;
+      details.appendChild(summary);
+
+      const pre = document.createElement('pre');
+      pre.className = 'prompt-section-body';
+      pre.textContent = sec.text;
+      details.appendChild(pre);
+
+      blocks.push(details);
+    });
+
+    promptModalSections.replaceChildren(...blocks);
+  }
+
   function inspectHistoryItem(item) {
     inspectingTick = item.tick;
     inspectingTickNumber.textContent = item.tick;
@@ -1364,6 +1472,26 @@
     });
   }
 
+  // Event Listeners - Gemini Payload Inspector Modal
+  function closePromptModal() {
+    if (promptModal) promptModal.style.display = 'none';
+  }
+  if (btnClosePrompt) btnClosePrompt.addEventListener('click', closePromptModal);
+  if (btnClosePromptFooter) btnClosePromptFooter.addEventListener('click', closePromptModal);
+  if (btnCopyPrompt) {
+    btnCopyPrompt.addEventListener('click', () => {
+      // Copy the verbatim concatenated prompt, not a re-join of the rendered
+      // sections -- the whole point is to reproduce exactly what the model saw.
+      if (!lastPromptRecord || !lastPromptRecord.full_prompt) {
+        flashCopied(btnCopyPrompt, '✕ Nothing to copy');
+        return;
+      }
+      navigator.clipboard.writeText(lastPromptRecord.full_prompt).then(() => {
+        flashCopied(btnCopyPrompt, '✓ Copied Prompt!');
+      });
+    });
+  }
+
   // Event Listeners - Auth Alert Banner
   if (btnCopyAuthCommand) {
     btnCopyAuthCommand.addEventListener('click', async () => {
@@ -1593,6 +1721,7 @@
     if (e.target === skillsModal) closeSkillsModal();
     if (e.target === apiKeyModal) closeApiKeyModal();
     if (e.target === serverModal) closeServerModal();
+    if (e.target === promptModal) closePromptModal();
   });
 
   // Start polling on boot
