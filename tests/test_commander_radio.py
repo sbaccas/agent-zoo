@@ -148,14 +148,61 @@ def test_age_never_reads_negative_after_a_tick_rewind():
     assert "-" not in re.search(r"(\d+|-\d+) tick\(s\) ago", prompt).group(0)
 
 
-def test_order_carries_a_compliance_rule_not_just_the_words():
-    """Raw text with no framing leaves the model guessing how hard to try."""
+def test_prompt_states_no_compliance_rule_of_its_own():
+    """All imperatives live in the manual; the prompt carries data only.
+
+    This previously asserted the opposite -- that the prompt itself spelled out
+    the order's authority. That framing ("OUTRANKS ... Comply this tick") turned
+    a single question from the commander into 100 consecutive lunges, because it
+    re-fired on every tick for as long as the message was in the window. The
+    rule now lives in actor_skills.md, stated once.
+    """
     prompt = build_decision_prompt(
         _observation(), history=[], commander_directive=_directive()
     )
     lowered = prompt.lower()
-    assert "outranks" in lowered, "the order's authority relative to the coach is unstated"
-    assert "legal" in lowered, "nothing tells the model the order cannot force an illegal action"
+    for banned in ("outranks", "comply this tick", "highest authority", "you must"):
+        assert banned not in lowered, (
+            f"the prompt is instructing the model again ({banned!r}); "
+            f"this belongs in actor_skills.md"
+        )
+    # The data itself must still be there.
+    assert ORDER in prompt
+    assert "tick(s) ago" in prompt
+
+
+def test_manual_carries_the_compliance_rule_the_prompt_dropped():
+    """Removing framing from the prompt is only safe if the manual has it."""
+    manual = SKILLS_MD.read_text().lower()
+    assert "legal_actions" in manual, (
+        "nothing tells the model an order cannot force an illegal action"
+    )
+    assert "precedence" in manual, "the manual never ranks the channels"
+
+
+def test_manual_tells_the_model_a_question_is_not_an_order():
+    """The live failure: "how come you never lunge?" became a standing order.
+
+    It was interrogative, but the prompt framing said "comply this tick", so the
+    model lunged on 100 of the next 110 ticks.
+
+    This asserts the rule sentence itself, inside the commander section. An
+    earlier version merely checked that the words "question" and "standing
+    order" appeared somewhere in the manual, which a 200-line document about a
+    radio channel satisfies almost by accident -- mutation testing showed the
+    rule could be deleted with the test still green.
+    """
+    manual = SKILLS_MD.read_text()
+    start = manual.index("### The Commander")
+    section = manual[start:manual.index("### The Coach")].lower()
+
+    assert "distinguish an order from a question" in section, (
+        "the commander section never draws the order/question distinction"
+    )
+    assert "do not convert a question into a standing order" in section, (
+        "the manual identifies questions but never forbids promoting one to a "
+        "standing order, which is the exact failure observed"
+    )
 
 
 # --------------------------------------------------------------------------
@@ -347,29 +394,47 @@ def test_manual_quotes_the_exact_headings_the_prompt_emits():
 
     Grepping for the word "commander" is close to unfalsifiable. What matters is
     that the manual names the literal block headings `build_decision_prompt`
-    emits, so the model can match what it is reading to what it was taught. This
-    fails if either side's heading drifts.
+    emits, so the model can match what it is reading to what it was taught.
+
+    The headings are imported from the module rather than retyped here, so this
+    fails if a header is renamed in code without being renamed in the manual --
+    which now matters more than it used to, because the manual is the only place
+    the weighting rules exist.
     """
+    from actors.cat.actor import COACH_BLOCK_HEADER, COMMANDER_BLOCK_HEADER
+
     manual = SKILLS_MD.read_text()
 
     commander_prompt = build_decision_prompt(
         _observation(), history=[], commander_directive=_directive()
     )
-    commander_heading = "--- LIVE ORDER FROM YOUR COMMANDER (RADIO) ---"
-    assert commander_heading in commander_prompt, (
-        "the prompt no longer emits this heading; update the manual to match"
+    assert COMMANDER_BLOCK_HEADER in commander_prompt, (
+        "the prompt no longer emits the commander heading it declares"
     )
-    assert commander_heading in manual, (
+    assert COMMANDER_BLOCK_HEADER in manual, (
         f"the manual never names the heading the model actually sees "
-        f"({commander_heading!r}), so it cannot connect the two"
+        f"({COMMANDER_BLOCK_HEADER!r}), so it cannot connect the two"
+    )
+    assert COACH_BLOCK_HEADER in manual, (
+        f"the manual never names the coaching block heading "
+        f"({COACH_BLOCK_HEADER!r}); coaching notes are injected into every "
+        f"prompt under a heading the model has never been told the meaning of"
     )
 
-    coach_heading = "--- STANDING ORDERS FROM YOUR STRATEGIC EVALUATOR ---"
-    assert coach_heading in manual, (
-        f"the manual never names the coaching block heading ({coach_heading!r}); "
-        f"coaching notes are injected into every prompt under a heading the "
-        f"model has never been told the meaning of"
-    )
+
+def test_coach_block_uses_the_declared_heading():
+    """The coach heading is only exercised when notes exist on disk."""
+    from actors.cat import actor as actor_mod
+
+    original = actor_mod.store.read_coaching_notes
+    actor_mod.store.read_coaching_notes = lambda: "- keep to the south corridor"
+    try:
+        prompt = build_decision_prompt(_observation(), history=[])
+    finally:
+        actor_mod.store.read_coaching_notes = original
+
+    assert actor_mod.COACH_BLOCK_HEADER in prompt
+    assert "- keep to the south corridor" in prompt
 
 
 def test_manual_has_a_dedicated_chain_of_command_section():
@@ -383,13 +448,30 @@ def test_manual_has_a_dedicated_chain_of_command_section():
 
 
 def test_manual_states_the_precedence_order():
+    """Parse the numbered rungs; do not just scan the block for the words.
+
+    A previous version searched the whole precedence section for "commander"
+    and "coach" and compared offsets. Rung 1 reads "this overrides everyone,
+    including the commander", so "commander" always appeared first no matter
+    how rungs 2 and 3 were ordered -- the test passed even with the coach
+    ranked above the commander. Mutation testing caught it.
+    """
     text = SKILLS_MD.read_text()
     assert "Precedence" in text, "the manual describes the channels but not their ranking"
-    lowered = text.lower()
-    commander_at = lowered.index("the commander's live order")
-    coach_at = lowered.index("the coach's standing orders")
-    assert commander_at < coach_at, (
-        "the coach is ranked above the commander; a human order must win"
+    idx = text.index("Precedence")
+    block = text[idx:idx + 700]
+
+    rungs = dict(re.findall(r"^(\d+)\. (.+)$", block, re.M))
+    assert {"1", "2", "3", "4"} <= set(rungs), f"precedence list is malformed: {rungs}"
+
+    assert "legal" in rungs["1"].lower(), (
+        f"rung 1 must be legality, got: {rungs['1']!r}"
+    )
+    assert "commander" in rungs["2"].lower(), (
+        f"the commander must be rung 2, got: {rungs['2']!r}"
+    )
+    assert "coach" in rungs["3"].lower(), (
+        f"the coach must be rung 3, got: {rungs['3']!r}"
     )
 
 

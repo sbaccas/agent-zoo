@@ -795,7 +795,7 @@ def test_current_score_and_rivals_are_stated_in_the_prompt():
         _score_obs(12, score=4, scoreboard={"cat-1": 4, "cat-2": 9}), history=[]
     )
 
-    assert "YOUR SCORE: 4" in prompt
+    assert "Your Score: 4" in prompt
     assert "cat-2: 9" in prompt
     assert "cat-1: 4" not in prompt.split("Rival Cats:")[1].split("\n")[0], (
         "the cat's own score was listed among its rivals"

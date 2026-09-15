@@ -22,15 +22,41 @@ from actors.cat import store
 
 # Skills manual path and loader
 SKILLS_PATH = Path(__file__).parent / "actor_skills.md"
+RADIO_SKILLS_PATH = Path(__file__).parent / "radio_skills.md"
+
+# Section delimiters for the decision prompt.
+#
+# These are labels, not instructions. Everything about how much weight a block
+# carries lives in actor_skills.md, which refers to these blocks by exactly
+# these strings -- see tests/test_prompt_is_data_only.py, which fails if a
+# header is renamed here without being renamed there.
+COACH_BLOCK_HEADER = "--- EVALUATOR NOTES ---"
+COMMANDER_BLOCK_HEADER = "--- COMMANDER RADIO ---"
 
 
 def get_skills_instruction() -> str:
-    if SKILLS_PATH.exists():
-        return SKILLS_PATH.read_text(encoding="utf-8")
-    return (
-        "You are an expert tactical cat in a Cat and Mouse grid world. "
-        "Your mission is to hunt mice, close distance with lunges, and eliminate them with attacks."
-    )
+    """The actor's entire behavioural specification, read fresh from disk.
+
+    There is deliberately no inline fallback. A previous fallback string told
+    the cat to "close distance with lunges", contradicting the manual, and
+    would have applied silently had the file ever gone missing.
+    """
+    if not SKILLS_PATH.exists():
+        raise FileNotFoundError(
+            f"Actor skills manual missing at {SKILLS_PATH}. The agent has no "
+            f"behavioural specification without it; refusing to run on an "
+            f"improvised one."
+        )
+    return SKILLS_PATH.read_text(encoding="utf-8")
+
+
+def get_radio_instruction() -> str:
+    """Persona for free-form Commander radio replies, read fresh from disk."""
+    if not RADIO_SKILLS_PATH.exists():
+        raise FileNotFoundError(
+            f"Radio persona missing at {RADIO_SKILLS_PATH}."
+        )
+    return RADIO_SKILLS_PATH.read_text(encoding="utf-8")
 
 
 def _actor_instruction_provider(_ctx: ReadonlyContext) -> str:
@@ -44,19 +70,8 @@ def _actor_instruction_provider(_ctx: ReadonlyContext) -> str:
 
 
 def _interrogator_instruction_provider(_ctx: ReadonlyContext) -> str:
-    """Same as above, plus the Commander radio persona."""
-    return (
-        get_skills_instruction()
-        + "\n\n"
-        + "--- INTERROGATION & COMMANDER RADIO CHANNEL ---\n"
-        + "You are directly communicating with your human Commander/Operator who is monitoring the Cat and Mouse simulation.\n"
-        + "The Commander can ask you anything: why you are making specific moves, what your thoughts are, why you aren't exploring more of the board, or issue strategic suggestions.\n"
-        + "Address the Commander directly, truthfully, and tactically in character as an intelligent hunting cat.\n"
-        + "Ground your answer in your spatial reality: reference your coordinates (x, y), facing direction, vision cone limits, and recent movement history.\n"
-        + "Explain your rationale for why you moved the way you did (e.g. searching for scent, sweeping vision, avoiding walls, patrolling) and what you plan to do next.\n"
-        + "If the Commander gives you a suggestion or directive (e.g. 'explore south', 'head toward center'), state how you will adapt your path to honor it.\n"
-        + "Keep your response focused, clear, and informative (2 to 4 concise paragraphs or bullet points)."
-    )
+    """The same manual, plus the radio persona. Both read fresh from disk."""
+    return get_skills_instruction() + "\n\n" + get_radio_instruction()
 
 
 # Initialize ADK Agent and Runner
@@ -361,17 +376,14 @@ def build_decision_prompt(
             + "\n\n"
         )
 
-    # Standing orders published by the evaluator subagent. These summarise a
-    # far longer horizon than the sliding window above, so they lead the
-    # prompt and frame the immediate decision rather than compete with it.
+    # Standing notes published by the evaluator subagent. Delimiter only: how
+    # much weight these carry is stated once, in actor_skills.md, under
+    # "Chain of Command". Nothing instructional belongs here.
     coaching_notes = store.read_coaching_notes()
     coaching_context = ""
     if coaching_notes:
         coaching_context = (
-            "--- STANDING ORDERS FROM YOUR STRATEGIC EVALUATOR ---\n"
-            "These directives were derived from your full movement history over a much\n"
-            "longer horizon than you can personally recall. Honour them unless the\n"
-            "current observation gives you an immediate reason to override.\n"
+            f"{COACH_BLOCK_HEADER}\n"
             f"{coaching_notes}\n\n"
         )
 
@@ -391,49 +403,36 @@ def build_decision_prompt(
         f"Agent ID: {obs.self.get('id', agent_id)}\n"
         f"Current Position: (x={pos.get('x', 0)}, y={pos.get('y', 0)})\n"
         f"Current Facing: {facing}\n"
-        f"YOUR SCORE: {obs.score} total captures this game.\n"
+        f"Your Score: {obs.score}\n"
         f"Rival Cats: {rival_text}\n"
-        f"SCORING: Your score rises by 1 for every mouse your slash kills, and never falls.\n"
-        f"  Compare the SCORE values across the ticks listed above against the moves you made.\n"
-        f"  That comparison is your only evidence of whether an attack actually connected.\n"
-        f"Dynamic Capabilities & Range Parameters:\n"
-        f"  • Slash Attack Range (`attack`): reaches {atk_range} tile(s) in an expanding 60° sweeping cone forward! (Strikes all targets across range 1 to {atk_range} inside the sweeping forward cone arc)\n"
-        f"  • Vision Perception Radius: {vision_rad} tiles\n"
-        f"  • Move Pacing / Lock: 1 tile every {move_cd} tick(s)\n"
-        f"  • Attack Recovery Lock: {atk_cd} tick(s)\n"
-        f"  • Lunge Recovery Lock: {lunge_cd} tick(s)\n"
+        f"Capabilities this tick:\n"
+        f"  • attack_range: {atk_range} tiles (60° forward cone)\n"
+        f"  • vision_radius: {vision_rad} tiles\n"
+        f"  • move_cooldown: {move_cd} tick(s)\n"
+        f"  • attack_cooldown: {atk_cd} tick(s)\n"
+        f"  • lunge_cooldown: {lunge_cd} tick(s)\n"
         f"Visible Entities in Vision Cone: {entities}\n"
-        f"Legal Actions this tick: {legal}\n"
-        f"TACTICAL RULE: If 'attack' is legal and prey is within your {atk_range}-tile forward slash range (or if attack range is very large), prioritize 'attack' to instantly strike prey! Choose the single best action strictly from legal actions."
+        f"Legal Actions this tick: {legal}"
     )
 
-    # The commander's live radio order. Deliberately placed last: it is the most
-    # authoritative input and the reported failure was that it got ignored, so
-    # it sits immediately before the model commits to an action.
-    #
-    # Raw order text only. The issuing tick and its age are stated as plain
-    # numbers so the model can judge staleness itself; no "this order is old"
-    # verdict is supplied.
+    # The commander's live radio message. Delimiter, raw text, and two plain
+    # numbers -- nothing else. How to weigh it, how to tell an order from a
+    # question, and when it goes stale are all stated once in actor_skills.md.
+    # Restating any of that here is what produced 100 consecutive lunges from
+    # a message that was only ever a question.
     commander_context = ""
     directive_text = (commander_directive or {}).get("directive") or ""
     if directive_text.strip():
         issued_tick = (commander_directive or {}).get("tick")
         if isinstance(issued_tick, int):
             age = max(0, obs.tick - issued_tick)
-            issued_line = f"Issued at tick {issued_tick}; {age} tick(s) ago.\n"
+            issued_line = f"Sent at tick {issued_tick}; {age} tick(s) ago.\n"
         else:
             issued_line = ""
         commander_context = (
-            "\n--- LIVE ORDER FROM YOUR COMMANDER (RADIO) ---\n"
-            "A human commander is watching this game and has radioed you directly.\n"
+            f"\n{COMMANDER_BLOCK_HEADER}\n"
             f"{issued_line}"
-            "This order OUTRANKS your evaluator's standing orders and your own\n"
-            "judgement. It stands until the commander replaces or cancels it.\n\n"
-            f'  COMMANDER: "{directive_text.strip()}"\n\n'
-            "Comply this tick if a legal action does so. If no legal action complies\n"
-            "yet, choose the legal action that makes the most progress toward\n"
-            "complying, and state in `thought` how it serves the order. Only\n"
-            "disregard the order if following it is impossible, and say why.\n"
+            f'COMMANDER: "{directive_text.strip()}"\n'
         )
 
     prompt = f"{coaching_context}{history_context}{observation_context}{commander_context}"
@@ -703,16 +702,13 @@ async def interrogate_adk_gemini(
                 f"Agent ID: {agent_id}\n"
                 f"Current Position: (x={pos.get('x', 0)}, y={pos.get('y', 0)})\n"
                 f"Current Facing: {facing}\n"
-                f"Vision Radius: {caps.get('vision_radius', 4)} tiles (90° forward cone)\n"
-                f"Slash Attack Range: {caps.get('attack_range', 2)} tiles\n"
+                f"vision_radius: {caps.get('vision_radius', 4)} tiles (90° forward cone)\n"
+                f"attack_range: {caps.get('attack_range', 2)} tiles\n"
                 f"Visible Entities in Vision Cone: {entities}\n"
                 f"Legal Actions available: {legal}\n"
                 f"{directive_context}"
-                f"--- COMMANDER / OPERATOR DIRECT MESSAGE ---\n"
-                f"The Commander asks: \"{user_prompt}\"\n\n"
-                f"Respond directly to the Commander in character as the intelligent hunting cat. "
-                f"Explain what you are thinking, why you took your recent moves (reference your actual coordinates, facing, obstacles, or search pattern), "
-                f"and explain what you plan to do next or how you will adjust your exploration."
+                f"{COMMANDER_BLOCK_HEADER}\n"
+                f'COMMANDER: "{user_prompt}"\n'
             )
 
             msg = types.Content(role="user", parts=[types.Part.from_text(text=prompt)])
