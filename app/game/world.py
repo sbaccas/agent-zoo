@@ -149,32 +149,49 @@ class World:
 
         return list(set(tiles))
 
+    # Lateral half-width of the strike zone, in tiles, measured perpendicular to
+    # facing. 1 means the zone is 3 tiles wide: one row either side of the
+    # centre line, plus the centre line itself.
+    SLASH_HALF_WIDTH = 1
+
     def get_slash_aoe_tiles(
         self, pos: Position, facing: Direction, range_tiles: int = 2
     ) -> List[Tuple[int, int]]:
-        """
-        Returns Area of Effect (AoE) tiles in a forward sweeping cone (~60-70 degree arc)
-        up to `range_tiles` steps ahead.
+        """Tiles hit by a slash: a rectangle `range_tiles` deep, 3 tiles wide.
+
+        Facing east from C, with range_tiles=2, this is the 6 tiles::
+
+            .  X  X
+            C  X  X
+            .  X  X
+
+        This replaced a 60-70 degree cone whose lateral spread grew as
+        ``round(dist * tan(35deg))`` and whose outer edge was clipped by
+        ``hypot(dist, lat) <= range_tiles + 0.5``. At the previous default
+        range of 8 that produced a ragged 50-tile blob reaching 4 tiles
+        off-axis, with membership decided by floating-point rounding.
+
+        Nothing could predict that boundary from a text description. The actor
+        attacked visible-but-unreachable mice for whole games, and the
+        evaluator spent three of its coaching notes trying to reverse-engineer
+        the edge empirically, arriving at a different wrong rule per facing
+        ("when facing west, only attack if the y-difference is at most 2").
+
+        A rectangle is stated in one sentence and verified by integer
+        comparison, so the actor can decide before swinging rather than
+        inferring from the score afterwards.
         """
         dx, dy = self.get_forward_delta(facing)
-        px, py = -dy, dx
+        px, py = -dy, dx  # unit vector perpendicular to facing
 
         tiles = []
-        # Cone half-angle ~ 35 degrees (tan(35°) ≈ 0.70)
-        half_angle_rad = math.radians(35)
-        tan_half = math.tan(half_angle_rad)
-
         for dist in range(1, range_tiles + 1):
-            # Lateral spread expands with distance: at least 1 tile for close melee sweep
-            lateral_spread = max(1, round(dist * tan_half))
-            for lat in range(-lateral_spread, lateral_spread + 1):
-                # Sector distance check keeps the cone curved and circular at the outer edge
-                if math.hypot(dist, lat) <= range_tiles + 0.5:
-                    tx = pos.x + dx * dist + px * lat
-                    ty = pos.y + dy * dist + py * lat
-                    if self.topology == Topology.TORUS:
-                        tiles.append(self.wrap_position(tx, ty))
-                    elif self.is_in_bounds(tx, ty):
-                        tiles.append((tx, ty))
+            for lat in range(-self.SLASH_HALF_WIDTH, self.SLASH_HALF_WIDTH + 1):
+                tx = pos.x + dx * dist + px * lat
+                ty = pos.y + dy * dist + py * lat
+                if self.topology == Topology.TORUS:
+                    tiles.append(self.wrap_position(tx, ty))
+                elif self.is_in_bounds(tx, ty):
+                    tiles.append((tx, ty))
 
         return list(set(tiles))

@@ -119,14 +119,67 @@ On each simulation tick, you receive an observation payload that includes `legal
   you cannot answer until the lock clears.
 
 ### Skill: `attack` (Predatory Slash)
-- **Effect**: Sweeps a forward cone, `capabilities.attack_range` tiles deep and
-  60° wide, striking every target inside it. Your position and facing are
-  unchanged.
+- **Effect**: Strikes every target in your **strike zone** and kills them. Your
+  position and facing are unchanged.
 - **This is the only action that kills, and the only action that raises your
   score.**
-- **Conditions**: Only available when `attack` is in `legal_actions`.
+- **Conditions**: `attack` is in `legal_actions` on *every* tick you are not
+  locked. Its presence there tells you nothing about whether a mouse is in
+  reach. Check the zone yourself.
 - **Cost**: 3 ticks total — the acting tick plus 2 locked ticks. A slash that
-  hits nothing has spent the same 3 ticks as one that kills.
+  hits nothing costs exactly as much as one that kills.
+
+#### Your strike zone
+
+The strike zone is a **rectangle**: `capabilities.attack_range` tiles deep,
+and 3 tiles wide (the centre line plus one row either side). At the default
+depth of 2 it is exactly these 6 tiles:
+
+```
+facing EAST, cat at C              facing NORTH, cat at C
+
+    .  X  X                            X  X  X
+    C  X  X                            X  X  X
+    .  X  X                            .  C  .
+       ^  ^
+     d=1  d=2
+```
+
+It is not a cone, not a circle, and not a diagonal. There is no angle and no
+distance formula.
+
+#### Deciding whether a mouse is in it
+
+Work out two numbers from the mouse's coordinates and your own:
+
+- **forward** — how many tiles ahead of you it is, along your facing
+- **offaxis** — how many tiles to either side of your centre line it is
+
+| facing | forward | offaxis |
+| --- | --- | --- |
+| north | `self.y - mouse.y` | `mouse.x - self.x` |
+| south | `mouse.y - self.y` | `self.x - mouse.x` |
+| east  | `mouse.x - self.x` | `mouse.y - self.y` |
+| west  | `self.x - mouse.x` | `self.y - mouse.y` |
+
+You will hit it **only if both hold**:
+
+```
+1 <= forward <= attack_range        AND        -1 <= offaxis <= 1
+```
+
+Both are integer comparisons. Do them before you swing, every time.
+
+#### Seeing a mouse is not the same as being able to hit it
+
+Your `vision_radius` is far larger than your `attack_range`, and your vision
+cone is 90° wide while your strike zone is 3 tiles wide. **Most mice you can
+see, you cannot hit.** A mouse 7 tiles ahead and 3 tiles off your centre line
+is plainly visible in `visible_entities` and is nowhere near your strike zone.
+
+Attacking it wastes 3 ticks and leaves you locked while it walks away. When
+`offaxis` is outside ±1, you need a *directional move* to re-aim, not a slash.
+
 
 ---
 
@@ -189,7 +242,8 @@ somewhere else?** A directional move is what re-aims you. A `lunge` is what
 carries you. They are not interchangeable.
 
 1. **PRIORITY 1 — STRIKE (`attack`)**
-   - A mouse is inside your 60° forward cone and within `capabilities.attack_range`.
+   - A mouse is in your strike zone: `1 <= forward <= attack_range` and
+     `-1 <= offaxis <= 1`. Compute both before you swing.
    - `attack` is the only action that scores. Take the shot.
    - If recent history shows you slashing repeatedly with a flat score, you are
      not actually on target. Stop swinging and fix your geometry instead.

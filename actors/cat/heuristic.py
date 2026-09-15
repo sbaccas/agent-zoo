@@ -169,6 +169,42 @@ def compute_resulting_posture(pos: Dict[str, Any], facing: str, action: str) -> 
     }
 
 
+# Lateral half-width of the cat's strike zone. Mirrors World.SLASH_HALF_WIDTH.
+# tests/test_attack_zone.py asserts the two agree for every facing and range.
+SLASH_HALF_WIDTH = 1
+
+# Unit vectors: (forward_dx, forward_dy, lateral_dx, lateral_dy) per facing.
+_FACING_AXES = {
+    "north": (0, -1, 1, 0),
+    "south": (0, 1, -1, 0),
+    "east": (1, 0, 0, 1),
+    "west": (-1, 0, 0, -1),
+}
+
+
+def decompose_offset(dx: int, dy: int, facing: str):
+    """Project a grid offset onto the cat's own axes.
+
+    Returns ``(forward, lateral)``: how many tiles ahead the target is, and how
+    far off the centre line. Both are signed; ``forward`` is negative when the
+    target is behind.
+    """
+    fdx, fdy, ldx, ldy = _FACING_AXES.get(facing, _FACING_AXES["north"])
+    return dx * fdx + dy * fdy, dx * ldx + dy * ldy
+
+
+def in_strike_zone(dx: int, dy: int, facing: str, atk_range: int) -> bool:
+    """Exact mirror of World.get_slash_aoe_tiles membership.
+
+    The previous reflex used ``abs(dx) + abs(dy) <= atk_range``. Manhattan
+    distance is not the shape of a rectangle: a mouse 2 tiles ahead and 1 tile
+    off-axis sums to 3, so at range 2 the reflex declined to swing at a tile
+    the engine would have hit.
+    """
+    forward, lateral = decompose_offset(dx, dy, facing)
+    return 1 <= forward <= atk_range and abs(lateral) <= SLASH_HALF_WIDTH
+
+
 def compute_reflex_decision(
     obs: Observation,
     locked_target_id: Optional[str] = None,
@@ -197,25 +233,18 @@ def compute_reflex_decision(
             dx = mx - pos["x"]
             dy = my - pos["y"]
 
-            in_front = False
-            if facing == "north" and dy < 0 and abs(dx) <= 1:
-                in_front = True
-            elif facing == "south" and dy > 0 and abs(dx) <= 1:
-                in_front = True
-            elif facing == "east" and dx > 0 and abs(dy) <= 1:
-                in_front = True
-            elif facing == "west" and dx < 0 and abs(dy) <= 1:
-                in_front = True
-
-            dist = abs(dx) + abs(dy)
-            if in_front and dist <= atk_range:
-                msg = f"[Reflex Trigger] Prey {m.get('id')} in strike zone (range {atk_range})! Executing attack."
+            if in_strike_zone(dx, dy, facing, atk_range):
+                forward, lateral = decompose_offset(dx, dy, facing)
+                msg = (
+                    f"[Reflex Trigger] Prey {m.get('id')} in strike zone "
+                    f"({forward} ahead, {lateral:+d} off-axis, range {atk_range}). Attacking."
+                )
                 meta = {
                     "phase": "ATTACK",
                     "strategy": "ATTACK",
                     "target_id": m.get("id"),
                     "target_mouse_id": m.get("id"),
-                    "distance": dist,
+                    "distance": forward,
                     "target_pos": {"x": mx, "y": my},
                 }
                 return "attack", msg, meta

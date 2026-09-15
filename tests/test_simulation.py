@@ -21,7 +21,7 @@ async def test_simulation_creation():
     assert state.species is not None
     assert "cat" in state.species
     assert "mouse" in state.species
-    assert state.species["cat"].attack_range == 8
+    assert state.species["cat"].attack_range == 2
     assert state.species["cat"].vision_radius == 10
     assert state.species["cat"].move_cooldown == 3
     assert state.species["mouse"].move_cooldown == 2
@@ -284,7 +284,7 @@ async def test_hyperparameter_species_config_live_tuning():
         assert get_res.status_code == 200
         species_data = get_res.json()
         assert species_data["cat"]["move_cooldown"] == 3
-        assert species_data["cat"]["attack_range"] == 8
+        assert species_data["cat"]["attack_range"] == 2
         assert species_data["cat"]["vision_radius"] == 10
         assert species_data["mouse"]["move_cooldown"] == 2
 

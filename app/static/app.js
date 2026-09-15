@@ -119,7 +119,15 @@
     }
   }
 
-  // Area of Effect (AoE) Calculation matching world.py get_slash_aoe_tiles (sweeping 60-70 degree forward cone)
+  // Strike zone, mirroring world.py get_slash_aoe_tiles: a rectangle
+  // `rangeTiles` deep and (2 * SLASH_HALF_WIDTH + 1) tiles wide.
+  //
+  // This math is duplicated from Python. If the two drift, the canvas draws a
+  // strike zone in a different place from where damage actually lands, which
+  // is worse than not drawing it at all. tests/test_attack_zone.py compares
+  // this function against the engine tile-for-tile.
+  const SLASH_HALF_WIDTH = 1;
+
   function getSlashAoeTiles(pos, facing, rangeTiles = 2, width = 100, height = 100, topology = 'torus') {
     if (!pos) return [];
     let dx = 0, dy = 0;
@@ -149,26 +157,22 @@
 
     const tiles = [];
     const seen = new Set();
-    const tanHalf = Math.tan(35 * Math.PI / 180);
     const maxR = Math.min(rangeTiles, Math.max(width, height));
 
     for (let dist = 1; dist <= maxR; dist++) {
-      const lateralSpread = Math.max(1, Math.round(dist * tanHalf));
-      for (let lat = -lateralSpread; lat <= lateralSpread; lat++) {
-        if (Math.hypot(dist, lat) <= maxR + 0.5) {
-          const pt = wrapOrBound(pos.x + dx * dist + px * lat, pos.y + dy * dist + py * lat);
-          if (pt) {
-            const key = `${pt.x},${pt.y}`;
-            if (!seen.has(key)) {
-              seen.add(key);
-              tiles.push({
-                x: pt.x,
-                y: pt.y,
-                isFrontalArc: dist === 1,
-                isCorridor: dist > 1,
-                distance: dist,
-              });
-            }
+      for (let lat = -SLASH_HALF_WIDTH; lat <= SLASH_HALF_WIDTH; lat++) {
+        const pt = wrapOrBound(pos.x + dx * dist + px * lat, pos.y + dy * dist + py * lat);
+        if (pt) {
+          const key = `${pt.x},${pt.y}`;
+          if (!seen.has(key)) {
+            seen.add(key);
+            tiles.push({
+              x: pt.x,
+              y: pt.y,
+              isFrontalArc: dist === 1,
+              isCorridor: dist > 1,
+              distance: dist,
+            });
           }
         }
       }
@@ -236,7 +240,7 @@
     if (!cat || !cat.alive) return;
     const catRange = (settingCatAttackRange && settingCatAttackRange.value)
       ? parseInt(settingCatAttackRange.value, 10)
-      : (state.species?.cat?.attack_range ?? 8);
+      : (state.species?.cat?.attack_range ?? 2);
     const aoeTiles = getSlashAoeTiles(cat.position, cat.facing, catRange, state.width, state.height, state.topology);
 
     const catPx = (cat.position.x + 0.5) * cellW;
@@ -1420,7 +1424,7 @@
       if (cat) {
         const range = (settingCatAttackRange && settingCatAttackRange.value)
           ? parseInt(settingCatAttackRange.value, 10)
-          : (currentState.species?.cat?.attack_range ?? 8);
+          : (currentState.species?.cat?.attack_range ?? 2);
         const aoe = getSlashAoeTiles(cat.position, cat.facing, range, currentState.width, currentState.height, currentState.topology);
         enqueueSlashAnimation({
           id: `manual_${Date.now()}`,
@@ -1613,7 +1617,7 @@
       }
       if (data.cat) {
         if (settingCatMove) settingCatMove.value = data.cat.move_cooldown ?? 3;
-        if (settingCatAttackRange) settingCatAttackRange.value = data.cat.attack_range ?? 8;
+        if (settingCatAttackRange) settingCatAttackRange.value = data.cat.attack_range ?? 2;
         if (settingCatAttackCd) settingCatAttackCd.value = data.cat.attack_cooldown ?? 3;
         if (settingCatLungeCd) settingCatLungeCd.value = data.cat.lunge_cooldown ?? 2;
         if (settingCatVision) settingCatVision.value = data.cat.vision_radius ?? 10;
@@ -1656,7 +1660,7 @@
 
     const catPayload = {
       move_cooldown: parseIntDefault(settingCatMove?.value, 3, 1),
-      attack_range: parseIntDefault(settingCatAttackRange?.value, 8, 0),
+      attack_range: parseIntDefault(settingCatAttackRange?.value, 2, 0),
       attack_cooldown: parseIntDefault(settingCatAttackCd?.value, 3, 0),
       lunge_cooldown: parseIntDefault(settingCatLungeCd?.value, 2, 0),
       vision_radius: parseIntDefault(settingCatVision?.value, 10, 1),

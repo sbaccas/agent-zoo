@@ -406,7 +406,7 @@ def build_decision_prompt(
         f"Your Score: {obs.score}\n"
         f"Rival Cats: {rival_text}\n"
         f"Capabilities this tick:\n"
-        f"  • attack_range: {atk_range} tiles (60° forward cone)\n"
+        f"  • attack_range: {atk_range} tiles deep, strike zone 3 tiles wide\n"
         f"  • vision_radius: {vision_rad} tiles\n"
         f"  • move_cooldown: {move_cd} tick(s)\n"
         f"  • attack_cooldown: {atk_cd} tick(s)\n"

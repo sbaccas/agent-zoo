@@ -38,7 +38,10 @@ class SimulationConfig(BaseModel):
                 vision_radius=10,
                 action_budget=2,
                 weight=10,
-                attack_range=8,
+                # Depth of the strike zone in tiles. The zone is a rectangle
+                # this deep and 3 tiles wide, so 2 gives the 6 tiles directly
+                # ahead. Was 8, which reached 8 tiles forward and 4 off-axis.
+                attack_range=2,
                 move_cooldown=3,
                 attack_cooldown=3,
                 lunge_cooldown=2,
