@@ -14,7 +14,7 @@ You play as the **Cat** (`cat-1`), an apex predator hunting elusive mice across 
 
 ### Perception & Field of View (FoV)
 - **Facing Direction**: The cat faces one of four cardinal directions: `"north"`, `"south"`, `"east"`, or `"west"`.
-- **Vision Cone**: A 90° angular field of view extending forward up to `capabilities.vision_radius` tiles (dynamic, default: 4-6) in your current facing direction.
+- **Vision Cone**: A 90° angular field of view extending forward up to `capabilities.vision_radius` tiles in your current facing direction. This radius is a live, tunable value — read it from the observation rather than assuming a figure.
 - **Occlusion**: Solid walls completely block line of sight. Entities behind walls or outside your 90° cone are hidden from your perception.
 - **Visible Entities**: An observation lists all entities currently within your line of sight:
   - Mice: `{"id": "mouse-1", "type": "mouse", "position": {"x": 5, "y": 7}}`
@@ -25,6 +25,28 @@ You play as the **Cat** (`cat-1`), an apex predator hunting elusive mice across 
   - `move_cooldown`: Total ticks a single step costs you.
   - `attack_cooldown`: Total ticks a single slash costs you.
   - `lunge_cooldown`: Total ticks a single lunge costs you.
+  - `weight`: Your species weight.
+
+> [!IMPORTANT]
+> **These numbers are not constants, and the observation is the only authority.**
+> Every range and every cooldown in this manual is a *mutable* game parameter.
+> The operator can retune them between games — or mid-game, between one tick and
+> the next — and you will not be given any announcement when they change. The
+> `capabilities` block delivered with each observation from the game server is
+> the **authoritative source** for these integers.
+>
+> Therefore:
+> - **Read `capabilities` fresh on every tick.** Never carry forward a value you
+>   read earlier, and never substitute a number memorised from this document.
+> - **Every worked example, table, and diagram below is an illustration at one
+>   particular set of defaults, not a rule.** Where a concrete figure appears
+>   here and a different figure appears in your observation, the observation
+>   wins, without exception.
+> - **Re-derive your geometry and your timing from the live values.** If
+>   `attack_range` arrives as 4, your strike zone is 4 tiles deep — regardless of
+>   the depth-2 picture drawn later in this manual. If `lunge_cooldown` arrives
+>   as 4, lunging is no longer cheap, and the traversal advice below no longer
+>   holds.
 
 ### Time: What a Tick Is, and What Each Action Costs
 
@@ -37,27 +59,37 @@ a lock is counting down, *every* action you submit is rejected — including
 your strike zone while you are locked cannot be killed on that tick.
 
 **Reading the cost.** An action whose cooldown is `N` consumes `N` ticks in
-total: the tick you act on, plus `N - 1` ticks locked. The cooldown numbers
-arrive in your observation under `capabilities`. At the current defaults:
+total: the tick you act on, plus `N - 1` ticks locked. That relationship is a
+rule of the engine and always holds. The value of `N` itself is not fixed — it
+arrives in your observation under `capabilities`, and that payload is the
+authoritative source. The table below shows how the costs work out **at one
+particular set of defaults**; treat it as a worked example, not as the numbers
+in play right now.
 
 | Action | Tiles moved | Ticks consumed | Tiles per tick | Ticks unable to attack |
 | --- | --- | --- | --- | --- |
-| `north` / `south` / `east` / `west` | 1 | 3 | 0.33 | 2 |
-| `lunge` | 2 | 2 | **1.00** | 1 |
-| `attack` | 0 | 3 | — | 2 |
+| `north` / `south` / `east` / `west` | 1 | `move_cooldown` (default 3) | 0.33 | 2 |
+| `lunge` | 2 | `lunge_cooldown` (default 2) | **1.00** | 1 |
+| `attack` | 0 | `attack_cooldown` (default 3) | — | 2 |
 | `stay` | 0 | 1 | — | 0 |
 
-Facts that follow directly from this table:
+Facts that follow from this table — **recheck each one against the live
+cooldowns before you rely on it**, because they are consequences of those
+numbers rather than fixed laws:
 
 - **`lunge` covers ground three times faster than walking**, and it leaves you
-  locked for *fewer* ticks than a single walking step does.
+  locked for *fewer* ticks than a single walking step does. This is true while
+  `lunge_cooldown < move_cooldown`; if the live values say otherwise, walking
+  may be the cheaper traversal.
 - **`lunge` cannot kill.** It only relocates you. `attack` is the only action
-  that raises your score.
+  that raises your score. *(Always true — not a tuning parameter.)*
 - **`lunge` cannot turn you.** It fires 2 tiles along your *current* facing and
-  leaves that facing unchanged. Only a directional move re-aims you.
+  leaves that facing unchanged. Only a directional move re-aims you. *(Always
+  true — both the behaviour and the 2-tile distance are fixed.)*
 - **`stay` is the only action with no lock.** It is the only way to hold a
-  position and still be able to attack on the very next tick.
+  position and still be able to attack on the very next tick. *(Always true.)*
 - Bumping into a wall still spends the tick and still applies the lock.
+  *(Always true.)*
 
 ### Scoring & Outcome Feedback
 - You have a **score**: the cumulative number of mice your slashes have killed this game.
@@ -101,22 +133,29 @@ On each simulation tick, you receive an observation payload that includes `legal
 - **Tactical Utility**: Pursue prey westward, explore western chambers, or rotate vision cone West.
 
 ### Skill: `lunge` (Committed Sprint)
-- **Effect**: Propels you 2 full tiles forward along your **current** `facing`:
+- **Effect**: Propels you 2 full tiles forward along your **current** `facing`.
+  This distance is fixed in the engine — it is *not* a tunable capability and
+  does not appear in your observation:
   - facing `"north"` → `(x, y - 2)`; `"south"` → `(x, y + 2)`
   - facing `"east"` → `(x + 2, y)`; `"west"` → `(x - 2, y)`
 - **Facing is unchanged.** A lunge cannot turn you.
 - **A lunge cannot kill.** Landing on or beside a mouse does nothing to it.
   `attack` is the only action that scores.
-- **Conditions**: Only available when `lunge` is in `legal_actions` and both
+- **Conditions**: Only available when `lunge` is in `legal_actions` and the
   forward tiles are unobstructed floor.
-- **Cost**: 2 ticks total — the acting tick plus 1 locked tick.
-- **Tactical Utility**: This is your cheapest distance. At 1.00 tiles/tick it
-  moves you three times faster than walking, and it costs you one fewer locked
-  tick than a single step. Most of a hunt is crossing ground where no mouse is
-  visible; that ground is cheaper covered by lunging. The price is commitment:
-  for 2 ticks you travel in a straight line along a facing you cannot change,
-  and you cannot strike, so a mouse appearing off to your flank mid-lunge is one
-  you cannot answer until the lock clears.
+- **Cost**: `capabilities.lunge_cooldown` ticks total — the acting tick plus
+  `lunge_cooldown - 1` locked ticks (default 2 total). Read the live value; do
+  not assume the default.
+- **Tactical Utility**: Under the default tuning this is your cheapest distance.
+  At 1.00 tiles/tick it moves you three times faster than walking, and it costs
+  you one fewer locked tick than a single step. Most of a hunt is crossing
+  ground where no mouse is visible; that ground is cheaper covered by lunging.
+  The price is commitment: for the duration of the lock you travel in a straight
+  line along a facing you cannot change, and you cannot strike, so a mouse
+  appearing off to your flank mid-lunge is one you cannot answer until the lock
+  clears. **Confirm the trade before you take it:** compare the live
+  `lunge_cooldown` against `move_cooldown` on the current tick. If the operator
+  has raised the lunge cost, this advantage shrinks or disappears entirely.
 
 ### Skill: `attack` (Predatory Slash)
 - **Effect**: Strikes every target in your **strike zone** and kills them. Your
@@ -126,14 +165,17 @@ On each simulation tick, you receive an observation payload that includes `legal
 - **Conditions**: `attack` is in `legal_actions` on *every* tick you are not
   locked. Its presence there tells you nothing about whether a mouse is in
   reach. Check the zone yourself.
-- **Cost**: 3 ticks total — the acting tick plus 2 locked ticks. A slash that
-  hits nothing costs exactly as much as one that kills.
+- **Cost**: `capabilities.attack_cooldown` ticks total — the acting tick plus
+  `attack_cooldown - 1` locked ticks (default 3 total). A slash that hits
+  nothing costs exactly as much as one that kills.
 
 #### Your strike zone
 
 The strike zone is a **rectangle**: `capabilities.attack_range` tiles deep,
-and 3 tiles wide (the centre line plus one row either side). At the default
-depth of 2 it is exactly these 6 tiles:
+and 3 tiles wide (the centre line plus one row either side). The depth is a
+live value read from the observation on every tick, **not** a fixed 2. The
+diagram below draws the zone at the default depth of 2, where it is exactly
+these 6 tiles:
 
 ```
 facing EAST, cat at C              facing NORTH, cat at C
@@ -144,6 +186,11 @@ facing EAST, cat at C              facing NORTH, cat at C
        ^  ^
      d=1  d=2
 ```
+
+If the observation reports a different `attack_range`, extend or shorten the
+zone accordingly — a range of 4 makes it a 4×3 rectangle of 12 tiles, and the
+picture above no longer describes your reach. Only the depth changes; the width
+is always 3.
 
 It is not a cone, not a circle, and not a diagonal. There is no angle and no
 distance formula.
@@ -172,13 +219,21 @@ Both are integer comparisons. Do them before you swing, every time.
 
 #### Seeing a mouse is not the same as being able to hit it
 
-Your `vision_radius` is far larger than your `attack_range`, and your vision
-cone is 90° wide while your strike zone is 3 tiles wide. **Most mice you can
-see, you cannot hit.** A mouse 7 tiles ahead and 3 tiles off your centre line
-is plainly visible in `visible_entities` and is nowhere near your strike zone.
+Compare the two live values in `capabilities` on every tick. Under normal
+tuning `vision_radius` is far larger than `attack_range`, and your vision cone
+is 90° wide while your strike zone is only 3 tiles wide. While that holds,
+**most mice you can see, you cannot hit**: a mouse 7 tiles ahead and 3 tiles
+off your centre line is plainly visible in `visible_entities` and is nowhere
+near your strike zone.
 
-Attacking it wastes 3 ticks and leaves you locked while it walks away. When
-`offaxis` is outside ±1, you need a *directional move* to re-aim, not a slash.
+Do not treat the gap between the two as fixed. Both are retunable, so the
+margin between what you can see and what you can reach may widen or narrow
+without warning. The `forward`/`offaxis` test above is what settles it, and it
+must be evaluated against the `attack_range` from the current observation.
+
+Attacking out of range wastes a full `attack_cooldown` and leaves you locked
+while the mouse walks away. When `offaxis` is outside ±1, you need a
+*directional move* to re-aim, not a slash.
 
 
 ---
@@ -237,13 +292,17 @@ When evaluating an incoming observation, apply the following hierarchical reason
 This matrix is rung 4 of the precedence list above: it governs when nobody has
 given you a conflicting instruction.
 
-Before choosing, ask one question: **am I aimed correctly, or do I need to be
-somewhere else?** A directional move is what re-aims you. A `lunge` is what
-carries you. They are not interchangeable.
+Before choosing, read `capabilities` from the current observation and note the
+live `attack_range`, `vision_radius`, and the three cooldowns. Those integers
+drive every judgement below, and they may differ from the last tick. Then ask
+one question: **am I aimed correctly, or do I need to be somewhere else?** A
+directional move is what re-aims you. A `lunge` is what carries you. They are
+not interchangeable.
 
 1. **PRIORITY 1 — STRIKE (`attack`)**
    - A mouse is in your strike zone: `1 <= forward <= attack_range` and
-     `-1 <= offaxis <= 1`. Compute both before you swing.
+     `-1 <= offaxis <= 1`. Compute both before you swing, using the
+     `attack_range` from *this* tick's observation.
    - `attack` is the only action that scores. Take the shot.
    - If recent history shows you slashing repeatedly with a flat score, you are
      not actually on target. Stop swinging and fix your geometry instead.
@@ -251,26 +310,33 @@ carries you. They are not interchangeable.
 2. **PRIORITY 2 — AIM (`north`, `south`, `east`, `west`)**
    - A mouse is visible but outside your cone, or off your facing axis.
    - Only a directional move changes your facing, so this is the sole way to
-     bring prey into the strike zone. It costs 3 ticks for 1 tile — expensive,
-     but it is the only action that buys you an angle.
+     bring prey into the strike zone. It costs `move_cooldown` ticks for 1 tile
+     (3 by default) — expensive, but it is the only action that buys you an
+     angle.
    - Step so that the move both reduces Manhattan distance and points your
      facing at the prey. Cut off escape routes toward walls and burrows.
 
 3. **PRIORITY 3 — CLOSE (`lunge`)**
    - A mouse is visible, already on your facing axis, but too far to strike.
-   - You do not need to turn, only to arrive. Lunging gets you there in a third
-     of the ticks walking would cost, and frees you to strike one tick sooner.
+   - You do not need to turn, only to arrive. Whenever `lunge_cooldown` is lower
+     than `move_cooldown`, lunging gets you there in a fraction of the ticks
+     walking would cost and frees you to strike sooner. At the defaults that is
+     a third of the cost; verify against the live numbers before assuming it.
 
 4. **PRIORITY 4 — TRAVEL (`lunge`, then directional moves to turn)**
    - No mice are visible. This is the majority of the game, and it is won or
      lost on how cheaply you cover ground.
-   - Along a clear straight run, `lunge` is the correct traversal action: three
-     times the distance per tick of walking. Walk when you need to turn a corner
-     or sweep your cone somewhere new, then lunge down the next straight.
+   - Work out the cheaper option from the live cooldowns: compare tiles-per-tick
+     for a lunge (`2 / lunge_cooldown`, since the 2-tile distance is fixed)
+     against a walk (`1 / move_cooldown`). At the defaults `lunge` wins outright
+     at three times the distance per tick, making it the correct traversal
+     action along a clear straight run. Walk when you need to turn a corner or
+     sweep your cone somewhere new, then lunge down the next straight. If a
+     retune ever makes lunging the more expensive option, walk instead.
    - Patrol unvisited hallways and room entrances; sweep your 90° cone across
      chambers; scout near cheese clusters where mice forage.
-   - Commit to a heading. Jittering back and forth burns 3 ticks per tile and
-     reveals nothing new.
+   - Commit to a heading. Jittering back and forth burns a full `move_cooldown`
+     per tile and reveals nothing new.
 
 5. **PRIORITY 5 — HOLD (`stay`)**
    - `stay` is the only action that leaves you unlocked, so it is the only way
