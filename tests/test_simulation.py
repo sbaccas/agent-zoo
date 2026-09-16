@@ -21,7 +21,7 @@ async def test_simulation_creation():
     assert state.species is not None
     assert "cat" in state.species
     assert "mouse" in state.species
-    assert state.species["cat"].attack_range == 2
+    assert state.species["cat"].attack_range == 4
     assert state.species["cat"].vision_radius == 10
     assert state.species["cat"].move_cooldown == 3
     assert state.species["mouse"].move_cooldown == 2
@@ -61,11 +61,16 @@ async def test_simulation_reset():
 
 
 @pytest.mark.asyncio
-async def test_default_population_is_small():
+async def test_default_population_is_prey_dense():
+    """150 mice on the default board, not a token handful.
+
+    The cat is slower than its prey and loses any straight chase, so encounter
+    frequency has to come from density rather than from pursuit skill.
+    """
     sim = Simulation()
     state = sim.get_state()
     assert state.cat_count == 2
-    assert state.mouse_count == 10
+    assert state.mouse_count == 150
 
 
 @pytest.mark.asyncio
@@ -284,7 +289,7 @@ async def test_hyperparameter_species_config_live_tuning():
         assert get_res.status_code == 200
         species_data = get_res.json()
         assert species_data["cat"]["move_cooldown"] == 3
-        assert species_data["cat"]["attack_range"] == 2
+        assert species_data["cat"]["attack_range"] == 4
         assert species_data["cat"]["vision_radius"] == 10
         assert species_data["mouse"]["move_cooldown"] == 2
 

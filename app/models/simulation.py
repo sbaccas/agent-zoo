@@ -70,7 +70,7 @@ class SimulationConfig(BaseModel):
     width: int = Field(default=100, ge=5, le=1000)
     height: int = Field(default=100, ge=5, le=1000)
     topology: Topology = Topology.BOUNDED
-    populations: Dict[str, int] = Field(default_factory=lambda: {"cats": 2, "mice": 10})
+    populations: Dict[str, int] = Field(default_factory=lambda: {"cats": 2, "mice": 150})
     species: Dict[str, SpeciesConfig] = Field(
         default_factory=lambda: {
             "cat": SpeciesConfig(
@@ -78,9 +78,11 @@ class SimulationConfig(BaseModel):
                 action_budget=2,
                 weight=10,
                 # Depth of the strike zone in tiles. The zone is a rectangle
-                # this deep and 3 tiles wide, so 2 gives the 6 tiles directly
-                # ahead. Was 8, which reached 8 tiles forward and 4 off-axis.
-                attack_range=2,
+                # this deep and 3 tiles wide, so 4 gives the 12 tiles directly
+                # ahead. Raised from 2 because the cat is slower than the mouse
+                # (move_cooldown 3 vs 2) and cannot win a straight chase; reach
+                # is what compensates for the speed deficit.
+                attack_range=4,
                 move_cooldown=3,
                 attack_cooldown=3,
                 lunge_cooldown=2,
@@ -101,7 +103,10 @@ class SimulationConfig(BaseModel):
             ),
         }
     )
-    tick_rate: float = Field(default=5.0, gt=0, le=100.0)
+    # Ticks per second, not seconds per tick: the loop sleeps 1/tick_rate.
+    # 0.25 is one tick every 4 seconds, which is the pace the LLM cat needs to
+    # have any chance of answering inside its own tick budget.
+    tick_rate: float = Field(default=0.25, gt=0, le=100.0)
 
 
 class GameEvent(BaseModel):

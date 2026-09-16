@@ -284,10 +284,15 @@ def test_canvas_and_engine_agree_tile_for_tile():
 # 4. Config and documentation
 # --------------------------------------------------------------------------
 
-def test_cat_default_attack_range_gives_the_six_tile_zone():
+def test_cat_default_attack_range_gives_the_twelve_tile_zone():
+    """Depth 4 x the fixed 3-tile width = the 12 tiles ahead of the cat.
+
+    Raised from 2 to offset the cat being slower than the mouse: it cannot win
+    a straight chase, so reach is what makes the pursuit end in a kill.
+    """
     cfg = SimulationConfig()
-    assert cfg.species["cat"].attack_range == 2, (
-        "the default depth no longer produces the 6-tile zone"
+    assert cfg.species["cat"].attack_range == 4, (
+        "the default depth no longer produces the 12-tile zone"
     )
 
 

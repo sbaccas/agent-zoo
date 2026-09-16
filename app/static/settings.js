@@ -58,7 +58,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
       if (data.cat) {
         if (settingCatMove) settingCatMove.value = data.cat.move_cooldown ?? 3;
-        if (settingCatAttackRange) settingCatAttackRange.value = data.cat.attack_range ?? 2;
+        if (settingCatAttackRange) settingCatAttackRange.value = data.cat.attack_range ?? 4;
         if (settingCatAttackCd) settingCatAttackCd.value = data.cat.attack_cooldown ?? 3;
         if (settingCatLungeCd) settingCatLungeCd.value = data.cat.lunge_cooldown ?? 2;
         if (settingCatVision) settingCatVision.value = data.cat.vision_radius ?? 10;
@@ -86,7 +86,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const catPayload = {
       move_cooldown: parseIntDefault(settingCatMove?.value, 3, 1),
-      attack_range: parseIntDefault(settingCatAttackRange?.value, 2, 0),
+      attack_range: parseIntDefault(settingCatAttackRange?.value, 4, 0),
       attack_cooldown: parseIntDefault(settingCatAttackCd?.value, 3, 0),
       lunge_cooldown: parseIntDefault(settingCatLungeCd?.value, 2, 0),
       vision_radius: parseIntDefault(settingCatVision?.value, 10, 1),

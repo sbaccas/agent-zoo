@@ -190,7 +190,7 @@
   // plain corridor tiles for anything the recomputation misses.
   function hydrateZoneTiles(zone, state) {
     const owner = (state.entities || []).find(e => e.id === zone.owner_id);
-    const range = state.species?.cat?.attack_range ?? 2;
+    const range = state.species?.cat?.attack_range ?? 4;
     let meta = [];
     if (owner) {
       meta = getSlashAoeTiles(owner.position, zone.facing, range, state.width, state.height, state.topology);
@@ -262,7 +262,7 @@
     if (!cat || !cat.alive) return;
     const catRange = (settingCatAttackRange && settingCatAttackRange.value)
       ? parseInt(settingCatAttackRange.value, 10)
-      : (state.species?.cat?.attack_range ?? 2);
+      : (state.species?.cat?.attack_range ?? 4);
     const aoeTiles = getSlashAoeTiles(cat.position, cat.facing, catRange, state.width, state.height, state.topology);
 
     const catPx = (cat.position.x + 0.5) * cellW;
@@ -892,7 +892,7 @@
         actorId: zone.owner_id,
         catPos: owner ? owner.position : (zone.tiles && zone.tiles[0]) || { x: 0, y: 0 },
         facing: zone.facing,
-        rangeTiles: state.species?.cat?.attack_range ?? 2,
+        rangeTiles: state.species?.cat?.attack_range ?? 4,
         aoeTiles: hydrateZoneTiles(zone, state),
         hits: [],
         progress: 1.0,
@@ -1472,7 +1472,7 @@
       if (cat) {
         const range = (settingCatAttackRange && settingCatAttackRange.value)
           ? parseInt(settingCatAttackRange.value, 10)
-          : (currentState.species?.cat?.attack_range ?? 2);
+          : (currentState.species?.cat?.attack_range ?? 4);
         const aoe = getSlashAoeTiles(cat.position, cat.facing, range, currentState.width, currentState.height, currentState.topology);
         enqueueSlashAnimation({
           id: `manual_${Date.now()}`,
@@ -1665,7 +1665,7 @@
       }
       if (data.cat) {
         if (settingCatMove) settingCatMove.value = data.cat.move_cooldown ?? 3;
-        if (settingCatAttackRange) settingCatAttackRange.value = data.cat.attack_range ?? 2;
+        if (settingCatAttackRange) settingCatAttackRange.value = data.cat.attack_range ?? 4;
         if (settingCatAttackCd) settingCatAttackCd.value = data.cat.attack_cooldown ?? 3;
         if (settingCatLungeCd) settingCatLungeCd.value = data.cat.lunge_cooldown ?? 2;
         if (settingCatVision) settingCatVision.value = data.cat.vision_radius ?? 10;
@@ -1708,7 +1708,7 @@
 
     const catPayload = {
       move_cooldown: parseIntDefault(settingCatMove?.value, 3, 1),
-      attack_range: parseIntDefault(settingCatAttackRange?.value, 2, 0),
+      attack_range: parseIntDefault(settingCatAttackRange?.value, 4, 0),
       attack_cooldown: parseIntDefault(settingCatAttackCd?.value, 3, 0),
       lunge_cooldown: parseIntDefault(settingCatLungeCd?.value, 2, 0),
       vision_radius: parseIntDefault(settingCatVision?.value, 10, 1),

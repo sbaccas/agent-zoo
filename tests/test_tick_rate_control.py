@@ -84,14 +84,20 @@ def test_dropdown_values_are_within_the_backend_clamp():
 def test_default_selected_option_matches_the_backend_default():
     """The pre-selected option is what the user sees before any state arrives.
 
-    SimulationConfig.tick_rate defaults to 5.0, so anything else here is wrong
-    on first paint.
+    The expected value is read from SimulationConfig rather than written out
+    again here. This assertion exists to catch the markup and the backend
+    drifting apart, so hardcoding the number would defeat it: changing the
+    default in one place would fail the test even when the pair still agree.
     """
+    from app.models.simulation import SimulationConfig
+
+    backend_default = SimulationConfig().tick_rate
     html = INDEX_HTML.read_text()
     selected = re.search(r'<option value="([\d.]+)" selected>', html)
     assert selected, "no option is marked selected"
-    assert float(selected.group(1)) == 5.0, (
-        "the pre-selected tick rate no longer matches SimulationConfig's default of 5.0"
+    assert float(selected.group(1)) == pytest.approx(backend_default), (
+        f"the pre-selected tick rate ({selected.group(1)}) no longer matches "
+        f"SimulationConfig's default of {backend_default}"
     )
 
 
