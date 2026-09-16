@@ -141,27 +141,14 @@ async def submit_agent_action(sim_id: str, agent_id: str, req: ActionRequest, st
             message=f"⚔️ [TICK {sim.scheduler.tick} | R{sim.scheduler.round}] SLASH: {entity.id} executed slash attack ({len(result.affected_entities)} hits)",
             details=slash_details,
         ))
-        if result.affected_entities:
-            sim.scheduler.captures += len(result.affected_entities)
-            for victim_id in result.affected_entities:
-                victim = sim.entity_manager.entities.get(victim_id)
-                v_pos = f"({victim.position.x}, {victim.position.y})" if victim else "?"
-                msg = f"💥 [TICK {sim.scheduler.tick} | R{sim.scheduler.round}] MANUAL CAPTURE: {entity.id} at ({entity.position.x}, {entity.position.y}) attacked and captured {victim_id} at {v_pos}!"
-                logger.info(msg)
-                print(msg, flush=True)
-                sim.scheduler.events.append(GameEvent(
-                    tick=sim.scheduler.tick,
-                    round=sim.scheduler.round,
-                    event_type="capture",
-                    actor_id=entity.id,
-                    target_id=victim_id,
-                    position=victim.position if victim else entity.position,
-                    message=msg,
-                    details={
-                        "facing": entity.facing.value,
-                        "slash_range": slash_details.get("range_tiles", 2),
-                    },
-                ))
+        # Routed through the scheduler helper so a manual kill scores exactly
+        # like an agent's. This path previously bumped the global `captures`
+        # counter without ever touching `scores`, so manual play inflated the
+        # total while leaving the cat's own leaderboard entry untouched.
+        for victim_id in result.affected_entities:
+            victim = sim.entity_manager.entities.get(victim_id)
+            if victim:
+                sim.scheduler._register_capture(entity.id, victim, "manual slash impact")
 
     # 5. Synchronize simulation clock: advance other animals for this step (clock was already advanced)
     if step and sim.status != SimulationStatus.RUNNING and result.accepted:

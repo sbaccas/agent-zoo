@@ -18,7 +18,7 @@ logger = logging.getLogger("simulation")
 
 class SimulationSnapshot:
     def __init__(self, tick: int, round: int, captures: int, entities: list, events: list,
-                 scores: Optional[dict] = None):
+                 scores: Optional[dict] = None, hazard_zones: Optional[list] = None):
         self.tick = tick
         self.round = round
         self.captures = captures
@@ -27,6 +27,10 @@ class SimulationSnapshot:
         # Per-cat scores must rewind with everything else, or a step-back leaves
         # scores inflated while the mice come back to life.
         self.scores = dict(scores or {})
+        # Likewise for live zones: rewinding past a slash must take its lethal
+        # tiles with it, otherwise the board keeps killing on behalf of an
+        # attack that no longer happened.
+        self.hazard_zones = list(hazard_zones or [])
 
 
 class Simulation:
@@ -73,6 +77,7 @@ class Simulation:
             entities=[e.model_copy(deep=True) for e in self.entity_manager.entities.values()],
             events=list(self.scheduler.events),
             scores=dict(self.scheduler.scores),
+            hazard_zones=[z.model_copy(deep=True) for z in self.action_handler.hazard_zones],
         )
         self.history.append(snapshot)
         if len(self.history) > self.max_history:
@@ -93,6 +98,7 @@ class Simulation:
             captures=self.scheduler.captures,
             entities=self.entity_manager.get_alive_entities(),
             recent_events=self.scheduler.events[-25:],
+            hazard_zones=list(self.action_handler.hazard_zones),
             can_step_back=len(self.history) > 0,
             species=self.entity_manager.species_config,
         )
@@ -155,6 +161,9 @@ class Simulation:
             self.entity_manager.entities = {
                 e.id: e.model_copy(deep=True) for e in snapshot.entities
             }
+            self.action_handler.hazard_zones = [
+                z.model_copy(deep=True) for z in snapshot.hazard_zones
+            ]
             msg = f"⏪ [STEP BACK] Rewound to Tick {snapshot.tick} | Round {snapshot.round} | Captures: {snapshot.captures}"
             logger.info(msg)
             print(msg, flush=True)

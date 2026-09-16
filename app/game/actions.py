@@ -3,12 +3,20 @@ from app.game.entities import EntityManager
 from app.game.world import World
 from app.models.action import ActionRequest, ActionResult, ActionType
 from app.models.entity import Entity, EntityType, Position
+from app.models.simulation import HazardZone
 
 
 class ActionHandler:
     def __init__(self, world: World, entity_manager: EntityManager):
         self.world = world
         self.entity_manager = entity_manager
+        # Live lethal zones, newest last. Owned here rather than on the
+        # Scheduler because attacks also arrive via the manual and HTTP
+        # endpoints, which call apply_action directly; hanging the registry
+        # off the shared handler keeps those paths from silently skipping
+        # zone creation.
+        self.hazard_zones: List[HazardZone] = []
+        self._zone_seq = 0
 
     def apply_action(self, entity: Entity, action: ActionType, current_tick: int) -> ActionResult:
         prev_pos = Position(x=entity.position.x, y=entity.position.y)
@@ -34,6 +42,11 @@ class ActionHandler:
             aoe_tiles = self.world.get_slash_aoe_tiles(entity.position, entity.facing, range_tiles=range_tiles)
             hit_entities: List[str] = []
 
+            # Anything standing in the rectangle when the blade lands dies
+            # immediately. The zone registered below then keeps killing for the
+            # rest of its lifetime, so this pass is not redundant: it catches
+            # prey that would otherwise flee during its own turn later in this
+            # same tick.
             target_type = EntityType.MOUSE if entity.type == EntityType.CAT else EntityType.CAT
             for tx, ty in aoe_tiles:
                 occupants = self.entity_manager.get_entities_at(tx, ty)
@@ -45,6 +58,19 @@ class ActionHandler:
             cooldown_dur = spec_cfg.attack_cooldown if spec_cfg else 3
             entity.action_cooldown = max(0, cooldown_dur - 1)
             entity.locked_action = action.value if entity.action_cooldown > 0 else None
+
+            aoe_ticks = spec_cfg.attack_aoe_ticks if spec_cfg else 2
+            self._zone_seq += 1
+            zone = HazardZone(
+                id=f"zone-{entity.id}-{self._zone_seq}",
+                owner_id=entity.id,
+                kind="slash",
+                tiles=[Position(x=tx, y=ty) for tx, ty in aoe_tiles],
+                facing=entity.facing.value,
+                created_tick=current_tick,
+                lethal_until_tick=current_tick + max(1, aoe_ticks) - 1,
+            )
+            self.hazard_zones.append(zone)
 
             return ActionResult(
                 accepted=True,
@@ -60,6 +86,9 @@ class ActionHandler:
                     "range_tiles": range_tiles,
                     "aoe_tiles": [{"x": tx, "y": ty} for tx, ty in aoe_tiles],
                     "hit_entities": hit_entities,
+                    "zone_id": zone.id,
+                    "aoe_ticks": max(1, aoe_ticks),
+                    "lethal_until_tick": zone.lethal_until_tick,
                 },
             )
 

@@ -59,6 +59,9 @@ class Scheduler:
             vision_radius = self.entity_manager.species_config[species_key].vision_radius
 
         visible = []
+        # Hoisted: also used below to decide which hazard zones this entity can
+        # see. Empty for mice, which use a radial check instead of a cone.
+        fov_tiles: set = set()
         if entity.type == EntityType.CAT:
             fov_tiles = set(self.world.get_forward_fov_tiles(entity.position, entity.facing, distance=vision_radius))
             for other in self.entity_manager.get_alive_entities():
@@ -86,6 +89,36 @@ class Scheduler:
                         "locked_action": other.locked_action,
                     })
 
+        # Visible lethal zones. A cat always sees its own blade regardless of
+        # facing (it knows where it swung); everything else must fall inside
+        # the normal sight rule for that species.
+        visible_zones = []
+        for zone in self.action_handler.hazard_zones:
+            if not zone.is_lethal_on(self.tick):
+                continue
+            mine = zone.owner_id == entity.id
+            if not mine:
+                if entity.type == EntityType.CAT:
+                    seen = any((t.x, t.y) in fov_tiles for t in zone.tiles)
+                else:
+                    seen = any(
+                        (t.x - entity.position.x) ** 2 + (t.y - entity.position.y) ** 2 <= vision_radius ** 2
+                        for t in zone.tiles
+                    )
+                if not seen:
+                    continue
+            visible_zones.append({
+                "id": zone.id,
+                "owner_id": zone.owner_id,
+                "kind": zone.kind,
+                "is_mine": mine,
+                "tiles": [{"x": t.x, "y": t.y} for t in zone.tiles],
+                "created_tick": zone.created_tick,
+                "lethal_until_tick": zone.lethal_until_tick,
+                # Counts the current tick, so 1 means "lethal now, gone next tick".
+                "ticks_remaining": zone.ticks_remaining(self.tick),
+            })
+
         allow_attack = (entity.type == EntityType.CAT)
         legal_actions = [a.value for a in self.world.get_legal_actions(entity.position, allow_attack=allow_attack, facing=entity.facing)]
 
@@ -95,6 +128,7 @@ class Scheduler:
         attack_cd = spec_cfg.attack_cooldown if spec_cfg else 0
         lunge_cd = spec_cfg.lunge_cooldown if spec_cfg else 0
         weight = spec_cfg.weight if spec_cfg else 1
+        aoe_ticks = spec_cfg.attack_aoe_ticks if spec_cfg else 2
 
         capabilities = {
             "vision_radius": vision_radius,
@@ -103,6 +137,8 @@ class Scheduler:
             "attack_cooldown": attack_cd,
             "lunge_cooldown": lunge_cd,
             "weight": weight,
+            # How many ticks a slash stays lethal, counting the tick it lands.
+            "attack_aoe_ticks": aoe_ticks,
         }
 
         return {
@@ -126,12 +162,79 @@ class Scheduler:
             },
             "capabilities": capabilities,
             "visible_entities": visible,
+            # Tiles that are lethal right now. Prey needs these to route around
+            # a blade that outlives the swing; the attacker needs them to see
+            # how long its own zone will keep working.
+            "hazard_zones": visible_zones,
             "legal_actions": legal_actions,
             # Raw outcome state. Deliberately not interpreted: the agent infers
             # hit/miss by diffing its own `score` against the previous tick.
             "score": self.scores.get(entity.id, 0),
             "scoreboard": self.get_scoreboard(),
         }
+
+    def _register_capture(self, owner_id: str, victim: Entity, source: str) -> None:
+        """Credit a kill and emit its events.
+
+        Shared by the instant swing and the lingering-zone sweep so a mouse
+        that walks into a blade is scored identically to one caught by it,
+        rather than dying silently with no capture event and no score.
+        """
+        self.captures += 1
+        self.scores[owner_id] = self.scores.get(owner_id, 0) + 1
+        owner = self.entity_manager.entities.get(owner_id)
+        o_pos = f"({owner.position.x}, {owner.position.y})" if owner else "?"
+        msg = (
+            f"💥 [TICK {self.tick} | R{self.round}] CAPTURE: {owner_id} at {o_pos} "
+            f"caught {victim.id} at ({victim.position.x}, {victim.position.y}) "
+            f"via {source}! (Total captures: {self.captures})"
+        )
+        logger.info(msg)
+        print(msg, flush=True)
+        self.events.append(GameEvent(
+            tick=self.tick,
+            round=self.round,
+            event_type="capture",
+            actor_id=owner_id,
+            target_id=victim.id,
+            position=victim.position,
+            message=msg,
+            details={"source": source},
+        ))
+
+    def _resolve_hazard_zones(self) -> None:
+        """Kill anything standing in a live zone, then retire expired zones.
+
+        Runs after every entity has moved, which is the whole point: resolving
+        before movement would let prey step into a lethal tile and out again
+        untouched, making the zone's lifetime decorative.
+        """
+        for zone in self.action_handler.hazard_zones:
+            if not zone.is_lethal_on(self.tick):
+                continue
+            owner = self.entity_manager.entities.get(zone.owner_id)
+            target_type = EntityType.MOUSE if (owner and owner.type == EntityType.CAT) else EntityType.CAT
+            for tile in zone.tiles:
+                for victim in self.entity_manager.get_entities_at(tile.x, tile.y):
+                    if victim.type == target_type and victim.alive:
+                        victim.alive = False
+                        self._register_capture(zone.owner_id, victim, f"{zone.kind} zone")
+
+        expired = [z for z in self.action_handler.hazard_zones if z.lethal_until_tick < self.tick]
+        for zone in expired:
+            self.events.append(GameEvent(
+                tick=self.tick,
+                round=self.round,
+                event_type="zone_expired",
+                actor_id=zone.owner_id,
+                position=zone.tiles[0] if zone.tiles else None,
+                message=f"🌫️ [TICK {self.tick} | R{self.round}] FADE: {zone.owner_id}'s slash zone dissipated",
+                details={"zone_id": zone.id},
+            ))
+        if expired:
+            self.action_handler.hazard_zones = [
+                z for z in self.action_handler.hazard_zones if z.lethal_until_tick >= self.tick
+            ]
 
     async def execute_simulation_step(self, skip_entity_id: Optional[str] = None, advance_clock: bool = True) -> int:
         if advance_clock:
@@ -220,28 +323,10 @@ class Scheduler:
                         message=f"⚔️ [TICK {self.tick} | R{self.round}] SLASH: {cat.id} executed slash attack ({len(res.affected_entities)} hits)",
                         details=slash_details,
                     ))
-                    if res.affected_entities:
-                        self.captures += len(res.affected_entities)
-                        self.scores[cat.id] = self.scores.get(cat.id, 0) + len(res.affected_entities)
-                        for victim_id in res.affected_entities:
-                            victim = self.entity_manager.entities.get(victim_id)
-                            v_pos = f"({victim.position.x}, {victim.position.y})" if victim else "?"
-                            msg = f"💥 [TICK {self.tick} | R{self.round}] CAPTURE: {cat.id} at ({cat.position.x}, {cat.position.y}) facing {cat.facing.value.upper()} attacked and captured {victim_id} at {v_pos}! (Total captures: {self.captures})"
-                            logger.info(msg)
-                            print(msg, flush=True)
-                            self.events.append(GameEvent(
-                                tick=self.tick,
-                                round=self.round,
-                                event_type="capture",
-                                actor_id=cat.id,
-                                target_id=victim_id,
-                                position=victim.position if victim else cat.position,
-                                message=msg,
-                                details={
-                                    "facing": cat.facing.value,
-                                    "slash_range": slash_details.get("range_tiles", 2),
-                                },
-                            ))
+                    for victim_id in res.affected_entities:
+                        victim = self.entity_manager.entities.get(victim_id)
+                        if victim:
+                            self._register_capture(cat.id, victim, "slash impact")
 
         # 2. Mice turn
         for mouse in mice:
@@ -327,5 +412,10 @@ class Scheduler:
                     position=mouse.position,
                     message=msg,
                 ))
+
+        # 3. Hazard zones. Deliberately last: a zone must judge the board as it
+        # ends the tick, so stepping into a live blade is fatal rather than
+        # survivable by passing through between phases.
+        self._resolve_hazard_zones()
 
         return self.tick

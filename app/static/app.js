@@ -181,6 +181,28 @@
     return tiles;
   }
 
+  // Turn a server hazard zone into tiles the slash renderers understand.
+  //
+  // The server's tile list is authoritative (it already accounts for bounds and
+  // torus wrapping), but the renderers want the isFrontalArc / isCorridor /
+  // distance metadata that only the local geometry helper produces. So we
+  // recompute the geometry purely to borrow that metadata, and fall back to
+  // plain corridor tiles for anything the recomputation misses.
+  function hydrateZoneTiles(zone, state) {
+    const owner = (state.entities || []).find(e => e.id === zone.owner_id);
+    const range = state.species?.cat?.attack_range ?? 2;
+    let meta = [];
+    if (owner) {
+      meta = getSlashAoeTiles(owner.position, zone.facing, range, state.width, state.height, state.topology);
+    }
+    const byKey = new Map(meta.map(t => [`${t.x},${t.y}`, t]));
+    return (zone.tiles || []).map(t => {
+      const m = byKey.get(`${t.x},${t.y}`);
+      return m ? { ...m, x: t.x, y: t.y }
+               : { x: t.x, y: t.y, isFrontalArc: false, isCorridor: true, distance: range };
+    });
+  }
+
   // Animation Engine for Slash, Special Effects & Multi-Frame Death
   let activeAnimations = [];
   let animFrameId = null;
@@ -853,6 +875,32 @@
         });
         processedCatIds.add(anim.actorId);
       }
+    }
+
+    // Lingering lethal zones, straight from server state.
+    //
+    // The event pass above is gated on `ev.tick === state.tick`, so a slash
+    // vanished from the board the moment the tick advanced even though the
+    // zone stays lethal afterwards. Anything still dangerous is drawn here so
+    // the danger markers last exactly as long as the danger does. Actors
+    // already drawn by the event or animation passes are skipped, so the swing
+    // keeps its animation on the tick it lands.
+    for (const zone of (state.hazard_zones || [])) {
+      if (processedCatIds.has(zone.owner_id)) continue;
+      const owner = (state.entities || []).find(e => e.id === zone.owner_id);
+      currentTickSlashes.push({
+        actorId: zone.owner_id,
+        catPos: owner ? owner.position : (zone.tiles && zone.tiles[0]) || { x: 0, y: 0 },
+        facing: zone.facing,
+        rangeTiles: state.species?.cat?.attack_range ?? 2,
+        aoeTiles: hydrateZoneTiles(zone, state),
+        hits: [],
+        progress: 1.0,
+        isDynamic: false,
+        lingering: true,
+        ticksRemaining: Math.max(0, zone.lethal_until_tick - state.tick + 1),
+      });
+      processedCatIds.add(zone.owner_id);
     }
 
     // 5. Render Slash Ground AoE Glow Fill (beneath sprites)
