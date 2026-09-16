@@ -153,3 +153,69 @@ def test_workbench_cachebuster_matches_no_stale_version():
     assert int(match.group(1)) >= 21, (
         "cachebuster not bumped; browsers will serve the cached buggy script"
     )
+
+
+# --- Lock lifecycle rendering (box 5) ---------------------------------------
+#
+# A locked tick still produces a full decision, but the engine discards it.
+# Box 5 used to render those rows identically to executed moves, which made the
+# cat's normal one-move-per-three-ticks cadence look like it was spamming the
+# same command.
+
+
+def _extract_fn(name: str) -> str:
+    """Pulls any top-level `function name(...) {...}` out of workbench.js."""
+    src = WORKBENCH_JS.read_text()
+    start = src.index(f"function {name}(")
+    depth = 0
+    for i in range(start, len(src)):
+        if src[i] == "{":
+            depth += 1
+        elif src[i] == "}":
+            depth -= 1
+            if depth == 0:
+                return src[start:i + 1]
+    raise AssertionError(f"could not brace-match {name} in workbench.js")
+
+
+def _run_locked(item_js: str) -> str:
+    program = f"{_extract_fn('isLockedTick')}\nprint(isLockedTick({item_js}));"
+    proc = subprocess.run(
+        [str(JSC), "-e", program], capture_output=True, text=True, timeout=30
+    )
+    if proc.returncode != 0:
+        raise AssertionError(f"jsc failed: {proc.stderr or proc.stdout}")
+    return proc.stdout.strip()
+
+
+@pytest.mark.parametrize("item_js,expected,why", [
+    ("{tick_type:'cooldown'}", "true", "explicit cooldown row"),
+    ("{tick_type:'play'}", "false", "explicit play row"),
+    ("{locked:true}", "true", "locked boolean when tick_type absent"),
+    (
+        "{observation:{self:{can_act:false, action_cooldown:0}}}",
+        "true",
+        "final locked tick: counter already decremented to 0, only can_act is right",
+    ),
+    (
+        "{observation:{self:{action_cooldown:2}}}",
+        "true",
+        "legacy row with no can_act falls back to the counter",
+    ),
+    ("{observation:{self:{action_cooldown:0}}}", "false", "genuinely free tick"),
+    ("{}", "false", "no lock information at all defaults to played"),
+])
+def test_is_locked_tick(item_js, expected, why):
+    assert _run_locked(item_js) == expected, why
+
+
+def test_locked_detection_prefers_can_act_over_the_counter():
+    """The regression that produced two 'play' ticks per three-tick cycle.
+
+    The server decrements `action_cooldown` before building the payload, so the
+    last tick of a lock ships as 0. Anything keyed off the counter alone reads
+    that tick as playable.
+    """
+    assert _run_locked("{observation:{self:{can_act:false, action_cooldown:0}}}") == "true"
+    assert _run_locked("{observation:{self:{can_act:true, action_cooldown:0}}}") == "false"
+

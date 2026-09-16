@@ -363,9 +363,18 @@ def build_decision_prompt(
         h_act = (h_resp.get("action") or "stay").upper()
         h_thought = h_resp.get("thought", "")
         vis_info = f"{len(h_vis)} visible ({[m.get('id') for m in h_vis]})" if h_vis else "0 visible"
+        # Whether this past tick actually ran. A locked tick's action was thrown
+        # away by the engine, and rendering it identically to a real move is what
+        # made the trajectory look inexplicable -- the model saw itself issue the
+        # same command repeatedly while barely moving, and could not tell why.
+        h_cd = int(h_self.get("action_cooldown", 0) or 0)
+        h_can_act = h_self.get("can_act")
+        h_locked = (h_cd > 0) if h_can_act is None else (not h_can_act)
+        outcome = "REJECTED - you were locked" if h_locked else "executed"
         history_lines.append(
             f"  • Tick {h_tick}: Pos ({h_pos.get('x',0)}, {h_pos.get('y',0)}) facing {h_facing}. "
-            f"SCORE: {h_score}. Context: {vis_info}. Move: {h_act} (Reason: \"{h_thought}\")"
+            f"SCORE: {h_score}. Context: {vis_info}. Move: {h_act} [{outcome}] "
+            f"(Reason: \"{h_thought}\")"
         )
 
     history_context = ""
@@ -398,9 +407,46 @@ def build_decision_prompt(
     rivals = {k: v for k, v in (obs.scoreboard or {}).items() if k != obs.self.get("id", agent_id)}
     rival_text = ", ".join(f"{cid}: {sc}" for cid, sc in sorted(rivals.items())) if rivals else "none"
 
+    # Lock state. The server has always sent these two fields; the prompt used to
+    # drop them, so the model issued commands into a locked engine with no way to
+    # know they were being discarded -- observed live as 8 consecutive EAST
+    # commands that produced 2 tiles of movement. Whether this tick is executable
+    # is the first thing the agent needs to know, so it leads the block.
+    #
+    # Wording note: the scheduler pops the previously buffered reply the moment it
+    # dispatches a new observation, so what executes on a free tick is the answer
+    # given on the tick before it. Every answer is therefore a standing intent
+    # applied at the next opportunity, and the text says so rather than promising
+    # immediate execution it cannot guarantee.
+    self_cd = int(obs.self.get("action_cooldown", 0) or 0)
+    self_locked_action = obs.self.get("locked_action")
+    _can_act = obs.self.get("can_act")
+    self_locked = (self_cd > 0) if _can_act is None else (not _can_act)
+    if self_locked:
+        recovering = f" from '{self_locked_action}'" if self_locked_action else ""
+        remaining = (
+            f" You are free again in {self_cd} tick(s)."
+            if self_cd > 0
+            else " This is the last tick of the lock; you are free next tick."
+        )
+        lock_text = (
+            f"LOCKED. You are still recovering{recovering} and cannot act this tick."
+            f"{remaining}\n"
+            f"  No action can be executed on this tick.\n"
+            f"  What you return is recorded as your standing intent: it is what will\n"
+            f"  be applied the moment your lock clears. Answer the question \"what do\n"
+            f"  I do the instant I am free?\", using what you can see right now."
+        )
+    else:
+        lock_text = (
+            "FREE. Your lock has cleared and you are acting this tick.\n"
+            "  What you return becomes your standing intent for your next opportunity."
+        )
+
     observation_context = (
         f"--- CURRENT OBSERVATION (Tick {obs.tick}, Round {obs.round}) ---\n"
         f"Agent ID: {obs.self.get('id', agent_id)}\n"
+        f"Action State: {lock_text}\n"
         f"Current Position: (x={pos.get('x', 0)}, y={pos.get('y', 0)})\n"
         f"Current Facing: {facing}\n"
         f"Your Score: {obs.score}\n"
@@ -677,9 +723,13 @@ async def interrogate_adk_gemini(
                 h_act = (h_resp.get("action") or "stay").upper()
                 h_thought = h_resp.get("thought", "")
                 vis_info = f"{len(h_vis)} visible ({[m.get('id') for m in h_vis]})" if h_vis else "0 visible"
+                h_cd = int(h_self.get("action_cooldown", 0) or 0)
+                h_can_act = h_self.get("can_act")
+                h_locked = (h_cd > 0) if h_can_act is None else (not h_can_act)
+                outcome = "REJECTED - you were locked" if h_locked else "executed"
                 history_lines.append(
                     f"  • Tick {h_tick}: Pos ({h_pos.get('x',0)}, {h_pos.get('y',0)}) facing {h_facing}. "
-                    f"Context: {vis_info}. Move: {h_act} (Reason: \"{h_thought}\")"
+                    f"Context: {vis_info}. Move: {h_act} [{outcome}] (Reason: \"{h_thought}\")"
                 )
 
             history_context = ""

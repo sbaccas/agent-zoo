@@ -546,6 +546,13 @@ def test_transcript_records_are_compact():
         "action",
         "thought",
         "source",
+        # The lock dimension. `source` says which engine decided; these say
+        # whether the engine let it happen. The evaluator needs both, and
+        # conflating them made rejected commands read as deliberate repetition.
+        "tick_type",
+        "executed",
+        "action_cooldown",
+        "locked_action",
         "visible",
         "score",
     }
@@ -554,6 +561,58 @@ def test_transcript_records_are_compact():
     # The evaluator infers hit/miss from the score delta across records, so the
     # counter must survive compaction rather than being dropped as noise.
     assert isinstance(rec["score"], int)
+    # An unlocked observation is a real play tick.
+    assert rec["tick_type"] == "play"
+    assert rec["executed"] is True
+
+
+def test_locked_tick_is_recorded_as_unexecuted_and_does_not_move_the_cat():
+    """A locked tick must not be recorded as a move.
+
+    The transcript used to store the posture the chosen action *would* have
+    produced, even while the engine was rejecting that action. Over a long game
+    that inflated the recorded path to roughly twice the distance the cat could
+    physically travel, and the evaluator reads this file.
+    """
+    client = TestClient(app)
+    obs = _obs(1, x=7, y=9, facing="north")
+    obs["self"]["action_cooldown"] = 2
+    obs["self"]["locked_action"] = "north"
+
+    assert client.post("/act", json=obs).status_code == 200
+
+    rec = store.read_transcript_records()[-1]
+    assert rec["tick_type"] == "cooldown"
+    assert rec["executed"] is False
+    assert rec["action_cooldown"] == 2
+    assert rec["locked_action"] == "north"
+    # Position must be exactly where the cat already was, not where the
+    # discarded action pointed.
+    assert (rec["x"], rec["y"]) == (7, 9)
+    assert rec["facing"] == "north"
+
+
+def test_final_locked_tick_is_not_mistaken_for_a_play_tick():
+    """The last tick of a lock arrives with the counter already at zero.
+
+    The scheduler decrements `action_cooldown` *before* it builds the payload and
+    skips the turn, so the final locked tick is delivered as cooldown 0 while
+    still being unplayable. Inferring lock state from the counter alone counted
+    that tick as a real move -- two "play" ticks per three-tick cycle for a cat
+    that can only act once. `can_act` is the authoritative signal.
+    """
+    client = TestClient(app)
+    obs = _obs(1, x=7, y=9, facing="north")
+    obs["self"]["action_cooldown"] = 0
+    obs["self"]["locked_action"] = None
+    obs["self"]["can_act"] = False
+
+    assert client.post("/act", json=obs).status_code == 200
+
+    rec = store.read_transcript_records()[-1]
+    assert rec["tick_type"] == "cooldown", "can_act=False must win over a zeroed counter"
+    assert rec["executed"] is False
+    assert (rec["x"], rec["y"]) == (7, 9)
 
 
 def test_evaluator_interval_is_adjustable():

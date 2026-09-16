@@ -472,10 +472,30 @@ async def act_async(obs: Observation, decoupled: bool = False) -> ActionResponse
         if state.override_mode == "once":
             state.pending_override = None
 
-    # Calculate posture resulting from chosen action
+    # Is this tick executable? Prefer the server's explicit `can_act` flag: the
+    # scheduler decrements the cooldown before it builds the payload, so on the
+    # final locked tick the counter reads 0 while the tick is still being
+    # skipped. Fall back to the counter for callers that predate the flag.
+    self_cooldown = int(obs.self.get("action_cooldown", 0) or 0)
+    can_act = obs.self.get("can_act")
+    if can_act is None:
+        is_locked = self_cooldown > 0
+    else:
+        is_locked = not can_act
+    tick_type = "cooldown" if is_locked else "play"
+
+    # Calculate posture resulting from chosen action.
+    #
+    # On a locked tick the action is discarded by the engine, so the resulting
+    # posture is simply where we already are. Projecting the move anyway made the
+    # transcript claim 991 tiles of travel against a physical ceiling of ~522,
+    # and that transcript is what the evaluator reads.
     pos = obs.self.get("position", {"x": 0, "y": 0})
     facing = obs.self.get("facing", "north")
-    posture = compute_resulting_posture(pos, facing, chosen_action)
+    if is_locked:
+        posture = {"position": dict(pos), "facing": facing}
+    else:
+        posture = compute_resulting_posture(pos, facing, chosen_action)
 
     exchange = {
         "tick": obs.tick,
@@ -495,6 +515,14 @@ async def act_async(obs: Observation, decoupled: bool = False) -> ActionResponse
             "resulting_posture": posture,
         },
         "source": source,
+        # Lock dimension, kept separate from `source`. `source` answers "which
+        # engine decided this"; `tick_type` answers "did the engine let it
+        # happen". Overloading one field would have lost the other.
+        "tick_type": tick_type,
+        "locked": is_locked,
+        "action_cooldown": self_cooldown,
+        "locked_action": obs.self.get("locked_action"),
+        "executed": not is_locked,
     }
 
     # Update latest observation with resulting posture to eliminate 1-tick display lag

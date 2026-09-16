@@ -787,6 +787,52 @@ body {
   color: #1e40af;
 }
 
+/* A discarded action was decided but never executed: the cat was still locked.
+   Struck through and faded so a cooldown run cannot be mistaken for the cat
+   repeating a move it actually made. */
+.history-action-badge.discarded {
+  opacity: 0.45;
+  text-decoration: line-through;
+  font-weight: 600;
+}
+
+/* Tick lifecycle: did the engine accept this action, or was the cat locked?
+   Sits beside the engine label, which answers the separate question of which
+   brain produced the decision. */
+.history-lifecycle-badge {
+  display: inline-block;
+  margin-top: 3px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 0.63rem;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.history-lifecycle-badge.played {
+  background-color: #f0fdf4;
+  color: #166534;
+  border: 1px solid #bbf7d0;
+}
+
+.history-lifecycle-badge.locked {
+  background-color: #fffbeb;
+  color: #92400e;
+  border: 1px solid #fde68a;
+}
+
+/* Whole-row tint for locked ticks. Kept subtle so it does not compete with the
+   in-LLM-window highlight. */
+.history-table tbody tr.cooldown-tick {
+  background-color: rgba(251, 191, 36, 0.05);
+}
+
+.history-table tbody tr.cooldown-tick td {
+  color: var(--text-muted);
+}
+
 .history-source-badge {
   display: inline-block;
   padding: 2px 6px;

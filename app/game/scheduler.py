@@ -52,7 +52,7 @@ class Scheduler:
             self.round = self.tick // 10
         return self.tick
 
-    def _build_observation_payload(self, entity: Entity) -> dict:
+    def _build_observation_payload(self, entity: Entity, can_act: bool = True) -> dict:
         species_key = entity.type.value
         vision_radius = 4
         if species_key in self.entity_manager.species_config:
@@ -116,6 +116,13 @@ class Scheduler:
                 "action_cooldown": entity.action_cooldown,
                 "locked_action": entity.locked_action,
                 "ready_to_act": (entity.action_cooldown == 0),
+                # Authoritative answer to "will anything I return this tick be
+                # applied?". `action_cooldown` cannot express this on its own: the
+                # lock branch below decrements before building the payload, so the
+                # final locked tick reports a cooldown of 0 while still being
+                # skipped. Agents that inferred lock state from the counter
+                # misread that tick as playable.
+                "can_act": can_act,
             },
             "capabilities": capabilities,
             "visible_entities": visible,
@@ -150,7 +157,10 @@ class Scheduler:
                 if cat.action_cooldown == 0:
                     cat.locked_action = None
                 if has_ws and mode != "manual":
-                    obs = self._build_observation_payload(cat)
+                    # can_act=False: this tick is being skipped. The decrement
+                    # above may already have reached 0, so the counter alone
+                    # would advertise this tick as playable.
+                    obs = self._build_observation_payload(cat, can_act=False)
                     await ws_agent_manager.send_observation(cat.id, obs)
                 continue
 
@@ -247,7 +257,7 @@ class Scheduler:
                 if mouse.action_cooldown == 0:
                     mouse.locked_action = None
                 if has_ws and mode != "manual":
-                    obs = self._build_observation_payload(mouse)
+                    obs = self._build_observation_payload(mouse, can_act=False)
                     await ws_agent_manager.send_observation(mouse.id, obs)
                 continue
 

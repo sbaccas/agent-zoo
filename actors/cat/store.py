@@ -48,7 +48,9 @@ def _compact_record(exchange: Dict[str, Any]) -> Dict[str, Any]:
     self_state = obs.get("self") or {}
     posture = resp.get("resulting_posture") or {}
 
-    # Prefer the post-action posture so the transcript reads as a true trajectory.
+    # Post-action posture, which `act_async` now leaves unchanged on locked ticks.
+    # It used to project the move regardless, so the recorded trajectory drifted
+    # away from where the cat physically was.
     position = posture.get("position") or self_state.get("position") or {}
     facing = posture.get("facing") or self_state.get("facing") or "north"
 
@@ -72,6 +74,13 @@ def _compact_record(exchange: Dict[str, Any]) -> Dict[str, Any]:
         "action": resp.get("action"),
         "thought": resp.get("thought"),
         "source": resp.get("source") or exchange.get("source"),
+        # "play" = the engine accepted this action. "cooldown" = the cat was still
+        # locked, the action was discarded, and this row is observation only.
+        # Without this the evaluator counted rejected commands as real moves.
+        "tick_type": exchange.get("tick_type", "play"),
+        "executed": exchange.get("executed", True),
+        "action_cooldown": exchange.get("action_cooldown", 0),
+        "locked_action": exchange.get("locked_action"),
         "visible": visible,
         # Cumulative captures at this tick. The evaluator reads the whole arc, so
         # it can see exactly which attacks converted and which swung at nothing.

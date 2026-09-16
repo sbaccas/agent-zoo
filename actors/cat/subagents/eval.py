@@ -113,9 +113,18 @@ def format_transcript(records: List[Dict[str, Any]]) -> str:
             seen = "nothing"
         action = (r.get("action") or "stay").upper()
         thought = r.get("thought") or ""
+        # A "cooldown" row is a tick the cat was locked: it observed the board but
+        # the engine discarded whatever it returned. Rendering these the same as
+        # real moves made long runs of rejected commands look like the cat
+        # stubbornly repeating itself, and the coach then scolded it for a choice
+        # it never got to make.
+        if r.get("tick_type") == "cooldown" or r.get("executed") is False:
+            did = f"LOCKED (recovering from {r.get('locked_action') or 'previous action'}; no action possible)"
+        else:
+            did = f"did {action}"
         lines.append(
             f"at ({r.get('x')},{r.get('y')}) facing "
-            f"{r.get('facing')} | score {r.get('score', 0)} | saw {seen} | did {action}"
+            f"{r.get('facing')} | score {r.get('score', 0)} | saw {seen} | {did}"
             + (f' | reasoning: "{thought}"' if thought else "")
         )
     return "\n".join(lines)

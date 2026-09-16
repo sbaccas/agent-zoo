@@ -58,6 +58,46 @@ a lock is counting down, *every* action you submit is rejected — including
 `attack`. You are not merely slowed, you are committed. A mouse that walks into
 your strike zone while you are locked cannot be killed on that tick.
 
+#### Knowing whether you can act right now
+
+Every observation opens with an **`Action State`** line. Read it first, before
+anything else — it decides what this tick is even for.
+
+- **`FREE`** — the action you return will be executed. This is a real move.
+  Spend it on the best action available.
+- **`LOCKED`** — you are still recovering from a previous action and the engine
+  will **reject** whatever you return. It also tells you which action you are
+  recovering from and how many ticks remain.
+
+Your recent history is annotated the same way: each past tick is marked
+`[executed]` or `[REJECTED - you were locked]`. **Use those marks.** If you see
+the same command repeated across several ticks, check the marks before
+concluding it failed — most likely it was accepted once and rejected on the
+locked ticks that followed. That is the system working normally, not your order
+being ignored.
+
+#### A locked tick is not a wasted tick
+
+You are still receiving a full observation while locked, and the board is still
+moving: mice walk in and out of your vision cone, and the score from your last
+slash lands during exactly these ticks. So a locked tick is worth two things:
+
+1. **Intelligence.** Track where the mice went. The picture you build here is
+   what you will act on the moment the lock clears.
+2. **Pre-commitment.** The action you return on a locked tick is not thrown
+   away by *you* — it is held, and it is what gets applied on the first tick you
+   are free. So answer the question "what will I do the instant I can move?"
+   rather than repeating your current action out of habit.
+
+Two things follow:
+
+- **Do not treat a rejection as a reason to change your mind.** If lunging east
+  was right when you committed to it, it is probably still right two ticks
+  later. Re-deciding every locked tick produces thrash, not adaptation.
+- **Do re-aim if the board changed.** If a mouse entered your strike zone while
+  you were locked, the correct pre-commitment is `attack`, ready to fire the
+  moment the lock lifts.
+
 **Reading the cost.** An action whose cooldown is `N` consumes `N` ticks in
 total: the tick you act on, plus `N - 1` ticks locked. That relationship is a
 rule of the engine and always holds. The value of `N` itself is not fixed — it

@@ -478,6 +478,38 @@
     return null;
   }
 
+  // Was the cat locked on this tick? A locked tick still produces a full
+  // decision, but the engine discards it, so the row must not read as a move.
+  //
+  // `tick_type` is the recorded answer. The `can_act` fallback covers rows
+  // captured before that field existed; note it is checked ahead of
+  // `action_cooldown` because the server decrements the counter before it
+  // builds the payload, leaving the final locked tick reading zero.
+  function isLockedTick(item) {
+    if (!item) return false;
+    if (item.tick_type) return item.tick_type === 'cooldown';
+    if (typeof item.locked === 'boolean') return item.locked;
+    const self = (item.observation && item.observation.self) || {};
+    if (typeof self.can_act === 'boolean') return !self.can_act;
+    return (self.action_cooldown || 0) > 0;
+  }
+
+  // Remaining lock ticks, for the tooltip. May legitimately be 0 on the last
+  // locked tick.
+  function lockDetail(item) {
+    const self = (item && item.observation && item.observation.self) || {};
+    const recovering = item.locked_action || self.locked_action;
+    const remaining = (typeof item.action_cooldown === 'number')
+      ? item.action_cooldown
+      : (self.action_cooldown || 0);
+    const from = recovering ? `recovering from '${recovering}'` : 'recovering';
+    return remaining > 0
+      ? `Cat was LOCKED this tick (${from}; free in ${remaining} more tick(s)). `
+        + 'The engine discarded this action -- it was never executed.'
+      : `Cat was LOCKED this tick (${from}; final tick of the lock). `
+        + 'The engine discarded this action -- it was never executed.';
+  }
+
   // Render Box 3: Outgoing Action Response
   function renderResponse(resp) {
     if (!resp) {
@@ -541,7 +573,14 @@
     const windowSize = (sliderHistoryWindow ? parseInt(sliderHistoryWindow.value, 10) : (cachedState && cachedState.history_window_size)) || 3;
     const windowCutoffIndex = Math.max(0, history ? (history.length - windowSize) : 0);
     const inWindowCount = history ? Math.min(history.length, windowSize) : 0;
-    historyCountPill.textContent = `${(history && history.length) || 0} ticks (${inWindowCount} in LLM context)`;
+    const lockedCount = history ? history.filter(isLockedTick).length : 0;
+    const playedCount = (history ? history.length : 0) - lockedCount;
+    // Splitting the count matters: at the cat's default cooldowns only about a
+    // third of ticks are playable, so a raw tick total overstates how much the
+    // cat actually got to do.
+    historyCountPill.textContent =
+      `${(history && history.length) || 0} ticks (${inWindowCount} in LLM context) `
+      + `· ${playedCount} played / ${lockedCount} locked`;
 
     if (!history || history.length === 0) {
       const tr = document.createElement('tr');
@@ -568,6 +607,16 @@
       const isInWindow = (i >= windowCutoffIndex);
       if (isInWindow) {
         tr.classList.add('in-llm-window');
+      }
+
+      // Locked ticks are observation-only: the cat reasoned, but the engine was
+      // still counting down and threw the action away. They used to render
+      // identically to real moves, which made a normal 1-move-per-3-ticks cadence
+      // look like the cat spamming the same command.
+      const locked = isLockedTick(item);
+      const lockTitle = locked ? lockDetail(item) : '';
+      if (locked) {
+        tr.classList.add('cooldown-tick');
       }
 
       // 1. Tick
@@ -606,14 +655,32 @@
       sourceBadge.textContent = itemDesc.label;
       sourceBadge.title = itemDesc.title;
       tdSource.appendChild(sourceBadge);
+
+      // The engine label above answers "who decided this". This one answers
+      // "did it count". Both are shown because a locked tick is still a real
+      // Gemini call, and hiding that would misreport model usage.
+      const lifecycleBadge = document.createElement('span');
+      lifecycleBadge.className = locked
+        ? 'history-lifecycle-badge locked'
+        : 'history-lifecycle-badge played';
+      lifecycleBadge.textContent = locked ? '🔒 LOCKED' : '▶ PLAY';
+      lifecycleBadge.title = locked
+        ? lockTitle
+        : 'Cat was free this tick; the engine accepted this action.';
+      tdSource.appendChild(lifecycleBadge);
       tr.appendChild(tdSource);
 
       // 4. Action
       const tdAction = document.createElement('td');
       const actionBadge = document.createElement('span');
       const act = (item.response && item.response.action) ? item.response.action : 'stay';
-      actionBadge.className = `history-action-badge ${act}`;
+      actionBadge.className = locked
+        ? `history-action-badge ${act} discarded`
+        : `history-action-badge ${act}`;
       actionBadge.textContent = act.toUpperCase();
+      actionBadge.title = locked
+        ? lockTitle
+        : 'Executed by the engine on this tick.';
       tdAction.appendChild(actionBadge);
       tr.appendChild(tdAction);
 
