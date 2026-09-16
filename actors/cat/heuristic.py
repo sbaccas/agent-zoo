@@ -6,7 +6,9 @@ from actors.models import Observation
 def compute_heuristic_decision(obs: Observation) -> Tuple[str, str, Dict[str, Any]]:
     """
     Evaluates an observation using deterministic tactical heuristics:
-      1. Slash attack if a mouse is in the forward strike zone (distance <= 2).
+      1. Slash attack if a mouse is in the forward strike zone -- the
+         3-wide rectangle extending `attack_range` tiles ahead, per
+         `in_strike_zone`.
       2. High-speed lunge if a mouse is aligned directly ahead (distance >= 3).
       3. Stalk / pursue nearest visible mouse along Manhattan shortest path.
       4. Roam / explore legal directions when no prey is visible.
@@ -22,6 +24,14 @@ def compute_heuristic_decision(obs: Observation) -> Tuple[str, str, Dict[str, An
     mice_seen = [e for e in obs.visible_entities if e.get("type") == "mouse"]
 
     # 1. Can we slash attack?
+    #
+    # Membership is delegated to in_strike_zone, which mirrors the engine's
+    # World.get_slash_aoe_tiles exactly. This function previously carried its
+    # own copy of the test using `abs(dx) + abs(dy) <= atk_range`, which is a
+    # diamond, not the engine's rectangle: it declined the two deepest
+    # off-axis tiles of every facing (at range 2, a third of the zone) because
+    # their Manhattan sum is atk_range + 1. Those are corner tiles -- exactly
+    # where a mouse fleeing at an angle ends up -- so the miss cost real kills.
     atk_range = (obs.capabilities or {}).get("attack_range", 2)
     if "attack" in legal and mice_seen:
         for m in mice_seen:
@@ -30,23 +40,16 @@ def compute_heuristic_decision(obs: Observation) -> Tuple[str, str, Dict[str, An
             dx = mx - pos["x"]
             dy = my - pos["y"]
 
-            in_front = False
-            if facing == "north" and dy < 0 and abs(dx) <= 1:
-                in_front = True
-            elif facing == "south" and dy > 0 and abs(dx) <= 1:
-                in_front = True
-            elif facing == "east" and dx > 0 and abs(dy) <= 1:
-                in_front = True
-            elif facing == "west" and dx < 0 and abs(dy) <= 1:
-                in_front = True
-
-            dist = abs(dx) + abs(dy)
-            if in_front and dist <= atk_range:
+            if in_strike_zone(dx, dy, facing, atk_range):
+                forward, lateral = decompose_offset(dx, dy, facing)
                 msg = f"Target {m.get('id')} in strike zone (range {atk_range})! Executing slash attack."
                 meta = {
                     "phase": "ATTACK",
                     "target_id": m.get("id"),
-                    "distance": dist,
+                    # Forward depth, not Manhattan sum: it is what the range
+                    # bound is actually compared against.
+                    "distance": forward,
+                    "lateral": lateral,
                     "target_pos": {"x": mx, "y": my},
                 }
                 return "attack", msg, meta

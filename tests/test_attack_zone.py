@@ -138,6 +138,88 @@ def test_the_attack_from_the_coaching_note_is_out_of_range():
 
 
 # --------------------------------------------------------------------------
+# 2b. Both decision functions agree with the engine
+# --------------------------------------------------------------------------
+#
+# in_strike_zone being correct is not enough -- a decision function only
+# benefits if it actually calls it. compute_heuristic_decision kept its own
+# inline `abs(dx) + abs(dy) <= atk_range` copy after the reflex was migrated,
+# and silently declined a third of the zone. These tests drive the public
+# entrypoints rather than the predicate, so an unmigrated caller fails here.
+
+def _obs_with_mouse_at(dx, dy, facing, atk_range):
+    from actors.models import Observation
+
+    cx = cy = 100
+    return Observation(
+        tick=1,
+        round=0,
+        self={"id": "cat-1", "position": {"x": cx, "y": cy}, "facing": facing},
+        visible_entities=[
+            {"id": "mouse-1", "type": "mouse", "position": {"x": cx + dx, "y": cy + dy}}
+        ],
+        # "lunge" is deliberately withheld: it is a lower rung, but including
+        # it would let a lunge mask a declined attack and turn a real miss
+        # into a passing test.
+        legal_actions=["north", "south", "east", "west", "stay", "attack"],
+        capabilities={"attack_range": atk_range, "vision_radius": 20},
+    )
+
+
+@pytest.mark.parametrize(
+    "decide_name", ["compute_heuristic_decision", "compute_reflex_decision"]
+)
+@pytest.mark.parametrize("rng", [1, 2, 3, 8])
+@pytest.mark.parametrize("facing", FACINGS)
+def test_both_decision_paths_swing_exactly_when_the_engine_would_hit(
+    decide_name, rng, facing
+):
+    import actors.cat.heuristic as heuristic
+
+    decide = getattr(heuristic, decide_name)
+    w = World(width=200, height=200, topology=Topology.BOUNDED)
+    cx = cy = 100
+    engine = set(w.get_slash_aoe_tiles(_pos(cx, cy), facing, range_tiles=rng))
+
+    declined = []
+    overswung = []
+    for dx in range(-10, 11):
+        for dy in range(-10, 11):
+            obs = _obs_with_mouse_at(dx, dy, facing.value, rng)
+            action, _, _ = decide(obs)
+            engine_hits = (cx + dx, cy + dy) in engine
+            if engine_hits and action != "attack":
+                declined.append((dx, dy))
+            if action == "attack" and not engine_hits:
+                overswung.append((dx, dy))
+
+    assert not declined, (
+        f"{decide_name} facing {facing.value} range {rng} refused free kills at "
+        f"{declined} -- the engine would have hit those tiles"
+    )
+    assert not overswung, (
+        f"{decide_name} facing {facing.value} range {rng} swung at empty air at "
+        f"{overswung} -- the engine hits nothing there"
+    )
+
+
+def test_both_decision_paths_take_the_corner_manhattan_used_to_decline():
+    """The specific tile the two implementations disagreed on.
+
+    forward=2, lateral=1 sums to 3 under Manhattan, exceeding range 2, so the
+    old inline predicate in compute_heuristic_decision passed on it. The
+    engine hits it.
+    """
+    import actors.cat.heuristic as heuristic
+
+    for decide in (heuristic.compute_heuristic_decision, heuristic.compute_reflex_decision):
+        obs = _obs_with_mouse_at(2, 1, "east", 2)
+        action, _, meta = decide(obs)
+        assert action == "attack", f"{decide.__name__} declined the corner tile"
+        assert meta["target_id"] == "mouse-1"
+
+
+# --------------------------------------------------------------------------
 # 3. The canvas agrees with the engine
 # --------------------------------------------------------------------------
 
