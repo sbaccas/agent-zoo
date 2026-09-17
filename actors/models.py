@@ -36,8 +36,30 @@ class ConnectServerRequest(BaseModel):
 
 
 class CatTacticalDecision(BaseModel):
-    action: str = Field(description="The chosen action strictly from legal_actions")
+    """The cat's per-tick answer sheet, filled in top to bottom.
+
+    Field order is load-bearing. Structured output is generated one token at a
+    time in declaration order, and the actor runs with thinking_budget=0, so
+    there is no scratchpad anywhere else. Whichever field is declared first is
+    decided with nothing in context.
+
+    ``thought`` therefore precedes ``action`` so the model writes its geometry
+    before choosing, and selects the action while conditioned on the numbers it
+    just produced.
+
+    This used to be the other way round. Measured over 211 recorded attacks,
+    the cat's forward/offaxis arithmetic was correct 94.7% of the time, yet
+    only 19% of its swings had a mouse in the strike zone: it named the action
+    before computing anything, so ``thought`` became a post-hoc justification
+    it could not retract. Transcripts show the contradiction plainly, e.g.
+    tick 134 - "A mouse is in the strike zone; attacking to score. forward: 8,
+    offaxis: 2. Not in strike zone, repositioning for a better shot." - while
+    ``action`` said attack. Re-running one fixed position 10 times per schema,
+    action-first chose an out-of-range attack 10/10; thought-first, 1/10.
+    """
+
     thought: str = Field(description="Concise tactical reasoning based on game skills and rules")
+    action: str = Field(description="The chosen action strictly from legal_actions")
     target_mouse_id: Optional[str] = Field(default="", description="ID of targeted mouse or empty string if none")
     strategy: str = Field(default="ROAMING", description="Tactical phase: ATTACK, LUNGE, STALKING, or ROAMING")
 
