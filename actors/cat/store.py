@@ -85,6 +85,16 @@ def _compact_record(exchange: Dict[str, Any]) -> Dict[str, Any]:
         # Cumulative captures at this tick. The evaluator reads the whole arc, so
         # it can see exactly which attacks converted and which swung at nothing.
         "score": obs.get("score", 0),
+        # The live tunables, exactly as the actor received them this tick.
+        #
+        # These are dropped from nothing else and cost ~6 ints per line, but
+        # without them the evaluator was advising blind: actor_skills.md states
+        # that every range and cooldown printed in it is an illustration and the
+        # observation is the only authority, and the evaluator had no
+        # observation. So it guessed, told the cat its reach was 3 when the
+        # engine said 2, and the cat believed it. They are also per-tick rather
+        # than captured once because the operator can retune mid-game.
+        "capabilities": obs.get("capabilities") or {},
     }
 
 
