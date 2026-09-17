@@ -437,6 +437,114 @@ def test_coach_block_uses_the_declared_heading():
     assert "- keep to the south corridor" in prompt
 
 
+# --------------------------------------------------------------------------
+# Block order and the decay of an ageing order
+# --------------------------------------------------------------------------
+
+
+def _prompt_with_notes(observation, history=None, directive=None):
+    """Build a prompt with coaching notes present, restoring the reader after."""
+    from actors.cat import actor as actor_mod
+
+    original = actor_mod.store.read_coaching_notes
+    actor_mod.store.read_coaching_notes = lambda: "- COACHMARK keep to the south corridor"
+    try:
+        return build_decision_prompt(
+            observation, history=history or [], commander_directive=directive
+        )
+    finally:
+        actor_mod.store.read_coaching_notes = original
+
+
+def _history(n=3):
+    return [
+        {
+            "tick": t,
+            "observation": {"self": {"position": {"x": 1, "y": 1}}, "score": 0},
+            "response": {"action": "east", "thought": "HISTORYMARK"},
+        }
+        for t in range(1, n + 1)
+    ]
+
+
+def test_blocks_are_ordered_by_ascending_influence():
+    """history -> coach -> observation -> commander.
+
+    The model answers immediately after the final token, so the last block read
+    is the one nearest the decision. The coach used to lead, which left ~10,400
+    characters between its directives and the answer while the history window
+    -- five times its size, and made of examples of the behaviour being
+    corrected -- sat closer. Order is the cheapest lever available and this
+    pins it.
+    """
+    prompt = _prompt_with_notes(
+        _observation(tick=30), history=_history(), directive=_directive(tick=28)
+    )
+
+    history_at = prompt.index("RECENT TACTICAL CONTEXT")
+    coach_at = prompt.index("COACHMARK")
+    observation_at = prompt.index("CURRENT OBSERVATION")
+    order_at = prompt.index(ORDER)
+
+    assert history_at < coach_at < observation_at < order_at, (
+        "blocks are not in ascending order of influence; the coach must sit "
+        "after the history window and the live order must sit last"
+    )
+
+
+def test_ageing_order_slides_away_from_the_decision():
+    """An order decays by position rather than by suppression.
+
+    Dropping it would destroy something the commander deliberately sent, and
+    stamping it "stale" would be the pre-chewed verdict this prompt refuses to
+    supply. Moving it from the most influential slot to the least lets it fade
+    without either. Measured motivation: across 198 live prompts carrying an
+    order the median age was 42 ticks, so the most valuable position in the
+    prompt was routinely occupied by something long overtaken by events.
+    """
+    from actors.cat.actor import COMMANDER_FRESH_TICKS
+
+    fresh = _prompt_with_notes(
+        _observation(tick=30),
+        history=_history(),
+        directive=_directive(tick=30 - COMMANDER_FRESH_TICKS),
+    )
+    assert fresh.index(ORDER) > fresh.index("CURRENT OBSERVATION"), (
+        "an order still inside the freshness window must remain last"
+    )
+
+    stale = _prompt_with_notes(
+        _observation(tick=30),
+        history=_history(),
+        directive=_directive(tick=30 - COMMANDER_FRESH_TICKS - 1),
+    )
+    assert stale.index(ORDER) < stale.index("RECENT TACTICAL CONTEXT"), (
+        "an order past the freshness window must lose the slot nearest the "
+        "decision"
+    )
+
+
+def test_a_decayed_order_is_still_delivered_in_full():
+    """Demotion must not become censorship, nor acquire a verdict.
+
+    The text, the issuing tick and the age all survive the move; only position
+    changes. If this ever starts dropping orders, a commander typing into the
+    radio gets silence with no indication why.
+    """
+    stale = _prompt_with_notes(
+        _observation(tick=300), history=_history(), directive=_directive(tick=24)
+    )
+
+    assert ORDER in stale, "the order text was discarded rather than demoted"
+    assert "tick 24" in stale
+    assert "276 tick(s) ago" in stale
+    for verdict in ("stale", "outdated", "expired", "ignore", "no longer"):
+        assert verdict not in stale.lower(), (
+            f"the prompt now tells the model the order is {verdict!r}; judging "
+            f"staleness from the stated age is the model's job"
+        )
+
+
 def test_manual_has_a_dedicated_chain_of_command_section():
     """Mentions scattered through the text are not an explanation."""
     headings = re.findall(r"^## \d+\. (.+)$", SKILLS_MD.read_text(), re.M)

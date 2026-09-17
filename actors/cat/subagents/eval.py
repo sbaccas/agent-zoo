@@ -22,6 +22,7 @@ import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+import httpx
 from google.adk.agents import LlmAgent
 from google.adk.agents.readonly_context import ReadonlyContext
 from google.adk import Runner
@@ -82,10 +83,153 @@ def _eval_instruction_provider(_ctx: ReadonlyContext) -> str:
     return get_eval_instruction()
 
 
+# ---------------------------------------------------------------------------
+# Box score tool
+#
+# The coach reads the transcript, which is a record of what the Cat chose. It
+# carries no record of what those choices were worth, and no record at all of
+# the heuristic cat-2 the Cat is losing to -- cat-2 is not driven by this
+# workbench and never writes a transcript. So the coach could observe "you
+# rarely lunge" but not "your lunge share is 10.4% against the rival's 13.0%",
+# and it could not tell whether last evaluation's directive on that KPI moved
+# it. The result was the same qualitative correction reissued game after game.
+#
+# The engine already measures all of this for every cat (app/game/stats.py).
+# This tool is the read path onto it. It returns numbers and plain labels only:
+# every imperative about when to call it, what counts as bad, and what to do
+# about it lives in eval_skills.md, per the rule in
+# tests/test_prompt_is_data_only.py.
+# ---------------------------------------------------------------------------
+
+# The game server is a separate process from the workbench that runs the coach,
+# so its address is configuration, not a constant. Overridable for the same
+# reason CAT_AGENT_RUNTIME_DIR is: a test run must not reach a live server.
+GAME_SERVER_URL_ENV = "CAT_AGENT_GAME_SERVER_URL"
+DEFAULT_GAME_SERVER_URL = "http://127.0.0.1:8000"
+
+# "0" switches the fetch off, following CAT_AGENT_AUTO_CONNECT's convention.
+# Under pytest the default flips: the suite must not dial :8000, where a live
+# game would make every assertion depend on whatever happens to be playing.
+# Set it to "1" to opt a test back in deliberately.
+BOXSCORE_FETCH_ENV = "CAT_AGENT_BOXSCORE_FETCH"
+
+# The coach is advisory and runs on the game's clock. A wedged or absent game
+# server has to cost a couple of seconds, not the whole evaluation budget --
+# EVAL_TIMEOUT_SECONDS above is the ceiling this has to fit well inside.
+BOXSCORE_TIMEOUT_SECONDS = 3.0
+
+# The coach only ever evaluates the game in progress; the server resolves this
+# literal to whichever simulation that is.
+BOXSCORE_SIM_ID = "active"
+
+
+def _boxscore_fetch_enabled() -> bool:
+    """Whether the tool may open a socket, given the environment."""
+    setting = os.environ.get(BOXSCORE_FETCH_ENV)
+    if setting is not None:
+        return setting != "0"
+    return "PYTEST_CURRENT_TEST" not in os.environ
+
+
+def _boxscore_unavailable(reason: str) -> Dict[str, Any]:
+    """The one shape returned when no measurement could be obtained.
+
+    Explicitly empty rather than zero-filled. A row of zeros is indistinguishable
+    from a cat that did nothing, and the coach would report it as fact.
+    """
+    return {"available": False, "reason": reason}
+
+
+async def get_boxscore() -> Dict[str, Any]:
+    """Reads the game engine's box score for the game currently in progress.
+
+    The engine measures these counters itself, independently of the transcript,
+    and covers every cat on the board -- both the cat being coached and its
+    rival.
+
+    Returns a dict. When the measurement was obtained:
+
+      available: true
+      simulation_id, status, tick, round: identity and clock of the game
+      tracking_since_tick: the first tick these counters cover
+      ticks_measured: tick minus tracking_since_tick
+      arena: width, height, tiles
+      leader: id of the cat with the most kills, or null
+      cats: one row per cat, each with
+        id, mode, alive, position (x, y)
+        kills, kills_per_100_ticks, tiles_per_kill
+        slash_attempts, slash_accuracy, whiffs, multi_kills
+        zone_chances, zone_conversion, zone_declined
+        tiles_run, unique_tiles, ground_covered, speed_tiles_per_tick,
+        ticks_per_tile
+        moves, lunges, lunge_share, wall_bonks
+        ticks_free, ticks_locked, locked_pct, prey_in_sight_pct
+
+    Rate fields are fractions in 0..1, not percentages. A rate whose denominator
+    is zero is null rather than 0.0, so nine of them are null on a game that has
+    only just begun.
+
+    When the game server cannot be reached, returns available: false with a
+    reason string and no statistics.
+    """
+    if not _boxscore_fetch_enabled():
+        return _boxscore_unavailable(
+            f"box score fetch is switched off ({BOXSCORE_FETCH_ENV}=0)"
+        )
+
+    base = (os.environ.get(GAME_SERVER_URL_ENV) or DEFAULT_GAME_SERVER_URL).rstrip("/")
+    url = f"{base}/api/simulations/{BOXSCORE_SIM_ID}/boxscore"
+
+    try:
+        async with httpx.AsyncClient(timeout=BOXSCORE_TIMEOUT_SECONDS) as client:
+            resp = await client.get(url)
+            if resp.status_code != 200:
+                return _boxscore_unavailable(
+                    f"game server returned HTTP {resp.status_code}"
+                )
+            payload = resp.json()
+    except Exception as exc:
+        # Includes connect errors and timeouts. The coach still has the
+        # transcript, so a missing box score degrades the notes rather than
+        # failing the evaluation.
+        logger.warning("Box score fetch failed: %s: %s", type(exc).__name__, exc)
+        return _boxscore_unavailable(f"{type(exc).__name__}: {exc}")
+
+    if not isinstance(payload, dict):
+        return _boxscore_unavailable("game server returned an unexpected payload")
+
+    cats = payload.get("cats")
+    if not isinstance(cats, list) or not cats:
+        return _boxscore_unavailable("game server reported no cats")
+
+    tick = payload.get("tick")
+    since = payload.get("tracking_since_tick")
+    # Emitted because `tick` alone does not say how much of the game was
+    # measured: a tracker attached mid-game reports partial counters.
+    measured = tick - since if isinstance(tick, int) and isinstance(since, int) else None
+
+    return {
+        "available": True,
+        "simulation_id": payload.get("simulation_id"),
+        "status": payload.get("status"),
+        "tick": tick,
+        "round": payload.get("round"),
+        "tracking_since_tick": since,
+        "ticks_measured": measured,
+        "arena": payload.get("arena"),
+        "leader": payload.get("leader"),
+        # Every cat, verbatim. The comparison against the rival is the whole
+        # point: filtering to cat-1 here would leave the coach with a number and
+        # nothing to measure it against.
+        "cats": cats,
+    }
+
+
 eval_agent = LlmAgent(
     name="cat_evaluator",
     model=EVAL_MODEL,
     instruction=_eval_instruction_provider,
+    tools=[get_boxscore],
     generate_content_config=types.GenerateContentConfig(
         thinking_config=types.ThinkingConfig(thinking_budget=0)
     ),

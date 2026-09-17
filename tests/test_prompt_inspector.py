@@ -336,7 +336,42 @@ def test_history_section_is_delivered_once_ticks_exist():
     capture = {}
     build_decision_prompt(_observation(), history=history, capture=capture)
     assert capture["sections"]["history_window"]["delivered"] is True
-    assert "closing" in capture["sections"]["history_window"]["text"]
+    text = capture["sections"]["history_window"]["text"]
+    assert "EAST" in text, "the action taken is the point of the history window"
+    assert "Tick 6" in text
+
+
+def test_history_records_the_action_but_not_the_reasoning_behind_it():
+    """What happened is evidence. Why it felt right is advocacy, and it is cut.
+
+    Replaying each past thought turned the window into 25 worked examples
+    arguing for whatever the cat was already doing, written in its own voice
+    and five times the size of the coaching notes trying to correct it.
+    Measured over 277 live prompts, the cat then chose the modal action of its
+    own history 51.5% of the time against a 16.7% chance baseline -- on free
+    ticks, counting only executed actions, so the action lock does not explain
+    it.
+
+    The interrogator prompt deliberately keeps its thoughts; it is asked to
+    explain itself to the commander, so its reasoning is the subject matter.
+    This test guards the decision path only.
+    """
+    history = [{
+        "tick": 6,
+        "observation": {"self": {"position": {"x": 1, "y": 1}}, "score": 2},
+        "response": {
+            "action": "east",
+            "thought": "sidling east feels safer than committing to a lunge",
+        },
+    }]
+    prompt = build_decision_prompt(_observation(), history=history)
+
+    assert "EAST" in prompt
+    for fragment in ("sidling", "feels safer", "Reason:"):
+        assert fragment not in prompt, (
+            f"{fragment!r} leaked into the decision prompt; the cat is being "
+            f"shown its own justification for the behaviour under correction"
+        )
 
 
 def test_capture_is_optional_and_prompt_building_is_unaffected():

@@ -33,6 +33,19 @@ RADIO_SKILLS_PATH = Path(__file__).parent / "radio_skills.md"
 COACH_BLOCK_HEADER = "--- EVALUATOR NOTES ---"
 COMMANDER_BLOCK_HEADER = "--- COMMANDER RADIO ---"
 
+# Age in ticks at which a commander order stops being emitted last. This is a
+# layout policy, not a verdict: the order is still delivered in full, still
+# carries its tick and its age in ticks, and is still the model's to judge.
+# Only its position changes, from the slot nearest the decision to the one
+# furthest from it.
+#
+# Sized from the live distribution rather than picked: across 198 prompts that
+# carried an order, the median age was 42 ticks and 43% were older than 50. A
+# threshold of 20 therefore demotes most of what was accumulating in the most
+# influential slot in the prompt, while leaving genuinely live orders -- the
+# ones a human just typed -- exactly where they were.
+COMMANDER_FRESH_TICKS = 20
+
 
 def get_skills_instruction() -> str:
     """The actor's entire behavioural specification, read fresh from disk.
@@ -361,7 +374,6 @@ def build_decision_prompt(
         h_score = h_obs.get("score", 0)
         h_resp = h.get("response", {})
         h_act = (h_resp.get("action") or "stay").upper()
-        h_thought = h_resp.get("thought", "")
         vis_info = f"{len(h_vis)} visible ({[m.get('id') for m in h_vis]})" if h_vis else "0 visible"
         # Whether this past tick actually ran. A locked tick's action was thrown
         # away by the engine, and rendering it identically to a real move is what
@@ -371,10 +383,22 @@ def build_decision_prompt(
         h_can_act = h_self.get("can_act")
         h_locked = (h_cd > 0) if h_can_act is None else (not h_can_act)
         outcome = "REJECTED - you were locked" if h_locked else "executed"
+        # Deliberately excludes the thought that produced this action. Measured
+        # over 277 live prompts, the cat chose the modal action of its own
+        # history window 51.5% of the time against a 16.7% chance baseline
+        # (free ticks, executed-only, so the action lock cannot explain it).
+        # Replaying its own reasoning turned the window into 25 worked examples
+        # arguing for the behaviour the coach was simultaneously trying to
+        # correct -- and the reasoning outweighed the coaching notes four to
+        # one by volume. What happened is evidence; why it seemed sensible at
+        # the time is advocacy, and it is dropped.
+        #
+        # The interrogator prompt keeps its thoughts on purpose: that agent is
+        # asked to explain itself to the commander, so its past reasoning is
+        # the subject matter rather than a distraction.
         history_lines.append(
             f"  • Tick {h_tick}: Pos ({h_pos.get('x',0)}, {h_pos.get('y',0)}) facing {h_facing}. "
-            f"SCORE: {h_score}. Context: {vis_info}. Move: {h_act} [{outcome}] "
-            f"(Reason: \"{h_thought}\")"
+            f"SCORE: {h_score}. Context: {vis_info}. Move: {h_act} [{outcome}]"
         )
 
     history_context = ""
@@ -467,12 +491,14 @@ def build_decision_prompt(
     # Restating any of that here is what produced 100 consecutive lunges from
     # a message that was only ever a question.
     commander_context = ""
+    commander_is_fresh = True
     directive_text = (commander_directive or {}).get("directive") or ""
     if directive_text.strip():
         issued_tick = (commander_directive or {}).get("tick")
         if isinstance(issued_tick, int):
             age = max(0, obs.tick - issued_tick)
             issued_line = f"Sent at tick {issued_tick}; {age} tick(s) ago.\n"
+            commander_is_fresh = age <= COMMANDER_FRESH_TICKS
         else:
             issued_line = ""
         commander_context = (
@@ -481,7 +507,28 @@ def build_decision_prompt(
             f'COMMANDER: "{directive_text.strip()}"\n'
         )
 
-    prompt = f"{coaching_context}{history_context}{observation_context}{commander_context}"
+    # Blocks are emitted in ascending order of influence, because position is
+    # the only lever the prompt has: the model answers immediately after the
+    # final token, so the last block read is the one nearest the decision.
+    #
+    # history -> coach -> observation -> commander
+    #
+    # The coach used to lead, which put ~10,400 characters between its
+    # directives and the answer while the history window -- five times its size
+    # and made of worked examples of the behaviour being corrected -- sat
+    # closer. Swapping the two costs nothing and reverses that.
+    #
+    # A stale order decays by *position* rather than being dropped or labelled
+    # stale. Suppressing it would destroy information the commander chose to
+    # send, and stamping a "this is stale" verdict on it would be precisely the
+    # pre-chewed conclusion this prompt refuses to draw -- the age in ticks is
+    # already stated, and judging it is the model's job. Sliding it from the
+    # most salient slot to the least lets it fade without either.
+    if commander_is_fresh:
+        prompt = f"{history_context}{coaching_context}{observation_context}{commander_context}"
+    else:
+        prompt = f"{commander_context}{history_context}{coaching_context}{observation_context}"
+
 
     if capture is not None:
         # Recorded as separate sections rather than one blob so the

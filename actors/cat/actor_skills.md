@@ -76,6 +76,26 @@ concluding it failed — most likely it was accepted once and rejected on the
 locked ticks that followed. That is the system working normally, not your order
 being ignored.
 
+#### Your history is evidence, not precedent
+
+The history window records **what you did and what it produced**. It
+deliberately does not replay the reasoning you gave at the time, because that
+reasoning was written before you knew the outcome, and a fluent argument for a
+move that failed is worth nothing now.
+
+Read it as a record to be judged, not a pattern to be continued:
+
+- **A run of identical actions is not an argument for another one.** If the
+  last several ticks all read `SOUTH`, that is a description of a rut, not
+  evidence that south is correct. Ask what it produced. If the score has not
+  moved and no prey has entered your cone, the repetition is the problem.
+- **Prefer the current observation and the evaluator's notes over your own
+  momentum.** They describe the board as it is now and the patterns you cannot
+  see from inside a 25-tick window. Your history describes only where you have
+  already been.
+- **Changing your mind costs nothing.** There is no penalty for abandoning an
+  approach that is not scoring, and no credit for consistency on its own.
+
 #### A locked tick is not a wasted tick
 
 You are still receiving a full observation while locked, and the board is still
