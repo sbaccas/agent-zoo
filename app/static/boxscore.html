@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Box Score — Cat &amp; Mouse</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📊</text></svg>">
+  <link rel="stylesheet" href="/static/styles.css?v=13">
+</head>
+<body class="settings-standalone-body">
+  <div class="settings-standalone-container boxscore-container">
+    <header class="settings-standalone-header">
+      <div class="modal-title-group">
+        <span class="modal-icon">📊</span>
+        <div>
+          <h2>Box Score</h2>
+          <div class="subtitle">Per-Cat Performance KPIs</div>
+        </div>
+      </div>
+      <div class="settings-header-badge" id="syncStatus">Connecting…</div>
+    </header>
+
+    <main class="settings-standalone-content">
+      <!-- Simulation meta strip: populated by boxscore.js -->
+      <div class="boxscore-meta" id="boxscoreMeta"></div>
+
+      <!-- Tracking caveat: only shown when tracking_since_tick > 0 -->
+      <div class="boxscore-caveat" id="boxscoreCaveat" style="display: none;"></div>
+
+      <!-- Pre-start hint: only shown while the game has not ticked yet -->
+      <div class="boxscore-hint" id="boxscoreHint" style="display: none;"></div>
+
+
+      <!-- Loading / error / empty states -->
+      <div class="boxscore-state" id="boxscoreState">Loading box score…</div>
+
+      <!-- Stat table container: populated by boxscore.js -->
+      <div class="boxscore-table-wrap" id="boxscoreTableWrap"></div>
+
+      <p class="boxscore-legend">
+        Hover any KPI label for its exact formula. Highlighted cells mark the leading cat for that row.
+      </p>
+    </main>
+
+    <footer class="settings-standalone-footer">
+      <div class="boxscore-updated" id="boxscoreUpdated">Auto-refreshing every 2s</div>
+      <div class="modal-footer-right">
+        <button id="btnCloseWindow" class="btn btn-secondary" title="Close this window">Close Window</button>
+        <button id="btnRefreshBoxscore" class="btn btn-primary" title="Fetch the latest box score from the active simulation now">Refresh</button>
+      </div>
+    </footer>
+  </div>
+
+  <script src="/static/boxscore.js?v=1"></script>
+</body>
+</html>

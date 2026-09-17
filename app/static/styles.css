@@ -1029,3 +1029,223 @@ body {
 
 
 
+
+/* ============================================================
+   Box Score Standalone Window
+   Appended for the /boxscore pop-out. Reuses the settings
+   standalone shell (.settings-standalone-*) for the chrome.
+   ============================================================ */
+.boxscore-container {
+  max-width: 900px;
+}
+
+.boxscore-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  padding: 10px 14px;
+  background-color: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+}
+
+.boxscore-meta-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.boxscore-meta-label {
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+.boxscore-meta-value {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.boxscore-caveat {
+  padding: 10px 14px;
+  border-radius: 8px;
+  background-color: #fef3c7;
+  color: #92400e;
+  border: 1px solid #fcd34d;
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
+.boxscore-state {
+  padding: 22px 16px;
+  border-radius: 8px;
+  background-color: var(--bg-secondary);
+  border: 1px dashed var(--border-card);
+  color: var(--text-secondary);
+  font-size: 0.88rem;
+  text-align: center;
+}
+
+.boxscore-state-error {
+  background-color: #fee2e2;
+  border-color: #fca5a5;
+  border-style: solid;
+  color: #991b1b;
+}
+
+.boxscore-table-wrap {
+  overflow-x: auto;
+}
+
+.boxscore-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+
+.boxscore-table th,
+.boxscore-table td {
+  border-bottom: 1px solid var(--border-color);
+  padding: 7px 12px;
+  text-align: right;
+}
+
+.boxscore-table .boxscore-kpi-col,
+.boxscore-table .boxscore-stat-label {
+  text-align: left;
+}
+
+.boxscore-kpi-col {
+  width: 38%;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  vertical-align: bottom;
+}
+
+.boxscore-cat-col {
+  vertical-align: bottom;
+  border-bottom: 2px solid var(--border-card);
+}
+
+.boxscore-cat-name {
+  font-size: 0.98rem;
+  font-weight: 700;
+  color: var(--cat-color);
+}
+
+.boxscore-badge-row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.boxscore-badge {
+  font-size: 0.65rem;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 9999px;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+
+.boxscore-badge-mode {
+  background-color: #e0e7ff;
+  color: #3730a3;
+  border-color: #c7d2fe;
+}
+
+.boxscore-badge-alive {
+  background-color: #dcfce7;
+  color: #166534;
+  border-color: #86efac;
+}
+
+.boxscore-badge-dead {
+  background-color: #e2e8f0;
+  color: #475569;
+  border-color: #cbd5e1;
+}
+
+.boxscore-badge-leader {
+  background-color: #fef3c7;
+  color: #92400e;
+  border-color: #fcd34d;
+}
+
+.boxscore-cat-pos {
+  margin-top: 4px;
+  font-size: 0.68rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.boxscore-section-row td {
+  padding: 9px 12px 5px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  text-align: left;
+  color: var(--accent-color);
+  background-color: var(--bg-primary);
+  border-bottom: 1px solid var(--border-card);
+}
+
+.boxscore-stat-label {
+  font-weight: 500;
+  color: var(--text-primary);
+  cursor: help;
+}
+
+.boxscore-stat-value {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+
+.boxscore-table .stat-leader {
+  background-color: #ecfdf5;
+  color: #065f46;
+  font-weight: 700;
+}
+
+.boxscore-legend {
+  font-size: 0.74rem;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.boxscore-updated {
+  font-size: 0.74rem;
+  color: var(--text-secondary);
+}
+
+.boxscore-hint {
+  padding: 10px 14px;
+  border-radius: 8px;
+  background-color: #eff6ff;
+  color: #1e40af;
+  border: 1px solid #bfdbfe;
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
+/* Mode badge variants: make the LLM-vs-heuristic matchup obvious at a glance. */
+.boxscore-badge-mode-ws {
+  background-color: #ede9fe;
+  color: #5b21b6;
+  border-color: #c4b5fd;
+}
+
+.boxscore-badge-mode-auto {
+  background-color: #f1f5f9;
+  color: #334155;
+  border-color: #cbd5e1;
+}

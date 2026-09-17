@@ -98,3 +98,9 @@ async def root():
 async def settings_page():
     return FileResponse(static_dir / "settings.html")
 
+
+@app.get("/boxscore")
+async def boxscore_page():
+    return FileResponse(static_dir / "boxscore.html")
+
+

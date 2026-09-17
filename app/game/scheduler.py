@@ -17,7 +17,7 @@ logger = logging.getLogger("simulation.events")
 
 
 class Scheduler:
-    def __init__(self, world: World, entity_manager: EntityManager, action_handler: ActionHandler):
+    def __init__(self, world: World, entity_manager: EntityManager, action_handler: ActionHandler, stats=None):
         self.world = world
         self.entity_manager = entity_manager
         self.action_handler = action_handler
@@ -30,6 +30,10 @@ class Scheduler:
         self.scores: Dict[str, int] = {}
         self.events: List[GameEvent] = []
         self.consecutive_http_errors: dict = {}
+        # Box-score recorder. Most counters are filled in by the action handler;
+        # the loop owns only the ones it alone can see, namely locked ticks and
+        # capture credit.
+        self.stats = stats
 
     def get_scoreboard(self) -> Dict[str, int]:
         """Cumulative captures for every cat on the board, including those on zero.
@@ -173,15 +177,22 @@ class Scheduler:
             "scoreboard": self.get_scoreboard(),
         }
 
-    def _register_capture(self, owner_id: str, victim: Entity, source: str) -> None:
+    def _register_capture(self, owner_id: str, victim: Entity, source: str, zone_id: Optional[str] = None) -> None:
         """Credit a kill and emit its events.
 
         Shared by the instant swing and the lingering-zone sweep so a mouse
         that walks into a blade is scored identically to one caught by it,
         rather than dying silently with no capture event and no score.
+
+        `zone_id` is supplied only by the lingering-zone sweep. The instant
+        swing leaves it None because the action handler has already filed that
+        slash as landed; passing it twice would count the same blade's hit
+        against the box score on both paths.
         """
         self.captures += 1
         self.scores[owner_id] = self.scores.get(owner_id, 0) + 1
+        if self.stats is not None:
+            self.stats.record_kill(owner_id, zone_id)
         owner = self.entity_manager.entities.get(owner_id)
         o_pos = f"({owner.position.x}, {owner.position.y})" if owner else "?"
         msg = (
@@ -218,7 +229,7 @@ class Scheduler:
                 for victim in self.entity_manager.get_entities_at(tile.x, tile.y):
                     if victim.type == target_type and victim.alive:
                         victim.alive = False
-                        self._register_capture(zone.owner_id, victim, f"{zone.kind} zone")
+                        self._register_capture(zone.owner_id, victim, f"{zone.kind} zone", zone_id=zone.id)
 
         expired = [z for z in self.action_handler.hazard_zones if z.lethal_until_tick < self.tick]
         for zone in expired:
@@ -256,6 +267,10 @@ class Scheduler:
 
             # OSRS action lock: if cat is recovering/animating previous action, decrement and skip turn
             if cat.action_cooldown > 0:
+                if self.stats is not None:
+                    # The only counter the action handler cannot observe: this
+                    # branch never reaches it.
+                    self.stats.record_locked_tick(cat)
                 cat.action_cooldown -= 1
                 if cat.action_cooldown == 0:
                     cat.locked_action = None

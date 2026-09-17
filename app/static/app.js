@@ -1762,9 +1762,29 @@
     }
   }
 
+  const btnOpenBoxscore = document.getElementById('btnOpenBoxscore');
+
+  function openBoxscoreWindow() {
+    const width = 900;
+    const height = 820;
+    const screenW = window.screen.availWidth || window.innerWidth;
+    const screenH = window.screen.availHeight || window.innerHeight;
+    const left = Math.max(10, Math.min(screenW - width - 20, (window.screenX || 0) + (window.outerWidth || 1000) - width));
+    const top = Math.max(20, (window.screenY || 0) + 30);
+    const features = `width=${width},height=${height},left=${left},top=${top},resizable=yes,scrollbars=yes,status=no,toolbar=no,menubar=no,location=no`;
+
+    const popup = window.open('/boxscore', 'CMBoxScore', features);
+    if (popup && !popup.closed) {
+      popup.focus();
+    } else {
+      console.warn('Box Score pop-out was blocked by the browser. Allow pop-ups for this site to view it.');
+    }
+  }
+
   // Settings Pop-Out Window Listeners
   if (btnOpenSettings) btnOpenSettings.addEventListener('click', openSettingsWindow);
   if (btnPopoutWindow) btnPopoutWindow.addEventListener('click', openSettingsWindow);
+  if (btnOpenBoxscore) btnOpenBoxscore.addEventListener('click', openBoxscoreWindow);
   if (btnCloseSettings) btnCloseSettings.addEventListener('click', closeSettingsModal);
   if (btnCancelSettings) btnCancelSettings.addEventListener('click', closeSettingsModal);
   if (btnSaveSettings) btnSaveSettings.addEventListener('click', saveSettings);

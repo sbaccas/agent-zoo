@@ -7,7 +7,7 @@ from app.models.simulation import HazardZone
 
 
 class ActionHandler:
-    def __init__(self, world: World, entity_manager: EntityManager):
+    def __init__(self, world: World, entity_manager: EntityManager, stats=None):
         self.world = world
         self.entity_manager = entity_manager
         # Live lethal zones, newest last. Owned here rather than on the
@@ -17,8 +17,72 @@ class ActionHandler:
         # zone creation.
         self.hazard_zones: List[HazardZone] = []
         self._zone_seq = 0
+        # Optional box-score recorder. Attached here for the same reason the
+        # zone registry is: this is the one function every control path calls,
+        # so counting here cannot miss the manual or HTTP cats.
+        self.stats = stats
 
     def apply_action(self, entity: Entity, action: ActionType, current_tick: int) -> ActionResult:
+        """Resolve an action and, for cats, record it against the box score."""
+        # A locked entity is bounced by `_resolve_action` without spending a
+        # turn. The scheduler already files those as `ticks_locked`, so
+        # recording here too would double-count them and inflate every
+        # denominator that divides by ticks.
+        if self.stats is None or entity.type != EntityType.CAT or entity.action_cooldown > 0:
+            return self._resolve_action(entity, action, current_tick)
+
+        prev_x, prev_y = entity.position.x, entity.position.y
+        # Sampled before resolution: an attack rewrites facing and a move
+        # rewrites position, either of which would change the answer to "was
+        # there a shot available when the cat chose?"
+        prey_visible, had_zone_chance = self._scan_prey(entity)
+
+        result = self._resolve_action(entity, action, current_tick)
+
+        self.stats.record_action(
+            entity,
+            action,
+            result.accepted,
+            prev_x,
+            prev_y,
+            result.new_position.x,
+            result.new_position.y,
+            len(result.affected_entities or []),
+            (result.details or {}).get("zone_id"),
+            had_zone_chance,
+            prey_visible,
+        )
+        return result
+
+    def _scan_prey(self, entity: Entity) -> tuple:
+        """Return (prey_visible, prey_in_strike_zone) for a cat, pre-action.
+
+        Visibility deliberately reuses `get_forward_fov_tiles`, the same cone
+        the observation payload is built from, so "prey in sight" means what
+        the agent was actually shown rather than a looser radial guess.
+        """
+        spec_cfg = self.entity_manager.species_config.get(entity.type.value)
+        vision = spec_cfg.vision_radius if spec_cfg else 4
+        atk_range = spec_cfg.attack_range if spec_cfg and spec_cfg.attack_range > 0 else 2
+
+        fov = set(self.world.get_forward_fov_tiles(entity.position, entity.facing, distance=vision))
+        strike = set(self.world.get_slash_aoe_tiles(entity.position, entity.facing, range_tiles=atk_range))
+
+        prey_visible = False
+        in_strike_zone = False
+        for other in self.entity_manager.get_alive_entities():
+            if other.type != EntityType.MOUSE:
+                continue
+            tile = (other.position.x, other.position.y)
+            if tile in fov:
+                prey_visible = True
+            if tile in strike:
+                in_strike_zone = True
+            if prey_visible and in_strike_zone:
+                break
+        return prey_visible, in_strike_zone
+
+    def _resolve_action(self, entity: Entity, action: ActionType, current_tick: int) -> ActionResult:
         prev_pos = Position(x=entity.position.x, y=entity.position.y)
 
         # 1. Action lock check: Entity cannot change input while completing previous action animation

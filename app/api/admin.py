@@ -114,6 +114,17 @@ async def modify_entities(sim_id: str, req: ModifyPopulationRequest):
         raise HTTPException(status_code=400, detail=str(e))
 
 
+@router.get("/{sim_id}/boxscore")
+async def get_boxscore(sim_id: str):
+    """Per-cat KPIs for the box score window.
+
+    Read-only and cheap: the counters are maintained during play, so this only
+    formats them and can safely be polled by the UI.
+    """
+    sim = get_simulation_or_404(sim_id)
+    return sim.get_boxscore()
+
+
 @router.get("/{sim_id}/species", response_model=Dict[str, SpeciesConfig])
 async def get_species_configs(sim_id: str):
     sim = get_simulation_or_404(sim_id)
