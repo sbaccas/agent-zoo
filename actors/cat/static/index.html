@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Cat Agent Workbench (Port 8001)</title>
-  <link rel="stylesheet" href="/static/workbench.css?v=24">
+  <link rel="stylesheet" href="/static/workbench.css?v=26">
 </head>
 <body>
   <div class="workbench-layout">
@@ -156,6 +156,40 @@
                 Sliding prompt context fed to Gemini. High N increases multi-tick target tracking.
               </div>
             </div>
+
+            <!-- Thinking Budget: private scratchpad before the verdict.
+                 Paired with the deliberation timeout in one box on purpose --
+                 a budget the timeout cannot afford does not make a slower cat,
+                 it makes a cat that stops using the model, and separating the
+                 two controls would hide that. -->
+            <div class="hyperparam-box">
+              <div class="hyperparam-header">
+                <div class="hyperparam-title">
+                  <span>🧠 Thinking Budget:</span>
+                  <span class="chip-n-badge" id="thinkingBudgetBadge">off</span>
+                </div>
+                <span class="hyperparam-token-est" id="thinkingSpentBadge">last: —</span>
+              </div>
+              <div class="hyperparam-slider-row">
+                <span class="slider-bound">off</span>
+                <input type="range" id="sliderThinkingBudget" min="0" max="10" value="0" step="1" class="hyperparam-slider" title="Tokens of private scratchpad the actor may use before committing to an action">
+                <span class="slider-bound" id="thinkingBudgetMaxLabel">max</span>
+              </div>
+              <div class="thinking-controls-row">
+                <button id="btnThinkingAuto" class="mode-toggle-btn" title="Let the model decide how much to think, up to ~8,192 tokens">Auto</button>
+                <label class="thinking-timeout-label" for="inputDeliberationTimeout">Abandon after</label>
+                <input type="number" id="inputDeliberationTimeout" min="1" max="120" step="1" value="8" class="form-input thinking-timeout-input" title="Seconds a decision may take before it is discarded and the reflex heuristic plays the tick">
+                <span class="thinking-timeout-unit">s · fits ~<strong id="affordableTokens">1,340</strong> tokens</span>
+              </div>
+              <div class="hyperparam-desc">
+                Scratchpad the actor gets before it must answer. At <strong>off</strong> the
+                first token it emits is already part of the verdict. Decisions that overrun the
+                abandon timer are discarded and the tick is played by the System-1 reflex, so
+                raising one without the other measures the heuristic.
+              </div>
+              <div id="thinkingWarning" class="thinking-warning" style="display: none;"></div>
+            </div>
+
 
             <!-- Autonomous thought stream -->
             <div class="thought-box">
@@ -380,6 +414,39 @@
             </div>
           </div>
 
+          <!-- Thinking Budget for the coach itself.
+               Separate from the actor's dial on purpose: this agent is off the
+               tick loop and latency-insensitive, so it can afford far more
+               scratchpad -- but moving both at once would make any subsequent
+               comparison a two-variable experiment. -->
+          <div class="hyperparam-box">
+            <div class="hyperparam-header">
+              <div class="hyperparam-title">
+                <span>🧠 Coach Thinking Budget:</span>
+                <span class="chip-n-badge" id="evalThinkingBadge">off</span>
+              </div>
+              <span class="hyperparam-token-est" id="evalThinkingSpentBadge">last: —</span>
+            </div>
+            <div class="hyperparam-slider-row">
+              <span class="slider-bound">off</span>
+              <input type="range" id="sliderEvalThinking" min="0" max="10" value="0" step="1" class="hyperparam-slider" title="Tokens of private scratchpad the evaluator may use before writing its standing orders">
+              <span class="slider-bound" id="evalThinkingMaxLabel">max</span>
+            </div>
+            <div class="thinking-controls-row">
+              <button id="btnEvalThinkingAuto" class="mode-toggle-btn" title="Let the model decide how much to think, up to ~8,192 tokens">Auto</button>
+              <label class="thinking-timeout-label" for="inputEvalTimeout">Abandon after</label>
+              <input type="number" id="inputEvalTimeout" min="30" max="900" step="5" value="60" class="form-input thinking-timeout-input" title="Seconds one evaluation may take before it is discarded and offline filler is published instead">
+              <span class="thinking-timeout-unit">s · fits ~<strong id="evalAffordableTokens">10,000</strong> tokens</span>
+            </div>
+            <div class="hyperparam-desc">
+              Scratchpad the coach gets before it writes standing orders. It runs off the
+              tick loop, so thinking here costs advice latency rather than turns — but an
+              evaluation that overruns the abandon timer is replaced by offline filler,
+              which is then published <strong>over</strong> the existing orders.
+            </div>
+            <div id="evalThinkingWarning" class="thinking-warning" style="display: none;"></div>
+          </div>
+
           <!-- Coaching notes published back to the actor -->
           <div class="eval-notes-block">
             <div class="eval-notes-header">
@@ -550,6 +617,6 @@
     </div>
   </div>
 
-  <script src="/static/workbench.js?v=24"></script>
+  <script src="/static/workbench.js?v=26"></script>
 </body>
 </html>

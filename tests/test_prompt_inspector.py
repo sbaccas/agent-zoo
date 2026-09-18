@@ -443,6 +443,11 @@ function mkEl(tag) {
 var document = { createElement: mkEl };
 var promptModalMeta = mkEl('div');
 var promptModalSections = mkEl('div');
+// `renderPromptRecord` labels the budget a decision ran under. The real
+// `formatBudget` is pulled in below rather than stubbed here, so this harness
+// keeps testing shipped code; `thinkingBounds` is the module-level default it
+// closes over, which the workbench replaces from the server on first poll.
+var thinkingBounds = { off: 0, auto: -1, min: 1, max: 24576, canDisable: true };
 function dump(el) {
   return { className: el.className, open: el.open,
            text: el.children.map(function (c) { return c.textContent; }) };
@@ -453,6 +458,7 @@ function dump(el) {
 def _render(record: dict) -> dict:
     program = (
         FAKE_DOM
+        + _extract_js_function("formatBudget")
         + _extract_js_function("renderPromptRecord")
         + f"\nrenderPromptRecord({json.dumps(record)});\n"
         + "print(JSON.stringify({"
@@ -584,4 +590,44 @@ def test_copy_button_copies_the_verbatim_prompt():
     assert "writeText(lastPromptRecord.full_prompt)" in body, (
         "the copy handler no longer hands out full_prompt verbatim"
     )
+
+
+# --------------------------------------------------------------------------
+# The thinking budget behind a decision
+# --------------------------------------------------------------------------
+
+@jsc_only
+def test_renderer_states_the_budget_the_decision_actually_ran_under():
+    """The live control shows what is set now, which may not be what ran.
+
+    The budget is adjustable mid-game, so attributing an inspected tick to the
+    current setting would be wrong for every tick recorded before the change.
+    """
+    out = _render(_js_record(thinking_budget=2048, thoughts_token_count=1431))
+    line = " | ".join(out["meta"][0])
+    assert "2,048 tokens" in line, f"the budget is not surfaced: {line!r}"
+    assert "1,431 spent" in line, f"the thinking actually spent is not shown: {line!r}"
+
+
+@jsc_only
+def test_renderer_distinguishes_unmeasured_thinking_from_none():
+    """A response with no usage metadata must not read as "it did not think".
+
+    Reporting an unmeasured call as 0 would be inventing the one number this
+    experiment turns on.
+    """
+    out = _render(_js_record(thinking_budget=-1, thoughts_token_count=None))
+    line = " | ".join(out["meta"][0])
+    assert "auto" in line
+    assert "not reported" in line, f"absent telemetry rendered as a measurement: {line!r}"
+
+
+@jsc_only
+def test_renderer_omits_the_budget_line_for_records_that_predate_it():
+    """Prompts captured before this field existed must still open cleanly."""
+    rec = _js_record()
+    rec.pop("thinking_budget", None)
+    out = _render(rec)
+    assert not any("Thinking budget" in t for t in out["meta"][0])
+
 

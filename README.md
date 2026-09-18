@@ -49,7 +49,7 @@ flowchart TB
     end
 
     subgraph CloudLayer["Google Cloud Vertex AI"]
-        Gemini["Gemini 2.5 Flash<br/>(thinking_budget=0)"]
+        Gemini["Gemini 2.5 Flash<br/>(thinking_budget: tunable, default 0)"]
     end
 
     BoardUI -->|HTTP / WebSocket| FastAPIServer
@@ -100,9 +100,92 @@ Any agent connects to the simulation by implementing the `/act` endpoint:
 
 ## ⚡ Performance & Optimization Highlights
 
-- **Chain-of-Thought Budgeting**: Configured with `thinking_budget=0`, reducing Gemini 2.5 Flash response times from ~3.5s down to **~1.1s – 1.3s**.
+- **Chain-of-Thought Budgeting**: Defaults to `thinking_budget=0`, reducing Gemini 2.5 Flash response times from ~3.5s down to **~1.1s – 1.3s**. Adjustable at runtime — see below.
 - **Bounded Sliding Memory**: By refreshing the ADK session per tick and formatting the previous 3 moves (`(pos, facing, context, move, reason)`), context remains capped at ~250 tokens across hundreds of simulation ticks.
 - **Fail-Safe Heuristic Fallback**: If the Cat Agent takes longer than 3.0s or fails twice consecutively, the scheduler trips a circuit breaker and executes pure in-memory pursuit (0.008ms) until the service stabilizes.
+
+---
+
+## 🧠 Thinking Budget
+
+How much private scratchpad the actor gets before it must commit to an action.
+At the default of `0` there is none: the first token the model emits is already
+part of the verdict, which is why `CatTacticalDecision` declares `thought`
+before `action` — that field order is the only scratchpad the cat has.
+
+| Where | How |
+| --- | --- |
+| Workbench UI | Box 2 → **Thinking Budget** slider, `Auto` toggle, and abandon timer |
+| API | `GET`/`POST` `/api/agent/thinking-budget` |
+| Environment | `CAT_THINKING_BUDGET`, `CAT_DELIBERATION_TIMEOUT_SEC` |
+
+Values: `0` disables thinking, `-1` lets the model decide (up to ~8,192 tokens),
+or any token count within the model's range (1–24,576 for 2.5 Flash). Only the
+tactical actor is affected; the radio agent and the evaluator hold their own
+independent settings, so an experiment stays scoped to the thing that plays the
+game.
+
+> [!IMPORTANT]
+> The budget is coupled to the **abandon timeout**. Thinking tokens are emitted
+> before the first answer token, so at ~200 tok/s the default 8s ceiling affords
+> roughly 1,300 tokens of thought. A decision that overruns is discarded and the
+> tick is played by the System-1 reflex — so an unaffordable budget does not
+> produce a slower cat, it produces a cat that has quietly stopped using the
+> model, while the box score still says Gemini was configured. Raise both
+> together; the UI warns and suggests a timeout when they do not fit.
+
+### The evaluator's dial
+
+The coach is a different kind of thinker and gets a separate control. It runs
+once every few hundred ticks, not four times a second, so tokens are cheap here
+in a way they are not for the actor — but it reasons over a whole transcript
+rather than a single frame, which is exactly the workload a scratchpad helps
+with.
+
+| Where | How |
+| --- | --- |
+| Workbench UI | Box 6 → **Coach Thinking** slider and review timer |
+| API | `GET`/`POST` `/api/agent/evaluator/thinking-budget` |
+| Environment | `CAT_EVAL_THINKING_BUDGET`, `CAT_EVAL_TIMEOUT_SEC` |
+
+Defaults: budget `0` (off), review timeout `60s`, clamped to `30–900s`. The
+floor is not arbitrary — the coach's `get_boxscore` tool has its own 3s timeout,
+and the review window has to stay an order of magnitude above it or a slow box
+score would eat the entire review.
+
+> [!CAUTION]
+> The evaluator fails differently from the actor. When the actor overruns it
+> loses one tick to the reflex. When the **coach** overruns, `evaluate()` falls
+> back to a positional summary — bounding boxes and blind directions — and
+> **publishes that over the standing orders** in `coaching_notes.md`. The cat
+> then plays the next few hundred ticks on filler. Raise the budget and the
+> review timer together; the UI warns when they do not fit.
+
+### Running an A/B
+
+Each archived game carries `run_config.json` recording the budget, the abandon
+timeout, and any mid-game changes stamped with the tick they took effect on — so
+a run that moved the dial cannot be mistaken for a controlled one. Per decision,
+the prompt log records the budget in force and the thought tokens actually
+billed, visible in the workbench's Payload inspector.
+
+Both agents are covered, and the change log is **split by agent**, so a run that
+raised the coach's budget but left the actor alone still reads as controlled
+with respect to the actor. The evaluator's review timeout is recorded alongside
+it under `evaluation.timeout_sec`, for the same reason the actor's is: a run
+where it was set too low produces coaching notes no model wrote.
+
+```bash
+# Launch straight into a configuration, rather than remembering to move a slider
+CAT_THINKING_BUDGET=2048 CAT_DELIBERATION_TIMEOUT_SEC=20 ./scripts/launch_workbench.sh
+
+# Or hold the actor fixed and give the coach the scratchpad instead
+CAT_EVAL_THINKING_BUDGET=4096 CAT_EVAL_TIMEOUT_SEC=120 ./scripts/launch_workbench.sh
+```
+
+Compare across runs with the engine mix and deliberation timings in Box 7: the
+question a thinking A/B actually answers is not just "did the cat score more",
+but "did the model still get to play".
 
 ---
 

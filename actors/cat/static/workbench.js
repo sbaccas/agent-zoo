@@ -96,6 +96,67 @@
     return Math.round(320 + n * 45);
   }
 
+  // DOM Elements - Thinking Budget Hyperparameter
+  const sliderThinkingBudget = document.getElementById('sliderThinkingBudget');
+  const thinkingBudgetBadge = document.getElementById('thinkingBudgetBadge');
+  const thinkingBudgetMaxLabel = document.getElementById('thinkingBudgetMaxLabel');
+  const thinkingSpentBadge = document.getElementById('thinkingSpentBadge');
+  const btnThinkingAuto = document.getElementById('btnThinkingAuto');
+  const inputDeliberationTimeout = document.getElementById('inputDeliberationTimeout');
+  const affordableTokens = document.getElementById('affordableTokens');
+  const thinkingWarning = document.getElementById('thinkingWarning');
+  let isDraggingThinkingSlider = false;
+  // Bounds as reported by the agent. Defaults are only what is shown for the
+  // instant before the first poll lands; the server is the authority, because
+  // the legal range depends on which model the actor is running.
+  let thinkingBounds = { off: 0, auto: -1, min: 1, max: 24576, canDisable: true };
+  let thinkingLadder = [0];
+
+  // Steps the slider moves through. Log-scaled rather than linear: the
+  // interesting differences are between 0, 512 and 4,096, and a linear slider
+  // over 0-24,576 would spend nine tenths of its travel on values that all
+  // behave identically.
+  const THINKING_LADDER_STEPS = [
+    0, 128, 256, 512, 1024, 2048, 4096, 8192, 12288, 16384, 24576,
+  ];
+
+  function buildThinkingLadder(bounds) {
+    const rungs = THINKING_LADDER_STEPS.filter(
+      (v) => v >= bounds.min && v <= bounds.max
+    );
+    if (bounds.canDisable) rungs.unshift(bounds.off);
+    // The model's exact ceiling is always reachable even if it is not a rung,
+    // so "as much as it will take" is never an unrepresentable setting.
+    if (rungs[rungs.length - 1] !== bounds.max) rungs.push(bounds.max);
+    return rungs;
+  }
+
+  function nearestIndexIn(ladder, budget) {
+    let best = 0;
+    let bestGap = Infinity;
+    ladder.forEach((v, i) => {
+      const gap = Math.abs(v - budget);
+      if (gap < bestGap) {
+        bestGap = gap;
+        best = i;
+      }
+    });
+    return best;
+  }
+
+  function nearestLadderIndex(budget) {
+    return nearestIndexIn(thinkingLadder, budget);
+  }
+
+  // Both agents share the OFF (0) and AUTO (-1) sentinels, so one formatter
+  // serves both controls; only the min/max differ, and those never reach here.
+  function formatBudget(budget) {
+    if (budget === thinkingBounds.auto) return 'auto';
+    if (budget === thinkingBounds.off) return 'off';
+    return `${budget.toLocaleString()} tokens`;
+  }
+
+
   // DOM Elements - Modals
   const skillsModal = document.getElementById('skillsModal');
   const promptModal = document.getElementById('promptModal');
@@ -397,6 +458,17 @@
         tokenEstBadge.textContent = `~${estimateTokens(windowSize)} tokens`;
       }
     }
+
+    // Synchronize the thinking budget control.
+    //
+    // Rendered from the polled state rather than from whatever this tab last
+    // sent, so a second workbench tab, a curl, or an env-seeded startup value
+    // all show up here instead of the control quietly lying about what the
+    // actor is doing.
+    if (state.thinking) {
+      renderThinkingControl(state.thinking);
+    }
+
 
     // Override mode toggles
     const mode = state.override_mode || currentOverrideMode;
@@ -913,6 +985,10 @@
         }
         lastPromptRecord = data.record;
         renderPromptRecord(data.record);
+        // Updated here rather than inside the renderer: the badge sits outside
+        // the modal, on the thinking-budget control, and a renderer that only
+        // touches the modal it was asked to fill is the easier one to trust.
+        renderThinkingSpend(data.record);
       })
       .catch((err) => {
         lastPromptRecord = null;
@@ -934,6 +1010,20 @@
     const line1 = document.createElement('div');
     line1.textContent = `${rec.model} · ${rec.latency_ms ?? '?'}ms${lagNote}`;
     meta.appendChild(line1);
+
+    // What this particular decision was allowed to think, and what it actually
+    // spent. Per-record rather than read off the live control, because the
+    // budget is adjustable mid-game and the control shows only what is set
+    // now -- which may not be what produced the tick being inspected.
+    if (rec.thinking_budget !== undefined && rec.thinking_budget !== null) {
+      const spent = rec.thoughts_token_count;
+      const spentText = (spent === null || spent === undefined)
+        ? 'not reported by the API'
+        : `${spent.toLocaleString()} spent`;
+      const line = document.createElement('div');
+      line.textContent = `Thinking budget: ${formatBudget(rec.thinking_budget)} · ${spentText}`;
+      meta.appendChild(line);
+    }
 
     if (rec.decision) {
       const line2 = document.createElement('div');
@@ -1028,6 +1118,22 @@
   const btnCopyEvalNotes = document.getElementById('btnCopyEvalNotes');
   const btnViewEvalSkills = document.getElementById('btnViewEvalSkills');
   const skillsModalTitle = document.getElementById('skillsModalTitle');
+
+  // Box 6: the coach's own thinking budget. Mirrors the actor's control in Box
+  // 2 but keeps its own bounds and ladder -- the two agents may not be on the
+  // same model, and their abandon ceilings differ by an order of magnitude.
+  const sliderEvalThinking = document.getElementById('sliderEvalThinking');
+  const evalThinkingBadge = document.getElementById('evalThinkingBadge');
+  const evalThinkingMaxLabel = document.getElementById('evalThinkingMaxLabel');
+  const evalThinkingSpentBadge = document.getElementById('evalThinkingSpentBadge');
+  const btnEvalThinkingAuto = document.getElementById('btnEvalThinkingAuto');
+  const inputEvalTimeout = document.getElementById('inputEvalTimeout');
+  const evalAffordableTokens = document.getElementById('evalAffordableTokens');
+  const evalThinkingWarning = document.getElementById('evalThinkingWarning');
+  let isDraggingEvalThinkingSlider = false;
+  let evalThinkingBounds = { off: 0, auto: -1, min: 1, max: 24576, canDisable: true };
+  let evalThinkingLadder = [0];
+  let cachedEvalThinking = null;
 
   // True while the user is dragging the interval slider, so incoming poll data
   // does not yank the handle out from under them.
@@ -1150,6 +1256,205 @@
     if (notes !== rawEvalNotes) {
       renderEvalNotes(notes);
     }
+
+    // Driven from the poll rather than from whatever this tab last sent, so a
+    // change made from another tab or from curl shows up here.
+    if (ev.thinking) {
+      renderEvalThinkingControl(ev.thinking);
+    }
+  }
+
+  // ---- Coach thinking budget ----------------------------------------------
+
+  function renderEvalThinkingControl(thinking) {
+    cachedEvalThinking = thinking;
+    evalThinkingBounds = {
+      off: thinking.off,
+      auto: thinking.auto,
+      min: thinking.min,
+      max: thinking.max,
+      canDisable: thinking.can_disable,
+    };
+    evalThinkingLadder = buildThinkingLadder(evalThinkingBounds);
+
+    if (sliderEvalThinking) {
+      sliderEvalThinking.max = String(evalThinkingLadder.length - 1);
+    }
+    if (evalThinkingMaxLabel) {
+      evalThinkingMaxLabel.textContent = evalThinkingBounds.max.toLocaleString();
+    }
+
+    const budget = thinking.budget;
+    const isAuto = budget === evalThinkingBounds.auto;
+
+    if (btnEvalThinkingAuto) {
+      btnEvalThinkingAuto.classList.toggle('active', isAuto);
+    }
+    // AUTO is a mode, not a quantity, so the slider is disabled rather than
+    // left parked on a number that is not in force.
+    if (sliderEvalThinking) {
+      sliderEvalThinking.disabled = isAuto;
+      if (!isDraggingEvalThinkingSlider && !isAuto) {
+        sliderEvalThinking.value = String(nearestIndexIn(evalThinkingLadder, budget));
+      }
+    }
+    if (evalThinkingBadge) {
+      evalThinkingBadge.textContent = formatBudget(budget);
+    }
+    if (inputEvalTimeout && document.activeElement !== inputEvalTimeout) {
+      inputEvalTimeout.value = String(thinking.timeout_sec);
+      inputEvalTimeout.min = String(thinking.timeout_min_sec);
+      inputEvalTimeout.max = String(thinking.timeout_max_sec);
+    }
+    if (evalAffordableTokens) {
+      evalAffordableTokens.textContent = (thinking.affordable_tokens || 0).toLocaleString();
+    }
+    if (evalThinkingWarning) {
+      if (thinking.warning) {
+        evalThinkingWarning.textContent = `⚠️ ${thinking.warning}`;
+        evalThinkingWarning.style.display = 'block';
+      } else {
+        evalThinkingWarning.style.display = 'none';
+      }
+    }
+
+    renderEvalThinkingSpend(thinking.last_run);
+  }
+
+  function renderEvalThinkingSpend(lastRun) {
+    // What the last evaluation actually spent. The coach runs once per ~100
+    // ticks, so unlike the actor there is no per-decision log to read this from
+    // after the fact -- if it is not shown here it is not observable at all.
+    if (!evalThinkingSpentBadge) return;
+    if (!lastRun || lastRun.latency_ms === null || lastRun.latency_ms === undefined) {
+      evalThinkingSpentBadge.textContent = 'last: —';
+      return;
+    }
+    if (lastRun.timed_out) {
+      // Worth calling out rather than folding into the token figure: a timeout
+      // means the published standing orders came from offline filler.
+      evalThinkingSpentBadge.textContent = 'last: ABANDONED (timed out)';
+      return;
+    }
+    const spent = lastRun.thoughts_token_count;
+    const secs = (lastRun.latency_ms / 1000).toFixed(1);
+    if (spent === null || spent === undefined) {
+      // Not the same as zero: the response carried no usage metadata. Saying
+      // "0 thought tokens" would be inventing a measurement.
+      evalThinkingSpentBadge.textContent = `last: ${secs}s · thinking not reported`;
+      return;
+    }
+    evalThinkingSpentBadge.textContent =
+      `last: ${secs}s · ${spent.toLocaleString()} thought tokens`;
+  }
+
+  // FastAPI reports a schema violation as a 422 whose `detail` is an array of
+  // objects, not a string. Interpolating that directly yields "[object Object]",
+  // which is how a real bug here stayed invisible: the slider was posting an
+  // undefined budget, the server was rejecting it correctly, and the UI was
+  // showing a message that told nobody anything.
+  function describeApiError(data, res) {
+    const detail = data && data.detail;
+    if (typeof detail === 'string') return detail;
+    if (Array.isArray(detail)) {
+      const parts = detail
+        .map((d) => {
+          const where = Array.isArray(d.loc) ? d.loc.filter((p) => p !== 'body').join('.') : '';
+          return where ? `${where}: ${d.msg}` : d.msg;
+        })
+        .filter(Boolean);
+      if (parts.length) return parts.join('; ');
+    }
+    return `HTTP ${res.status}`;
+  }
+
+  // A status payload always carries a budget. An error payload may not, and
+  // feeding one to the renderer would hand `buildThinkingLadder` undefined
+  // bounds -- replacing a visible failure with a corrupted control.
+  function isThinkingStatus(data) {
+    return data && typeof data.budget === 'number' && typeof data.max === 'number';
+  }
+
+  async function applyEvalThinkingSettings(budget, timeoutSec) {
+    // Guards against posting a budget the ladder could not supply. Reaching
+    // here with undefined means the control never received its bounds, and the
+    // useful thing to do is say so rather than let the request 422.
+    if (typeof budget !== 'number' || !Number.isFinite(budget)) {
+      if (evalThinkingWarning) {
+        evalThinkingWarning.textContent =
+          '⛔ Coach thinking control has not loaded its limits yet — waiting for the next poll.';
+        evalThinkingWarning.style.display = 'block';
+      }
+      return;
+    }
+    // Raw fetch rather than `api()`, which discards the body on a non-2xx. A
+    // 400 here carries the reason the value was refused, which is the single
+    // most useful thing to show someone who just moved the dial.
+    try {
+      const res = await fetch('/api/agent/evaluator/thinking-budget', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          thinking_budget: budget,
+          eval_timeout_sec: timeoutSec,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok && evalThinkingWarning) {
+        evalThinkingWarning.textContent = `⛔ ${describeApiError(data, res)}`;
+        evalThinkingWarning.style.display = 'block';
+      }
+      // Rendered on both paths: on a rejection the payload still carries the
+      // settings actually in force, so the control snaps back to the truth.
+      if (isThinkingStatus(data)) {
+        renderEvalThinkingControl(data);
+      }
+    } catch (err) {
+      console.error('Failed to update evaluator thinking budget:', err);
+    }
+  }
+
+  function currentEvalTimeoutInput() {
+    const parsed = parseFloat(inputEvalTimeout && inputEvalTimeout.value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  function currentEvalBudget() {
+    return cachedEvalThinking ? cachedEvalThinking.budget : evalThinkingBounds.off;
+  }
+
+  if (sliderEvalThinking) {
+    sliderEvalThinking.addEventListener('input', () => {
+      isDraggingEvalThinkingSlider = true;
+      const budget = evalThinkingLadder[parseInt(sliderEvalThinking.value, 10)];
+      if (evalThinkingBadge) {
+        evalThinkingBadge.textContent = formatBudget(budget);
+      }
+    });
+
+    sliderEvalThinking.addEventListener('change', async () => {
+      const budget = evalThinkingLadder[parseInt(sliderEvalThinking.value, 10)];
+      isDraggingEvalThinkingSlider = false;
+      await applyEvalThinkingSettings(budget, currentEvalTimeoutInput());
+    });
+  }
+
+  if (btnEvalThinkingAuto) {
+    btnEvalThinkingAuto.addEventListener('click', async () => {
+      // A toggle, not a one-way door: clicking Auto while it is already on
+      // returns to whichever rung the slider is parked on.
+      const goingAuto = currentEvalBudget() !== evalThinkingBounds.auto;
+      const budget = goingAuto
+        ? evalThinkingBounds.auto
+        : evalThinkingLadder[parseInt(sliderEvalThinking.value, 10)];
+      await applyEvalThinkingSettings(budget, currentEvalTimeoutInput());
+    });
+  }
+
+  if (inputEvalTimeout) {
+    inputEvalTimeout.addEventListener('change', async () => {
+      await applyEvalThinkingSettings(currentEvalBudget(), currentEvalTimeoutInput());
+    });
   }
 
   // DOM Elements - Box 7: Deliberation Timing
@@ -1583,6 +1888,162 @@
       }
     });
   }
+
+  // ---- Thinking budget ----------------------------------------------------
+  // How much private scratchpad the actor gets before it has to commit to an
+  // action, paired with the ceiling that decides whether a thought-out answer
+  // arrives in time to be used at all.
+
+  function renderThinkingControl(thinking) {
+    thinkingBounds = {
+      off: thinking.off,
+      auto: thinking.auto,
+      min: thinking.min,
+      max: thinking.max,
+      canDisable: thinking.can_disable,
+    };
+    thinkingLadder = buildThinkingLadder(thinkingBounds);
+
+    if (sliderThinkingBudget) {
+      sliderThinkingBudget.max = String(thinkingLadder.length - 1);
+    }
+    if (thinkingBudgetMaxLabel) {
+      thinkingBudgetMaxLabel.textContent = thinkingBounds.max.toLocaleString();
+    }
+
+    const budget = thinking.budget;
+    const isAuto = budget === thinkingBounds.auto;
+
+    if (btnThinkingAuto) {
+      btnThinkingAuto.classList.toggle('active', isAuto);
+    }
+    // The slider cannot express AUTO -- it is a mode, not a quantity -- so it
+    // is greyed out rather than left parked on a number that is not in force.
+    if (sliderThinkingBudget) {
+      sliderThinkingBudget.disabled = isAuto;
+      if (!isDraggingThinkingSlider && !isAuto) {
+        sliderThinkingBudget.value = String(nearestLadderIndex(budget));
+      }
+    }
+    if (thinkingBudgetBadge) {
+      thinkingBudgetBadge.textContent = formatBudget(budget);
+    }
+    if (inputDeliberationTimeout && document.activeElement !== inputDeliberationTimeout) {
+      inputDeliberationTimeout.value = String(thinking.deliberation_timeout_sec);
+      inputDeliberationTimeout.min = String(thinking.deliberation_timeout_min_sec);
+      inputDeliberationTimeout.max = String(thinking.deliberation_timeout_max_sec);
+    }
+    if (affordableTokens) {
+      affordableTokens.textContent = (thinking.affordable_tokens || 0).toLocaleString();
+    }
+    if (thinkingWarning) {
+      if (thinking.warning) {
+        thinkingWarning.textContent = `⚠️ ${thinking.warning}`;
+        thinkingWarning.style.display = 'block';
+      } else {
+        thinkingWarning.style.display = 'none';
+      }
+    }
+  }
+
+  function renderThinkingSpend(record) {
+    // What the last inspected Gemini decision actually spent. A budget is a
+    // ceiling, not a spend, and at AUTO the two are rarely the same number, so
+    // the dial alone cannot tell you whether the cat is thinking.
+    if (!thinkingSpentBadge) return;
+    if (!record) {
+      thinkingSpentBadge.textContent = 'last: —';
+      return;
+    }
+    const spent = record.thoughts_token_count;
+    if (spent === null || spent === undefined) {
+      // Not the same as zero: the response carried no usage metadata. Saying
+      // "0 thought tokens" here would be inventing a measurement.
+      thinkingSpentBadge.textContent = 'last: not reported';
+      return;
+    }
+    thinkingSpentBadge.textContent = `last: ${spent.toLocaleString()} thought tokens`;
+  }
+
+  async function applyThinkingSettings(budget, timeoutSec) {
+    // Deliberately not routed through `api()`: that helper throws away the
+    // response body on a non-2xx, and a 400 from this endpoint carries the
+    // explanation of why the value was refused -- the single most useful thing
+    // to put in front of someone who just moved the dial.
+    try {
+      const res = await fetch('/api/agent/thinking-budget', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          thinking_budget: budget,
+          deliberation_timeout_sec: timeoutSec,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        if (thinkingWarning) {
+          thinkingWarning.textContent = `⛔ ${describeApiError(data, res)}`;
+          thinkingWarning.style.display = 'block';
+        }
+      }
+      // Rendered on both paths. On a rejection the payload still carries the
+      // settings actually in force, so the control snaps back to the truth
+      // instead of sitting on a value the agent refused. Guarded because a 422
+      // body is a validation report, not a status -- rendering that would give
+      // the ladder undefined bounds and break the control outright.
+      if (isThinkingStatus(data)) {
+        renderThinkingControl(data);
+        if (cachedState) cachedState.thinking = data;
+      }
+    } catch (err) {
+      console.error('Failed to update thinking budget:', err);
+    }
+  }
+
+  function currentTimeoutInput() {
+    const parsed = parseFloat(inputDeliberationTimeout && inputDeliberationTimeout.value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  function currentBudget() {
+    const thinking = cachedState && cachedState.thinking;
+    return thinking ? thinking.budget : thinkingBounds.off;
+  }
+
+  if (sliderThinkingBudget) {
+    sliderThinkingBudget.addEventListener('input', () => {
+      isDraggingThinkingSlider = true;
+      const budget = thinkingLadder[parseInt(sliderThinkingBudget.value, 10)];
+      if (thinkingBudgetBadge) {
+        thinkingBudgetBadge.textContent = formatBudget(budget);
+      }
+    });
+
+    sliderThinkingBudget.addEventListener('change', async () => {
+      const budget = thinkingLadder[parseInt(sliderThinkingBudget.value, 10)];
+      isDraggingThinkingSlider = false;
+      await applyThinkingSettings(budget, currentTimeoutInput());
+    });
+  }
+
+  if (btnThinkingAuto) {
+    btnThinkingAuto.addEventListener('click', async () => {
+      // A toggle, not a one-way door: clicking Auto while it is already on
+      // returns to whichever rung the slider is parked on.
+      const goingAuto = currentBudget() !== thinkingBounds.auto;
+      const budget = goingAuto
+        ? thinkingBounds.auto
+        : thinkingLadder[parseInt(sliderThinkingBudget.value, 10)];
+      await applyThinkingSettings(budget, currentTimeoutInput());
+    });
+  }
+
+  if (inputDeliberationTimeout) {
+    inputDeliberationTimeout.addEventListener('change', async () => {
+      await applyThinkingSettings(currentBudget(), currentTimeoutInput());
+    });
+  }
+
 
   // Event Listeners - Commander Radio & Direct Agent Interrogation
   if (chatPromptForm) {

@@ -1,4 +1,5 @@
 import asyncio
+import math
 import os
 from pathlib import Path
 import time
@@ -47,6 +48,227 @@ COMMANDER_BLOCK_HEADER = "--- COMMANDER RADIO ---"
 COMMANDER_FRESH_TICKS = 20
 
 
+# --- Thinking budget ------------------------------------------------------
+#
+# How many tokens of private scratchpad the actor gets before it must emit its
+# answer. Two values are special and are not token counts at all:
+#
+#   0   DISABLED -- no scratchpad. The model's first emitted token is already
+#       part of the answer.
+#   -1  AUTOMATIC -- the model decides per request, up to ~8,192 tokens.
+#
+# The model the actor runs on. Named rather than repeated as a literal at each
+# LlmAgent below, because the budget bounds are derived from it and the two
+# drifting apart would mean offering a range the model rejects.
+ACTOR_MODEL = "gemini-2.5-flash"
+
+THINKING_BUDGET_OFF = 0
+THINKING_BUDGET_AUTO = -1
+
+# Per-model finite ranges, from the Gemini thinking documentation. The floors
+# differ and matter: 2.5 Pro cannot be switched off at all and rejects anything
+# under 128, so a UI that offers 0-24,576 for every model is wrong for two of
+# the three listed here.
+#
+# A model missing from this table falls back to the widest range any of them
+# allows, and the model itself remains the authority -- an out-of-range budget
+# comes back as an API error on the next tick, surfaced as the fallback reason.
+MODEL_THINKING_BOUNDS = {
+    "gemini-2.5-flash": (1, 24576),
+    "gemini-2.5-flash-lite": (512, 24576),
+    "gemini-2.5-pro": (128, 32768),
+}
+_DEFAULT_BOUNDS = (1, 32768)
+
+def thinking_bounds_for(model: str) -> Tuple[int, int, bool]:
+    """``(min, max, can_disable)`` for a model.
+
+    Parameterised by model rather than hardwired to the actor because the
+    evaluator subagent has the same dial and may not be on the same model. Two
+    copies of this table would eventually disagree, and the way that failure
+    presents is a slider offering a range the model rejects on every call --
+    which reads as the agent being broken rather than as the UI being wrong.
+    """
+    low, high = MODEL_THINKING_BOUNDS.get(model, _DEFAULT_BOUNDS)
+    return low, high, not model.startswith("gemini-2.5-pro")
+
+
+THINKING_BUDGET_MIN, THINKING_BUDGET_MAX, THINKING_CAN_BE_DISABLED = (
+    thinking_bounds_for(ACTOR_MODEL)
+)
+
+
+# The budget this process starts on. Seeded from the environment so a run can be
+# launched into a configuration without anyone having to remember to move a
+# slider first -- which matters because the first ticks of a game are recorded
+# into the same transcript as the rest of it.
+#
+# Default 0, preserving the behaviour every measurement in this repo was taken
+# under. See CatTacticalDecision's docstring: the thought-before-action field
+# order exists *because* there is no scratchpad, and its 10/10 vs 1/10 result
+# was measured at 0.
+DEFAULT_THINKING_BUDGET_ENV = "CAT_THINKING_BUDGET"
+
+# How long a single Gemini decision call may run before it is abandoned and the
+# heuristic covers the tick.
+#
+# Adjustable at runtime, for the same reason the budget is: the two are one
+# setting wearing two hats. Thinking tokens are emitted before the first answer
+# token, so at ~200 tok/s an 8s ceiling affords roughly 1,300 tokens of thought
+# and no more. Leaving this fixed while exposing the budget would have produced
+# a dial that appears to go to 24,576 but silently stops working above ~1,300 --
+# every larger setting timing out, falling back to the reflex, and reporting
+# itself in the box score as a run where thinking did not help.
+#
+# Raising it is cheap here specifically because deliberation is decoupled from
+# the tick loop: a slow call does not stall the game, it just means the reflex
+# covers more ticks while the model is busy. What it does cost is staleness --
+# a decision built at tick N and applied at N+30 is answering a question about
+# a board that has moved -- which the prompt inspector already surfaces per
+# decision as the gap between `built_at_tick` and `applied_at_tick`.
+DELIBERATION_TIMEOUT_DEFAULT_SEC = 8.0
+DELIBERATION_TIMEOUT_MIN_SEC = 1.0
+# A ceiling on the ceiling. Past this, a decision is near-certainly answering a
+# board that no longer exists, and the run stops being a test of thinking and
+# becomes a test of how well the cat plays on minute-old information.
+DELIBERATION_TIMEOUT_MAX_SEC = 120.0
+
+
+def _initial_deliberation_timeout() -> float:
+    raw = os.environ.get("CAT_DELIBERATION_TIMEOUT_SEC")
+    if raw is None or not str(raw).strip():
+        return DELIBERATION_TIMEOUT_DEFAULT_SEC
+    try:
+        return coerce_deliberation_timeout(raw)
+    except ValueError as exc:
+        print(
+            f"⚠️  [ACTOR] Ignoring CAT_DELIBERATION_TIMEOUT_SEC={raw!r}: {exc}. "
+            f"Using {DELIBERATION_TIMEOUT_DEFAULT_SEC:g}s.",
+            flush=True,
+        )
+        return DELIBERATION_TIMEOUT_DEFAULT_SEC
+
+
+def coerce_deliberation_timeout(value: Any) -> float:
+    """Validates a deliberation timeout in seconds, or raises ValueError."""
+    try:
+        timeout = float(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"deliberation timeout must be a number, got {value!r}")
+    if not (DELIBERATION_TIMEOUT_MIN_SEC <= timeout <= DELIBERATION_TIMEOUT_MAX_SEC):
+        raise ValueError(
+            f"deliberation timeout {timeout:g}s is out of range: use "
+            f"{DELIBERATION_TIMEOUT_MIN_SEC:g}-{DELIBERATION_TIMEOUT_MAX_SEC:g} seconds"
+        )
+    return timeout
+
+
+# Mutable, and read through `get_deliberation_timeout()` at the point of use
+# rather than captured at import. A module-level name imported elsewhere with
+# `from ... import DELIBERATION_TIMEOUT_SEC` would bind a copy that never
+# changes -- the exact class of bug the budget's single-source-of-truth
+# treatment is designed to avoid.
+_deliberation_timeout_sec: float = _initial_deliberation_timeout()
+
+
+def get_deliberation_timeout() -> float:
+    """Seconds a decision call may run before it is abandoned."""
+    return _deliberation_timeout_sec
+
+
+def set_deliberation_timeout(value: Any) -> float:
+    """Changes the abandon ceiling. Applies to the next call, not in-flight ones."""
+    global _deliberation_timeout_sec
+    _deliberation_timeout_sec = coerce_deliberation_timeout(value)
+    return _deliberation_timeout_sec
+
+
+
+def coerce_thinking_budget(value: Any, model: Optional[str] = None) -> int:
+    """Turns arbitrary input into a budget the model will actually accept.
+
+    Raises ValueError rather than clamping silently. A clamp would let a request
+    for 60,000 tokens be recorded in the archive as the 24,576 it was quietly
+    reduced to, and the whole point of the archive is that the configuration it
+    reports is the one that ran.
+
+    The single exception is the AUTO sentinel, which is a mode rather than a
+    quantity and so is passed through untouched.
+
+    ``model`` defaults to the actor's. It is a parameter rather than a constant
+    so the evaluator subagent validates against *its* model: the two are the
+    same today, and a shared validator that silently assumed so would approve a
+    budget the other model rejects the first time they diverge.
+    """
+    model = model or ACTOR_MODEL
+    low, high, can_disable = thinking_bounds_for(model)
+
+    try:
+        budget = int(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"thinking budget must be an integer, got {value!r}")
+
+    if budget == THINKING_BUDGET_AUTO:
+        return budget
+    if budget == THINKING_BUDGET_OFF:
+        if can_disable:
+            return budget
+        raise ValueError(
+            f"thinking cannot be disabled on {model}; the lowest it will "
+            f"accept is {low} tokens"
+        )
+    if low <= budget <= high:
+        return budget
+    raise ValueError(
+        f"thinking budget {budget} is out of range for {model}: use "
+        f"{THINKING_BUDGET_OFF} (off), {THINKING_BUDGET_AUTO} (auto), or "
+        f"{low}-{high} tokens"
+    )
+
+
+def describe_thinking_budget(budget: Optional[int]) -> str:
+    """A label for a budget, for logs, the archive and the UI.
+
+    One function so the three cannot disagree about what `-1` means.
+    """
+    if budget is None:
+        return "unset"
+    if budget == THINKING_BUDGET_OFF:
+        return "off (no scratchpad)"
+    if budget == THINKING_BUDGET_AUTO:
+        return "auto (model decides)"
+    return f"{budget:,} tokens"
+
+
+def _initial_thinking_budget() -> int:
+    """Reads the startup budget from the environment, falling back to 0.
+
+    A malformed value is a warning and a fall back to 0, not a crash: the
+    workbench failing to boot over a typo in a tuning variable would be a worse
+    outcome than starting in the configuration everything was measured under.
+    The value is echoed either way, because a silently ignored setting is how
+    you end up comparing two runs that were actually identical.
+    """
+    raw = os.environ.get(DEFAULT_THINKING_BUDGET_ENV)
+    if raw is None or not str(raw).strip():
+        return THINKING_BUDGET_OFF
+    try:
+        budget = coerce_thinking_budget(raw)
+    except ValueError as exc:
+        print(
+            f"⚠️  [ACTOR] Ignoring {DEFAULT_THINKING_BUDGET_ENV}={raw!r}: {exc}. "
+            f"Starting with thinking disabled.",
+            flush=True,
+        )
+        return THINKING_BUDGET_OFF
+    print(
+        f"🧠 [ACTOR] Thinking budget from {DEFAULT_THINKING_BUDGET_ENV}: "
+        f"{describe_thinking_budget(budget)}",
+        flush=True,
+    )
+    return budget
+
+
 def get_skills_instruction() -> str:
     """The actor's entire behavioural specification, read fresh from disk.
 
@@ -88,14 +310,20 @@ def _interrogator_instruction_provider(_ctx: ReadonlyContext) -> str:
 
 
 # Initialize ADK Agent and Runner
+#
+# The thinking budget here is a *starting* value, not a fixed one. It is
+# rebound at runtime by `set_thinking_budget` and must therefore never be read
+# from this literal anywhere else -- `get_thinking_budget` reads the live agent.
 adk_agent = LlmAgent(
     name="cat_tactician",
-    model="gemini-2.5-flash",
+    model=ACTOR_MODEL,
     instruction=_actor_instruction_provider,
     output_schema=CatTacticalDecision,
     output_key="decision",
     generate_content_config=types.GenerateContentConfig(
-        thinking_config=types.ThinkingConfig(thinking_budget=0)
+        thinking_config=types.ThinkingConfig(
+            thinking_budget=_initial_thinking_budget()
+        )
     ),
 )
 session_service = InMemorySessionService()
@@ -106,9 +334,15 @@ adk_runner = Runner(
 )
 
 # Initialize Dedicated Interrogation / Commander Radio Agent & Runner (Free-form conversational reasoning)
+#
+# Deliberately NOT wired to `set_thinking_budget`. This agent answers the
+# human on the radio; it is off the tick loop, so its latency costs nobody a
+# turn, and including it would mean an A/B on the actor's budget silently
+# changed the radio's behaviour too. Whatever the experiment concludes, it
+# should be a conclusion about the thing that plays the game.
 adk_interrogator_agent = LlmAgent(
     name="cat_interrogator",
-    model="gemini-2.5-flash",
+    model=ACTOR_MODEL,
     instruction=_interrogator_instruction_provider,
     generate_content_config=types.GenerateContentConfig(
         thinking_config=types.ThinkingConfig(thinking_budget=0)
@@ -136,10 +370,14 @@ def summarize_agent(agent: Any) -> Dict[str, Any]:
     cfg = getattr(agent, "generate_content_config", None)
     thinking = getattr(cfg, "thinking_config", None)
     schema = getattr(agent, "output_schema", None)
+    budget = getattr(thinking, "thinking_budget", None)
     return {
         "name": getattr(agent, "name", None),
         "model": getattr(agent, "model", None),
-        "thinking_budget": getattr(thinking, "thinking_budget", None),
+        "thinking_budget": budget,
+        # Spelled out alongside the number because `-1` reads as a bug to
+        # anyone opening an archive months later, not as "the model chose".
+        "thinking_budget_label": describe_thinking_budget(budget),
         "include_thoughts": getattr(thinking, "include_thoughts", None),
         "temperature": getattr(cfg, "temperature", None),
         "max_output_tokens": getattr(cfg, "max_output_tokens", None),
@@ -148,6 +386,157 @@ def summarize_agent(agent: Any) -> Dict[str, Any]:
             getattr(t, "__name__", str(t)) for t in (getattr(agent, "tools", None) or [])
         ),
     }
+
+
+def get_thinking_budget() -> Optional[int]:
+    """The budget the actor is running with right now, read off the live agent.
+
+    Never mirrored into a separate variable. The one thing this feature must not
+    do is let the UI, the archive and the model disagree about what is in force,
+    and the only way to guarantee that is to have a single place that knows.
+    """
+    cfg = getattr(adk_agent, "generate_content_config", None)
+    thinking = getattr(cfg, "thinking_config", None)
+    return getattr(thinking, "thinking_budget", None)
+
+
+def set_thinking_budget(value: Any) -> int:
+    """Rebinds the actor's thinking budget. Takes effect on the next decision.
+
+    ADK reads `agent.generate_content_config` afresh when it builds each
+    request (see `google.adk.flows.llm_flows.basic._build_basic_request`), so
+    nothing needs restarting for this to apply.
+
+    A *new* ThinkingConfig is assigned rather than the existing one being
+    mutated in place. That copy in ADK is shallow, so an in-flight request holds
+    a reference to the very object a mutation would edit -- a call that started
+    under the old budget would finish under the new one, and the prompt log
+    would attribute it to whichever happened to be set when it landed. Swapping
+    the object leaves any in-flight request on the config it started with.
+
+    Returns the budget now in force. Raises ValueError if the model would not
+    accept it; the caller is expected to surface that rather than swallow it.
+    """
+    budget = coerce_thinking_budget(value)
+    cfg = adk_agent.generate_content_config
+    if cfg is None:
+        adk_agent.generate_content_config = types.GenerateContentConfig(
+            thinking_config=types.ThinkingConfig(thinking_budget=budget)
+        )
+    else:
+        cfg.thinking_config = types.ThinkingConfig(thinking_budget=budget)
+    return budget
+
+
+# Rough model throughput, used only to relate a token budget to a wall-clock
+# ceiling. Deliberately a constant rather than measured: it drives an advisory
+# message, and a self-tuning estimate that quietly shifted under a long run
+# would make two identical settings warn differently.
+_BASELINE_LATENCY_SEC = 1.3
+_OUTPUT_TOKENS_PER_SEC = 200.0
+
+# What AUTO can reach on 2.5 Flash, per Google's documentation.
+_AUTO_TYPICAL_CEILING = 8192
+
+
+def estimate_affordable_tokens(timeout_sec: float, baseline_latency_sec: float) -> int:
+    """Thinking tokens that fit in `timeout_sec`, given fixed per-call overhead.
+
+    `baseline_latency_sec` is everything the call spends that is *not* thinking:
+    connection, prompt ingestion, and the answer itself. It is a parameter
+    because the two agents are nowhere near each other on it -- the actor sends
+    a few kilobytes and answers in one short JSON object, while the evaluator
+    ships an entire game transcript and makes a tool call first. Sharing the
+    actor's 1.3s figure with the evaluator would have told you 24,576 tokens fit
+    comfortably in 60s when in practice the fixed cost eats a third of it.
+    """
+    return int(max(0.0, timeout_sec - baseline_latency_sec) * _OUTPUT_TOKENS_PER_SEC)
+
+
+def estimate_required_timeout(
+    tokens: int, baseline_latency_sec: float, max_timeout_sec: float
+) -> float:
+    """Seconds a budget of `tokens` needs, capped at the setter's own maximum.
+
+    Rounded up to the next whole second; a suggestion precise to three decimal
+    places would imply a confidence this estimate does not have.
+    """
+    needed = baseline_latency_sec + (tokens / _OUTPUT_TOKENS_PER_SEC)
+    return float(min(max_timeout_sec, math.ceil(needed)))
+
+
+def nominal_thinking_tokens(budget: Optional[int]) -> Optional[int]:
+    """How many tokens a budget is likely to actually spend, or None if no cap.
+
+    AUTO is a mode, not a number, so it is resolved to the documented ceiling
+    the model will reach on its own. OFF resolves to None rather than 0 because
+    callers use None to mean "nothing to warn about".
+    """
+    if budget is None or budget == THINKING_BUDGET_OFF:
+        return None
+    return _AUTO_TYPICAL_CEILING if budget == THINKING_BUDGET_AUTO else budget
+
+
+def affordable_thinking_tokens(timeout_sec: Optional[float] = None) -> int:
+    """Roughly how many thinking tokens fit inside the deliberation ceiling.
+
+    An estimate, and stated as one wherever it is shown. Its job is to stop
+    someone burning an afternoon on a run that was timing out on every tick, not
+    to predict latency.
+    """
+    if timeout_sec is None:
+        timeout_sec = get_deliberation_timeout()
+    return estimate_affordable_tokens(timeout_sec, _BASELINE_LATENCY_SEC)
+
+
+def suggested_deliberation_timeout(budget: Optional[int]) -> Optional[float]:
+    """The timeout a given budget would need, or None if the current one fits.
+
+    Offered so the warning can carry a fix rather than just an objection.
+    Capped at the same maximum the setter enforces.
+    """
+    tokens = nominal_thinking_tokens(budget)
+    if tokens is None or tokens <= affordable_thinking_tokens():
+        return None
+    return estimate_required_timeout(
+        tokens, _BASELINE_LATENCY_SEC, DELIBERATION_TIMEOUT_MAX_SEC
+    )
+
+
+def thinking_budget_warning(budget: Optional[int]) -> Optional[str]:
+    """Flags budgets the tick loop cannot actually afford, or None if fine.
+
+    Advisory, not enforcement: the point of the experiment is to find out where
+    the cliff is, so the UI must let you walk off it -- while saying so.
+
+    The numbers below are latency, not correctness. A decision that arrives
+    after the deliberation timeout is discarded and the tick is played by the
+    System-1 reflex instead, so an over-ambitious budget does not produce a
+    slow, thoughtful cat: it produces a cat that is not using the model at all,
+    while the box score still says Gemini was configured.
+    """
+    if budget is None or budget == THINKING_BUDGET_OFF:
+        return None
+
+    timeout_sec = get_deliberation_timeout()
+    affordable = affordable_thinking_tokens(timeout_sec)
+    suggested = suggested_deliberation_timeout(budget)
+    if suggested is None:
+        return None
+
+    subject = (
+        f"Auto can spend up to ~{_AUTO_TYPICAL_CEILING:,} thinking tokens, which"
+        if budget == THINKING_BUDGET_AUTO
+        else f"{budget:,} thinking tokens is"
+    )
+    return (
+        f"{subject} unlikely to fit inside the {timeout_sec:g}s deliberation "
+        f"timeout (~{affordable:,} tokens of headroom at current latency). "
+        f"Decisions that overrun are discarded and the tick is played by the "
+        f"reflex heuristic instead, so the run would measure the heuristic, not "
+        f"the model. Raise the timeout to about {suggested:g}s to give this "
+        f"budget room to land."
+    )
 
 
 _llm_lock = asyncio.Lock()
@@ -569,6 +958,12 @@ def build_decision_prompt(
             "model": getattr(adk_agent, "model", "unknown"),
             "agent_id": agent_id,
             "history_window_size": window_size,
+            # Stamped per prompt, not just per run. The budget is adjustable
+            # mid-game, so a run_config written at startup cannot say which
+            # setting produced any particular decision -- and a prompt log that
+            # straddles a change is otherwise indistinguishable from one that
+            # does not.
+            "thinking_budget": get_thinking_budget(),
             "sections": {
                 "system_instruction": {
                     "label": "Skills manual (actor_skills.md)",
@@ -663,15 +1058,24 @@ async def query_adk_gemini(
 
             msg = types.Content(role="user", parts=[types.Part.from_text(text=prompt)])
             decision = None
+            # What the model actually billed for thinking on this call. The
+            # budget is a ceiling, not a spend: at AUTO especially, the only way
+            # to know whether the cat thought at all is to read it back. Summed
+            # across events because a single decision can arrive as several.
+            thoughts_tokens: Optional[int] = None
             _started = time.monotonic()
 
-            async with asyncio.timeout(8.0):
+            async with asyncio.timeout(get_deliberation_timeout()):
                 agen = adk_runner.run_async(user_id=user_id, session_id=session_id, new_message=msg)
                 try:
                     while True:
                         event = await agen.__anext__()
                         if event.error_code or event.error_message:
                             raise RuntimeError(f"ADK Error: {event.error_code} - {event.error_message}")
+                        usage = getattr(event, "usage_metadata", None)
+                        spent = getattr(usage, "thoughts_token_count", None) if usage else None
+                        if spent is not None:
+                            thoughts_tokens = (thoughts_tokens or 0) + int(spent)
                         if event.actions and event.actions.state_delta and "decision" in event.actions.state_delta:
                             decision = event.actions.state_delta["decision"]
                         elif event.content and event.content.parts:
@@ -689,6 +1093,11 @@ async def query_adk_gemini(
 
             if capture is not None:
                 capture["latency_ms"] = round((time.monotonic() - _started) * 1000)
+                # None means the response carried no usage metadata, which is
+                # not the same as zero thinking. Left distinguishable on
+                # purpose: "we did not measure" must not read as "it did not
+                # think" in an experiment about exactly that.
+                capture["thoughts_token_count"] = thoughts_tokens
 
             # Every exit below reports *why* it gave up. Returning a bare None here
             # was what made fallbacks undiagnosable: the UI could only say "not
@@ -714,7 +1123,14 @@ async def query_adk_gemini(
                     return None, "heuristic_fallback", reason
 
         except asyncio.TimeoutError:
-            reason = "Gemini call exceeded the 8s deliberation budget"
+            # Names the thinking budget too: once it is adjustable, overrunning
+            # this ceiling is the expected consequence of having raised it, and
+            # a reason that omits the cause sends you looking at the network.
+            reason = (
+                f"Gemini call exceeded the {get_deliberation_timeout():g}s deliberation "
+                f"budget (thinking budget: "
+                f"{describe_thinking_budget(get_thinking_budget())})"
+            )
             print(f"[ADK Timeout] {reason} (falling back to heuristics)", flush=True)
             return None, "heuristic_fallback", reason
 

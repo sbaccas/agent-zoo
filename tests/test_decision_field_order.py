@@ -1,8 +1,10 @@
 """The order of fields in CatTacticalDecision is behaviour, not formatting.
 
 Structured output is generated one token at a time in declaration order, and
-the actor runs with thinking_budget=0, so no scratchpad exists anywhere else.
-Whichever field comes first is decided with an empty context.
+the actor runs with thinking_budget=0 by default, so no scratchpad exists
+anywhere else. Whichever field comes first is decided with an empty context.
+(The budget is tunable now -- see actor.set_thinking_budget -- but every number
+below was measured at 0, and these tests pin the ordering, not the budget.)
 
 When ``action`` was declared first, the cat named its move before computing
 anything and ``thought`` degraded into a justification it could not retract.

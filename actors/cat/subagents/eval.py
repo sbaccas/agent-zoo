@@ -20,6 +20,7 @@ from datetime import datetime, timezone
 import logging
 import os
 from pathlib import Path
+import time
 from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
@@ -31,9 +32,17 @@ from google.genai import types
 
 from actors.cat import store
 from actors.cat.actor import (
+    THINKING_BUDGET_AUTO,
+    THINKING_BUDGET_OFF,
+    coerce_thinking_budget,
+    describe_thinking_budget,
+    estimate_affordable_tokens,
+    estimate_required_timeout,
     get_skills_instruction,
     has_gemini_credentials,
     mark_auth_error,
+    nominal_thinking_tokens,
+    thinking_bounds_for,
 )
 
 logger = logging.getLogger("cat_agent")
@@ -56,7 +65,106 @@ DEFAULT_EVAL_INTERVAL = 100
 
 # Hard ceiling on how long a single evaluation may run. The evaluator is advisory,
 # so a slow call must expire quietly rather than pile up behind the game clock.
+#
+# Adjustable at runtime since the thinking budget below is: the two are one
+# setting wearing two hats, exactly as they are on the actor. Read through
+# `get_eval_timeout()` at the point of use, never captured -- a
+# `from ... import EVAL_TIMEOUT_SECONDS` elsewhere would bind a copy that never
+# changes. This name remains the *default*, which is what the boxscore tool's
+# timeout is sized against.
 EVAL_TIMEOUT_SECONDS = 60.0
+
+# Floor of 30s is not arbitrary: the boxscore tool below is allowed 3s, and an
+# evaluation whose whole budget could be spent waiting on a wedged game server
+# would publish advice derived from no measurement at all. Ten to one keeps that
+# structurally impossible rather than merely unlikely; a test pins the ratio.
+EVAL_TIMEOUT_MIN_SEC = 30.0
+# The evaluator is off the tick loop entirely, so a long run costs latency in
+# the advice rather than turns in the game. The ceiling exists only to stop a
+# wedged call occupying the single evaluation slot forever.
+EVAL_TIMEOUT_MAX_SEC = 900.0
+
+# Fixed per-call overhead for one evaluation, excluding thinking. Far larger
+# than the actor's 1.3s and deliberately so: this agent uploads the entire game
+# transcript, the actor's manual and its own, then makes a tool call to the
+# game server before it writes a word. Reusing the actor's figure here would
+# have reported ~11,700 affordable thinking tokens at the default 60s when the
+# real headroom is closer to 10,000.
+EVAL_BASELINE_LATENCY_SEC = 10.0
+
+# The budget this process starts the evaluator on.
+#
+# Default 0, preserving the behaviour every coaching note in this repo was
+# written under. Kept separate from the actor's `CAT_THINKING_BUDGET` on
+# purpose: the whole reason the actor's dial exists is to A/B one variable, and
+# a single shared env var would move both agents at once and make the result
+# uninterpretable.
+EVAL_THINKING_BUDGET_ENV = "CAT_EVAL_THINKING_BUDGET"
+EVAL_TIMEOUT_ENV = "CAT_EVAL_TIMEOUT_SEC"
+
+EVAL_THINKING_MIN, EVAL_THINKING_MAX, EVAL_THINKING_CAN_BE_DISABLED = (
+    thinking_bounds_for(EVAL_MODEL)
+)
+
+
+def coerce_eval_thinking_budget(value: Any) -> int:
+    """Validates a budget against the *evaluator's* model. Raises ValueError."""
+    return coerce_thinking_budget(value, model=EVAL_MODEL)
+
+
+def coerce_eval_timeout(value: Any) -> float:
+    """Validates an evaluation timeout in seconds, or raises ValueError."""
+    try:
+        timeout = float(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"evaluation timeout must be a number, got {value!r}")
+    if not (EVAL_TIMEOUT_MIN_SEC <= timeout <= EVAL_TIMEOUT_MAX_SEC):
+        raise ValueError(
+            f"evaluation timeout {timeout:g}s is out of range: use "
+            f"{EVAL_TIMEOUT_MIN_SEC:g}-{EVAL_TIMEOUT_MAX_SEC:g} seconds"
+        )
+    return timeout
+
+
+def _initial_from_env(env_name: str, coerce, default, describe) -> Any:
+    """Reads a startup setting from the environment, warning and falling back.
+
+    A malformed value is a warning and a fallback, not a crash: the workbench
+    failing to boot over a typo in a tuning variable would be worse than
+    starting in the configuration everything was measured under. The value is
+    echoed either way, because a silently ignored setting is how you end up
+    comparing two runs that were actually identical.
+    """
+    raw = os.environ.get(env_name)
+    if raw is None or not str(raw).strip():
+        return default
+    try:
+        value = coerce(raw)
+    except ValueError as exc:
+        print(
+            f"⚠️  [EVAL] Ignoring {env_name}={raw!r}: {exc}. Using {describe(default)}.",
+            flush=True,
+        )
+        return default
+    print(f"🧠 [EVAL] {env_name}: {describe(value)}", flush=True)
+    return value
+
+
+_eval_timeout_sec: float = _initial_from_env(
+    EVAL_TIMEOUT_ENV, coerce_eval_timeout, EVAL_TIMEOUT_SECONDS, lambda v: f"{v:g}s"
+)
+
+
+def get_eval_timeout() -> float:
+    """Seconds one evaluation may run before it is abandoned."""
+    return _eval_timeout_sec
+
+
+def set_eval_timeout(value: Any) -> float:
+    """Changes the abandon ceiling. Applies to the next evaluation, not a running one."""
+    global _eval_timeout_sec
+    _eval_timeout_sec = coerce_eval_timeout(value)
+    return _eval_timeout_sec
 
 
 def get_eval_instruction() -> str:
@@ -225,13 +333,24 @@ async def get_boxscore() -> Dict[str, Any]:
     }
 
 
+_initial_eval_budget: int = _initial_from_env(
+    EVAL_THINKING_BUDGET_ENV,
+    coerce_eval_thinking_budget,
+    THINKING_BUDGET_OFF,
+    describe_thinking_budget,
+)
+
+# The thinking budget here is a *starting* value. It is rebound at runtime by
+# `set_eval_thinking_budget` and must therefore never be read back from this
+# literal anywhere else -- `get_eval_thinking_budget` reads the live agent, so
+# the UI, the archive and the model cannot disagree about what is in force.
 eval_agent = LlmAgent(
     name="cat_evaluator",
     model=EVAL_MODEL,
     instruction=_eval_instruction_provider,
     tools=[get_boxscore],
     generate_content_config=types.GenerateContentConfig(
-        thinking_config=types.ThinkingConfig(thinking_budget=0)
+        thinking_config=types.ThinkingConfig(thinking_budget=_initial_eval_budget)
     ),
 )
 eval_session_service = InMemorySessionService()
@@ -242,6 +361,111 @@ eval_runner = Runner(
 )
 
 _eval_lock = asyncio.Lock()
+
+
+def get_eval_thinking_budget() -> Optional[int]:
+    """The budget the evaluator is running with right now, off the live agent."""
+    cfg = getattr(eval_agent, "generate_content_config", None)
+    thinking = getattr(cfg, "thinking_config", None)
+    return getattr(thinking, "thinking_budget", None)
+
+
+def set_eval_thinking_budget(value: Any) -> int:
+    """Rebinds the evaluator's thinking budget. Applies to the next evaluation.
+
+    A *new* ThinkingConfig is assigned rather than the existing one mutated, for
+    the same reason the actor does it: ADK's per-request copy of
+    `generate_content_config` is shallow, so an evaluation already in flight
+    holds a reference to the very object a mutation would edit. Swapping the
+    object leaves a running evaluation on the config it started under, which is
+    what makes the published notes attributable to a budget at all.
+
+    Returns the budget now in force. Raises ValueError if the model would not
+    accept it.
+    """
+    budget = coerce_eval_thinking_budget(value)
+    cfg = eval_agent.generate_content_config
+    if cfg is None:
+        eval_agent.generate_content_config = types.GenerateContentConfig(
+            thinking_config=types.ThinkingConfig(thinking_budget=budget)
+        )
+    else:
+        cfg.thinking_config = types.ThinkingConfig(thinking_budget=budget)
+    return budget
+
+
+def eval_affordable_thinking_tokens(timeout_sec: Optional[float] = None) -> int:
+    """Roughly how many thinking tokens fit inside the evaluation ceiling."""
+    if timeout_sec is None:
+        timeout_sec = get_eval_timeout()
+    return estimate_affordable_tokens(timeout_sec, EVAL_BASELINE_LATENCY_SEC)
+
+
+def suggested_eval_timeout(budget: Optional[int]) -> Optional[float]:
+    """The timeout a given budget would need, or None if the current one fits."""
+    tokens = nominal_thinking_tokens(budget)
+    if tokens is None or tokens <= eval_affordable_thinking_tokens():
+        return None
+    return estimate_required_timeout(
+        tokens, EVAL_BASELINE_LATENCY_SEC, EVAL_TIMEOUT_MAX_SEC
+    )
+
+
+def eval_thinking_warning(budget: Optional[int]) -> Optional[str]:
+    """Flags budgets the evaluation ceiling cannot afford, or None if fine.
+
+    The failure mode here is quieter than the actor's and worth spelling out.
+    An evaluation that overruns is abandoned and replaced by
+    `_summarise_without_model`, which emits positional filler about bounding
+    boxes. That filler is then published to `coaching_notes.md` and injected
+    into the actor's prompt on every subsequent tick, displacing whatever real
+    advice was there before. So an over-ambitious budget does not merely fail to
+    help -- it actively degrades the actor by overwriting good standing orders
+    with generated boilerplate.
+    """
+    tokens = nominal_thinking_tokens(budget)
+    if tokens is None:
+        return None
+
+    timeout_sec = get_eval_timeout()
+    affordable = eval_affordable_thinking_tokens(timeout_sec)
+    suggested = suggested_eval_timeout(budget)
+    if suggested is None:
+        return None
+
+    subject = (
+        f"Auto can spend up to ~{tokens:,} thinking tokens, which"
+        if budget == THINKING_BUDGET_AUTO
+        else f"{budget:,} thinking tokens is"
+    )
+    return (
+        f"{subject} unlikely to fit inside the {timeout_sec:g}s evaluation "
+        f"timeout (~{affordable:,} tokens of headroom once the transcript "
+        f"upload and boxscore call are paid for). An evaluation that overruns "
+        f"is abandoned and the offline fallback publishes positional filler "
+        f"over your standing orders. Raise the timeout to about {suggested:g}s "
+        f"to give this budget room to land."
+    )
+
+
+# Telemetry from the most recent evaluation, for the UI and the archive.
+#
+# Held here rather than returned from `evaluate()` so the function keeps its
+# two-value contract, and so the workbench can still show what the last run
+# spent during the long gaps between publishes. `thoughts_token_count` is left
+# as None when the response carried no usage metadata, which is deliberately
+# distinct from 0: one means "not reported", the other means "did not think".
+_last_eval_telemetry: Dict[str, Any] = {
+    "thinking_budget": None,
+    "thoughts_token_count": None,
+    "latency_ms": None,
+    "timed_out": False,
+}
+
+
+def get_last_eval_telemetry() -> Dict[str, Any]:
+    """What the most recent evaluation cost. Copied so callers cannot mutate it."""
+    return dict(_last_eval_telemetry)
 
 
 def format_transcript(records: List[Dict[str, Any]]) -> str:
@@ -484,6 +708,14 @@ async def evaluate(records: List[Dict[str, Any]]) -> Tuple[str, str]:
     session_id = "session_cat_evaluator"
 
     async with _eval_lock:
+        # Stamped before the call so a run that times out is still attributed to
+        # the budget that caused it. Reading the budget afterwards would credit
+        # a timeout to whatever the dial had been moved to in the meantime.
+        budget = get_eval_thinking_budget()
+        timeout_sec = get_eval_timeout()
+        started = time.monotonic()
+        thoughts: Optional[int] = None
+        timed_out = False
         try:
             # Each evaluation is independent; drop any prior session state.
             try:
@@ -501,7 +733,7 @@ async def evaluate(records: List[Dict[str, Any]]) -> Tuple[str, str]:
             msg = types.Content(role="user", parts=[types.Part.from_text(text=prompt)])
             chunks: List[str] = []
 
-            async with asyncio.timeout(EVAL_TIMEOUT_SECONDS):
+            async with asyncio.timeout(timeout_sec):
                 agen = eval_runner.run_async(
                     user_id=user_id, session_id=session_id, new_message=msg
                 )
@@ -512,6 +744,15 @@ async def evaluate(records: List[Dict[str, Any]]) -> Tuple[str, str]:
                             raise RuntimeError(
                                 f"ADK Error: {event.error_code} - {event.error_message}"
                             )
+                        # Summed across events rather than taken from the last:
+                        # a tool call splits one evaluation into several model
+                        # turns, and reading only the final turn would report
+                        # the thinking that followed the boxscore fetch while
+                        # silently dropping the thinking that decided to fetch.
+                        usage = getattr(event, "usage_metadata", None)
+                        spent = getattr(usage, "thoughts_token_count", None)
+                        if spent is not None:
+                            thoughts = (thoughts or 0) + spent
                         if event.content and event.content.parts:
                             for p in event.content.parts:
                                 if p.text and not getattr(p, "thought", False):
@@ -524,10 +765,25 @@ async def evaluate(records: List[Dict[str, Any]]) -> Tuple[str, str]:
                 return notes, "adk_gemini"
             logger.warning("Evaluator returned empty notes; using offline fallback.")
 
+        except asyncio.TimeoutError:
+            timed_out = True
+            logger.warning(
+                "Evaluation abandoned after %gs (thinking budget %s). The offline "
+                "fallback will overwrite the published standing orders.",
+                timeout_sec,
+                describe_thinking_budget(budget),
+            )
         except Exception as exc:
             err = str(exc)
             mark_auth_error(err)
             logger.warning("Evaluator execution failure: %s", err)
+        finally:
+            _last_eval_telemetry.update({
+                "thinking_budget": budget,
+                "thoughts_token_count": thoughts,
+                "latency_ms": int((time.monotonic() - started) * 1000),
+                "timed_out": timed_out,
+            })
 
     return _summarise_without_model(records), "offline_fallback"
 

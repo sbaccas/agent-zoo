@@ -23,11 +23,13 @@ from actors.models import (
     CatTacticalDecision,
     ConnectServerRequest,
     EvalIntervalRequest,
+    EvalThinkingBudgetRequest,
     HistoryWindowRequest,
     InterrogateRequest,
     InterrogateResponse,
     Observation,
     OverrideRequest,
+    ThinkingBudgetRequest,
 )
 
 # Heuristic tactical engine
@@ -39,14 +41,28 @@ from actors.cat.heuristic import (
 
 # Model / LLM tactical engine
 from actors.cat.actor import (
+    ACTOR_MODEL,
     COMMANDER_FRESH_TICKS,
+    DELIBERATION_TIMEOUT_MAX_SEC,
+    DELIBERATION_TIMEOUT_MIN_SEC,
     SKILLS_PATH,
+    THINKING_BUDGET_AUTO,
+    THINKING_BUDGET_MAX,
+    THINKING_BUDGET_MIN,
+    THINKING_BUDGET_OFF,
+    THINKING_CAN_BE_DISABLED,
     adk_agent,
     adk_interrogator_agent,
     adk_runner,
+    affordable_thinking_tokens,
     check_gemini_auth_health,
+    coerce_deliberation_timeout,
+    coerce_thinking_budget,
+    describe_thinking_budget,
+    get_deliberation_timeout,
     get_gemini_auth_mode,
     get_skills_instruction,
+    get_thinking_budget,
     has_gemini_credentials,
     interrogate_adk_gemini,
     is_auth_error,
@@ -55,7 +71,11 @@ from actors.cat.actor import (
     query_adk_gemini as model_query_adk_gemini,
     reset_adk_session,
     session_service,
+    set_deliberation_timeout,
+    set_thinking_budget,
+    suggested_deliberation_timeout,
     summarize_agent,
+    thinking_budget_warning,
 )
 
 # Runtime transcript / coaching-notes store (shared with the evaluator subagent)
@@ -64,10 +84,26 @@ from actors.cat import store
 # Long-horizon evaluator subagent
 from actors.cat.subagents.eval import (
     DEFAULT_EVAL_INTERVAL,
+    EVAL_MODEL,
     EVAL_SKILLS_PATH,
+    EVAL_THINKING_CAN_BE_DISABLED,
+    EVAL_THINKING_MAX,
+    EVAL_THINKING_MIN,
+    EVAL_TIMEOUT_MAX_SEC,
+    EVAL_TIMEOUT_MIN_SEC,
+    coerce_eval_thinking_budget,
+    coerce_eval_timeout,
+    eval_affordable_thinking_tokens,
     eval_agent,
+    eval_thinking_warning,
     evaluate_and_publish,
     get_eval_instruction,
+    get_eval_thinking_budget,
+    get_eval_timeout,
+    get_last_eval_telemetry,
+    set_eval_thinking_budget,
+    set_eval_timeout,
+    suggested_eval_timeout,
 )
 
 
@@ -140,6 +176,29 @@ class AgentWorkbenchState:
         self.eval_worker_task: Optional[asyncio.Task] = None
         self.is_evaluating: bool = False
         self.last_eval_result: Optional[Dict[str, Any]] = None
+
+        # Every change to the actor's thinking budget, stamped with the tick it
+        # took effect on.
+        #
+        # The budget itself is deliberately NOT stored here -- `actor` owns it
+        # and `get_thinking_budget()` reads it off the live agent, so there is
+        # no second copy to drift. What is stored is the *history*, which the
+        # agent object cannot know.
+        #
+        # This exists because the setting is adjustable mid-game. A run_config
+        # written once at startup would describe a run that raised its budget at
+        # tick 300 exactly as it describes one that never touched it, and an
+        # archive that cannot tell those apart is worse than no archive: it
+        # invites a comparison between two runs where only one was controlled.
+        self.thinking_budget_changes: List[Dict[str, Any]] = []
+
+        # The same history, for the evaluator subagent. Kept as a separate list
+        # rather than a `who` field on the one above because the two answer
+        # different questions about a run: the actor's budget explains a box
+        # score, the evaluator's explains the standing orders the actor was
+        # playing under. Merging them would force every reader to filter before
+        # either question could be asked.
+        self.eval_thinking_budget_changes: List[Dict[str, Any]] = []
 
 
 # Singleton in-memory state
@@ -967,19 +1026,21 @@ class PollingLogFilter(logging.Filter):
         return True
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    # Suppress high-frequency polling from uvicorn.access logger and handlers
-    filt = PollingLogFilter()
-    access_logger = logging.getLogger("uvicorn.access")
-    access_logger.addFilter(filt)
-    for h in access_logger.handlers:
-        h.addFilter(filt)
+def publish_run_config() -> None:
+    """Writes the settings this process is running with, for the game archive.
 
-    # Publish the settings this process is running with. Nothing reads it at
-    # runtime; the game server copies it into the archive when a game ends, so
-    # that a box score can later be attributed to a configuration rather than
-    # to a vague memory of what was being tried that afternoon.
+    Nothing reads this at runtime; the game server copies it into the archive
+    when a game ends, so that a box score can later be attributed to a
+    configuration rather than to a vague memory of what was being tried that
+    afternoon.
+
+    Called at startup *and* again whenever a tunable changes. It used to be a
+    one-shot write in the lifespan, which was correct only while every setting
+    it reported was fixed for the life of the process. The thinking budget is
+    not, and a file that still claimed `thinking_budget: 0` an hour after it was
+    raised would be worse than absent -- it would be confidently wrong in the
+    one place set aside for recording the independent variable.
+    """
     store.write_run_config(
         {
             "agents": [
@@ -995,9 +1056,38 @@ async def lifespan(app: FastAPI):
                 "enabled": state.eval_enabled,
                 "interval_ticks": state.eval_interval,
                 "default_interval_ticks": DEFAULT_EVAL_INTERVAL,
+                # The evaluator's own abandon ceiling. Recorded for the same
+                # reason the actor's is: an evaluation that overruns is replaced
+                # by offline filler which is then published over the standing
+                # orders, so a run where this was set too low produces coaching
+                # notes no model wrote.
+                "timeout_sec": get_eval_timeout(),
             },
+            "deliberation": {
+                # The ceiling a decision must arrive inside of, which bounds how
+                # much thinking is actually affordable. Recorded next to the
+                # budget because neither number means much without the other.
+                "timeout_sec": get_deliberation_timeout(),
+            },
+            # Empty for a run that never touched the dial, which is exactly the
+            # claim a controlled run needs to be able to make. Split by agent so
+            # a run that moved only one of them still reads as controlled.
+            "thinking_budget_changes": list(state.thinking_budget_changes),
+            "eval_thinking_budget_changes": list(state.eval_thinking_budget_changes),
         }
     )
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Suppress high-frequency polling from uvicorn.access logger and handlers
+    filt = PollingLogFilter()
+    access_logger = logging.getLogger("uvicorn.access")
+    access_logger.addFilter(filt)
+    for h in access_logger.handlers:
+        h.addFilter(filt)
+
+    publish_run_config()
 
     # Auto-connect WebSocket client in background if enabled
     if os.environ.get("CAT_AGENT_AUTO_CONNECT", "1") != "0":
@@ -1092,15 +1182,12 @@ async def get_agent_state(sync: bool = False, agent_id: Optional[str] = None) ->
         "is_deliberating": state.is_deliberating,
         "active_directive": state.active_directive,
         "history_window_size": state.history_window_size,
-        "evaluator": {
-            "enabled": state.eval_enabled,
-            "interval": state.eval_interval,
-            "is_evaluating": state.is_evaluating,
-            "last_dispatch_tick": state.last_eval_dispatch_tick,
-            "transcript_ticks": store.transcript_tick_count(),
-            "coaching_notes": store.read_coaching_notes(),
-            "last_result": state.last_eval_result,
-        },
+        "thinking": thinking_budget_status(),
+        # The workbench polls this endpoint and only this endpoint, so Box 6 is
+        # rendered from here. Built by the shared helper rather than restated:
+        # the previous inline copy was missing the coach's `thinking` block,
+        # which left the slider with no bounds to move between.
+        "evaluator": evaluator_status(),
         "chat_history": state.chat_history[-50:],
     }
 
@@ -1208,6 +1295,112 @@ def set_history_window(req: HistoryWindowRequest) -> Dict[str, Any]:
     }
 
 
+def thinking_budget_status() -> Dict[str, Any]:
+    """Everything the UI needs to render the control honestly.
+
+    The bounds travel with the value rather than being duplicated in
+    JavaScript. They depend on which model the actor runs, and a front end
+    holding its own copy of "0 to 24,576" would keep offering that range after
+    the model changed underneath it -- the slider would look fine and every
+    tick would fail.
+    """
+    budget = get_thinking_budget()
+    timeout_sec = get_deliberation_timeout()
+    return {
+        "budget": budget,
+        "label": describe_thinking_budget(budget),
+        "model": ACTOR_MODEL,
+        "off": THINKING_BUDGET_OFF,
+        "auto": THINKING_BUDGET_AUTO,
+        "min": THINKING_BUDGET_MIN,
+        "max": THINKING_BUDGET_MAX,
+        "can_disable": THINKING_CAN_BE_DISABLED,
+        # Latency ceiling a decision has to land inside. Reported alongside the
+        # budget because it is what turns an ambitious budget into a heuristic
+        # tick rather than a slow one.
+        "deliberation_timeout_sec": timeout_sec,
+        "deliberation_timeout_min_sec": DELIBERATION_TIMEOUT_MIN_SEC,
+        "deliberation_timeout_max_sec": DELIBERATION_TIMEOUT_MAX_SEC,
+        # Roughly how much thinking the current ceiling pays for. An estimate,
+        # and labelled as one in the UI.
+        "affordable_tokens": affordable_thinking_tokens(timeout_sec),
+        "suggested_timeout_sec": suggested_deliberation_timeout(budget),
+        "warning": thinking_budget_warning(budget),
+        "changes": list(state.thinking_budget_changes),
+    }
+
+
+@app.get("/api/agent/thinking-budget")
+def get_thinking_budget_endpoint() -> Dict[str, Any]:
+    """The actor's current scratchpad allowance, read off the live agent."""
+    return {"status": "ok", **thinking_budget_status()}
+
+
+@app.post("/api/agent/thinking-budget")
+def set_thinking_budget_endpoint(req: ThinkingBudgetRequest, response: Response) -> Dict[str, Any]:
+    """Changes how much the actor may think before answering. Applies next tick.
+
+    Scoped to the actor alone. The radio agent and the evaluator keep their own
+    settings, so an experiment on the thing that plays the game does not quietly
+    become an experiment on all three.
+
+    Both values are validated before either is applied. A request that sets a
+    good budget and a bad timeout changes nothing at all, rather than leaving
+    the actor in a state no one asked for and no one is looking at.
+
+    A rejected value returns 400. The alternative -- clamping to the nearest
+    legal value -- would let the archive record a budget nobody chose, and this
+    endpoint exists to make the archive trustworthy.
+    """
+    previous_budget = get_thinking_budget()
+    previous_timeout = get_deliberation_timeout()
+
+    try:
+        budget = coerce_thinking_budget(req.thinking_budget)
+        timeout_sec = (
+            coerce_deliberation_timeout(req.deliberation_timeout_sec)
+            if req.deliberation_timeout_sec is not None
+            else previous_timeout
+        )
+    except ValueError as exc:
+        response.status_code = 400
+        return {
+            "status": "error",
+            "detail": str(exc),
+            # The current settings travel with the rejection so the UI can snap
+            # the control back to what is actually in force rather than leaving
+            # it showing a value the agent refused.
+            **thinking_budget_status(),
+        }
+
+    set_thinking_budget(budget)
+    set_deliberation_timeout(timeout_sec)
+
+    if budget != previous_budget or timeout_sec != previous_timeout:
+        state.thinking_budget_changes.append({
+            "at_tick": state.active_tick,
+            "at": datetime.now(timezone.utc).isoformat(),
+            "from": previous_budget,
+            "to": budget,
+            "timeout_from_sec": previous_timeout,
+            "timeout_to_sec": timeout_sec,
+        })
+        # Re-published rather than left until restart: the archive is copied
+        # when the *game* ends, which is usually long before the process does.
+        publish_run_config()
+        logger.info(
+            "Thinking budget changed at tick %s: %s -> %s (timeout %gs -> %gs)",
+            state.active_tick,
+            describe_thinking_budget(previous_budget),
+            describe_thinking_budget(budget),
+            previous_timeout,
+            timeout_sec,
+        )
+
+    return {"status": "ok", **thinking_budget_status()}
+
+
+
 @app.post("/api/agent/clear-history")
 def clear_history() -> Dict[str, str]:
     state.history.clear()
@@ -1217,9 +1410,57 @@ def clear_history() -> Dict[str, str]:
     return {"status": "ok"}
 
 
-@app.get("/api/agent/evaluator")
-def get_evaluator_status() -> Dict[str, Any]:
-    """Current state of the long-horizon reflexion loop."""
+def eval_thinking_status() -> Dict[str, Any]:
+    """Everything the UI needs to render the evaluator's dial honestly.
+
+    Shaped identically to `thinking_budget_status()` so the front end can drive
+    both controls through one renderer. The two differ only in which timeout
+    they report, and that difference is carried in the values rather than the
+    key names for exactly that reason.
+    """
+    budget = get_eval_thinking_budget()
+    timeout_sec = get_eval_timeout()
+    return {
+        "budget": budget,
+        "label": describe_thinking_budget(budget),
+        "model": EVAL_MODEL,
+        "off": THINKING_BUDGET_OFF,
+        "auto": THINKING_BUDGET_AUTO,
+        "min": EVAL_THINKING_MIN,
+        "max": EVAL_THINKING_MAX,
+        "can_disable": EVAL_THINKING_CAN_BE_DISABLED,
+        "timeout_sec": timeout_sec,
+        "timeout_min_sec": EVAL_TIMEOUT_MIN_SEC,
+        "timeout_max_sec": EVAL_TIMEOUT_MAX_SEC,
+        "affordable_tokens": eval_affordable_thinking_tokens(timeout_sec),
+        "suggested_timeout_sec": suggested_eval_timeout(budget),
+        "warning": eval_thinking_warning(budget),
+        "changes": list(state.eval_thinking_budget_changes),
+        # What the last evaluation actually spent. A budget is a ceiling, not a
+        # spend, and on a once-per-100-ticks agent there is no stream of
+        # per-tick records to infer it from -- so it is reported here or not at
+        # all.
+        "last_run": get_last_eval_telemetry(),
+    }
+
+
+def evaluator_status() -> Dict[str, Any]:
+    """Everything Box 6 renders, built in exactly one place.
+
+    This used to be written out twice -- once inline in `/api/agent/state` and
+    once in `/api/agent/evaluator` -- on the assumption that two short dict
+    literals were cheaper than an indirection. They then drifted, and the
+    failure was not obvious: the coach's thinking block was added to the
+    evaluator endpoint only, while the workbench polls `/api/agent/state`. The
+    control therefore never received its bounds, silently kept the placeholder
+    ladder it was born with, and posted an undefined budget the moment anyone
+    touched the slider.
+
+    Nothing polls `/api/agent/evaluator` today; it is kept because it is a
+    documented endpoint and convenient from curl. That is precisely the
+    condition under which a duplicated payload rots unnoticed, so the duplicate
+    is gone rather than merely corrected.
+    """
     interval = max(1, state.eval_interval)
     return {
         "enabled": state.eval_enabled,
@@ -1230,7 +1471,83 @@ def get_evaluator_status() -> Dict[str, Any]:
         "transcript_ticks": store.transcript_tick_count(),
         "coaching_notes": store.read_coaching_notes(),
         "last_result": state.last_eval_result,
+        # Carried on the poll the workbench already makes, so the control stays
+        # in sync with a change made from another tab or from curl.
+        "thinking": eval_thinking_status(),
     }
+
+
+@app.get("/api/agent/evaluator")
+def get_evaluator_status() -> Dict[str, Any]:
+    """Current state of the long-horizon reflexion loop."""
+    return evaluator_status()
+
+
+@app.get("/api/agent/evaluator/thinking-budget")
+def get_eval_thinking_budget_endpoint() -> Dict[str, Any]:
+    """The evaluator's current scratchpad allowance, read off the live agent."""
+    return {"status": "ok", **eval_thinking_status()}
+
+
+@app.post("/api/agent/evaluator/thinking-budget")
+def set_eval_thinking_budget_endpoint(
+    req: EvalThinkingBudgetRequest, response: Response
+) -> Dict[str, Any]:
+    """Changes how much the evaluator may think. Applies to the next evaluation.
+
+    Scoped to the evaluator alone, and deliberately a separate endpoint from the
+    actor's. Raising both at once is a perfectly reasonable thing to want, but
+    it has to be two explicit calls: a single control that moved both would make
+    every run afterwards a two-variable experiment, and the reason this dial
+    exists at all is to keep them apart.
+
+    Both values are validated before either is applied, so a request carrying a
+    good budget and a bad timeout changes nothing rather than leaving the
+    evaluator in a state no one asked for.
+    """
+    previous_budget = get_eval_thinking_budget()
+    previous_timeout = get_eval_timeout()
+
+    try:
+        budget = coerce_eval_thinking_budget(req.thinking_budget)
+        timeout_sec = (
+            coerce_eval_timeout(req.eval_timeout_sec)
+            if req.eval_timeout_sec is not None
+            else previous_timeout
+        )
+    except ValueError as exc:
+        response.status_code = 400
+        return {
+            "status": "error",
+            "detail": str(exc),
+            # The live settings ride along with the rejection so the UI can snap
+            # back to what is actually in force.
+            **eval_thinking_status(),
+        }
+
+    set_eval_thinking_budget(budget)
+    set_eval_timeout(timeout_sec)
+
+    if budget != previous_budget or timeout_sec != previous_timeout:
+        state.eval_thinking_budget_changes.append({
+            "at_tick": state.active_tick,
+            "at": datetime.now(timezone.utc).isoformat(),
+            "from": previous_budget,
+            "to": budget,
+            "timeout_from_sec": previous_timeout,
+            "timeout_to_sec": timeout_sec,
+        })
+        publish_run_config()
+        logger.info(
+            "Evaluator thinking budget changed at tick %s: %s -> %s (timeout %gs -> %gs)",
+            state.active_tick,
+            describe_thinking_budget(previous_budget),
+            describe_thinking_budget(budget),
+            previous_timeout,
+            timeout_sec,
+        )
+
+    return {"status": "ok", **eval_thinking_status()}
 
 
 @app.post("/api/agent/evaluator/interval")

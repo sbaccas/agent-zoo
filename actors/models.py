@@ -39,9 +39,9 @@ class CatTacticalDecision(BaseModel):
     """The cat's per-tick answer sheet, filled in top to bottom.
 
     Field order is load-bearing. Structured output is generated one token at a
-    time in declaration order, and the actor runs with thinking_budget=0, so
-    there is no scratchpad anywhere else. Whichever field is declared first is
-    decided with nothing in context.
+    time in declaration order, and the actor runs with ``thinking_budget=0`` by
+    default, so there is no scratchpad anywhere else. Whichever field is
+    declared first is decided with nothing in context.
 
     ``thought`` therefore precedes ``action`` so the model writes its geometry
     before choosing, and selects the action while conditioned on the numbers it
@@ -56,6 +56,13 @@ class CatTacticalDecision(BaseModel):
     offaxis: 2. Not in strike zone, repositioning for a better shot." - while
     ``action`` said attack. Re-running one fixed position 10 times per schema,
     action-first chose an out-of-range attack 10/10; thought-first, 1/10.
+
+    That 10/10 vs 1/10 was measured at ``thinking_budget=0``, which is now a
+    default rather than a fixed property of the actor (see
+    ``actor.set_thinking_budget``). Raising the budget gives the model a real
+    scratchpad and should weaken the effect this ordering compensates for -- it
+    does not invalidate the ordering, but it does mean the margin cannot be
+    assumed to hold at other budgets without re-measuring.
     """
 
     thought: str = Field(description="Concise tactical reasoning based on game skills and rules")
@@ -71,6 +78,51 @@ class HistoryWindowRequest(BaseModel):
 class EvalIntervalRequest(BaseModel):
     interval: int = Field(default=100, ge=1, le=10000, description="Ticks of play between long-horizon evaluations")
     enabled: Optional[bool] = Field(default=None, description="Toggle the reflexion loop on or off; omit to leave unchanged")
+
+
+class ThinkingBudgetRequest(BaseModel):
+    """How much private scratchpad the actor gets before it must answer.
+
+    Deliberately carries no ``ge``/``le`` on the budget. The valid set is
+    disjoint -- 0 (off), -1 (auto), or a span whose bounds depend on which model
+    the actor is running -- so a pydantic range would either reject the two
+    sentinels or admit the gap between them. ``actor.coerce_thinking_budget``
+    owns the rule, and owns it once, against the live model.
+
+    The timeout rides along in the same request because the two are one
+    decision. A budget the deliberation ceiling cannot afford does not produce a
+    slower cat, it produces a cat that quietly stops using the model; making the
+    caller set them in two round trips would leave a window where exactly that
+    was true.
+    """
+
+    thinking_budget: int = Field(
+        description="0 disables thinking, -1 lets the model decide, or a token count"
+    )
+    deliberation_timeout_sec: Optional[float] = Field(
+        default=None,
+        description="Seconds a decision may take before it is abandoned; omit to leave unchanged",
+    )
+
+
+class EvalThinkingBudgetRequest(BaseModel):
+    """The same dial, for the long-horizon evaluator subagent.
+
+    A separate model rather than a reuse of ``ThinkingBudgetRequest``. The two
+    agents have genuinely different ceilings -- the actor must answer inside a
+    tick, the evaluator inside a minute -- so the timeout field is named for the
+    thing it bounds. Sharing one model would have made a payload aimed at the
+    actor silently valid against the evaluator, and the resulting A/B would have
+    moved a variable nobody was testing.
+    """
+
+    thinking_budget: int = Field(
+        description="0 disables thinking, -1 lets the model decide, or a token count"
+    )
+    eval_timeout_sec: Optional[float] = Field(
+        default=None,
+        description="Seconds one evaluation may run before it is abandoned; omit to leave unchanged",
+    )
 
 
 class InterrogateRequest(BaseModel):
