@@ -39,14 +39,17 @@ def restore_thinking_settings():
 # --- the default ---------------------------------------------------------
 
 
-def test_the_budget_starts_disabled():
-    """0 is the configuration every measurement in this repo was taken under.
+def test_the_budget_starts_on_the_documented_default():
+    """The literal is pinned on purpose, not read from the constant.
 
-    CatTacticalDecision's thought-before-action field order exists because of
-    it, so a change of default is a change to a documented result and should
-    fail here first.
+    Asserting `== actor.THINKING_BUDGET_DEFAULT` here would pass no matter what
+    anyone set it to, which defeats the point. The default was 0 for the whole
+    history of the repo and CatTacticalDecision's thought-before-action field
+    order was measured under that 0, so moving it is a change to the conditions
+    of a documented result and should fail here first.
     """
-    assert actor.get_thinking_budget() == 0
+    assert actor.THINKING_BUDGET_DEFAULT == 256
+    assert actor.get_thinking_budget() == 256
 
 
 def test_the_environment_can_seed_the_budget(monkeypatch):
@@ -57,7 +60,7 @@ def test_the_environment_can_seed_the_budget(monkeypatch):
 def test_a_malformed_environment_value_falls_back_rather_than_crashing(monkeypatch):
     """A typo in a tuning variable must not stop the workbench booting."""
     monkeypatch.setenv("CAT_THINKING_BUDGET", "lots")
-    assert actor._initial_thinking_budget() == 0
+    assert actor._initial_thinking_budget() == actor.THINKING_BUDGET_DEFAULT
 
 
 # --- what the model will accept ------------------------------------------
@@ -96,15 +99,17 @@ def test_changing_the_budget_does_not_mutate_the_config_an_inflight_call_holds()
     """ADK shallow-copies the config when it builds a request.
 
     So the nested ThinkingConfig is shared with any call already in flight. If
-    the setter mutated that object in place, a decision that started at 0 would
-    finish reported as -- and possibly billed at -- whatever was set while it
-    ran, and the prompt log would attribute it to the wrong setting.
+    the setter mutated that object in place, a decision that started at the
+    default would finish reported as -- and possibly billed at -- whatever was
+    set while it ran, and the prompt log would attribute it to the wrong
+    setting.
     """
     captured_by_inflight_request = actor.adk_agent.generate_content_config.thinking_config
+    started_at = actor.get_thinking_budget()
 
     actor.set_thinking_budget(8192)
 
-    assert captured_by_inflight_request.thinking_budget == 0
+    assert captured_by_inflight_request.thinking_budget == started_at
     assert actor.get_thinking_budget() == 8192
 
 
@@ -174,8 +179,8 @@ def test_a_rejected_budget_changes_nothing_and_says_why():
     assert "out of range" in resp.json()["detail"]
     # The response still carries what is really in force, so the control can
     # snap back rather than sit on a value the agent refused.
-    assert resp.json()["budget"] == 0
-    assert actor.get_thinking_budget() == 0
+    assert resp.json()["budget"] == actor.THINKING_BUDGET_DEFAULT
+    assert actor.get_thinking_budget() == actor.THINKING_BUDGET_DEFAULT
 
 
 def test_a_bad_timeout_does_not_half_apply_the_request():
@@ -188,7 +193,9 @@ def test_a_bad_timeout_does_not_half_apply_the_request():
     )
 
     assert resp.status_code == 400
-    assert actor.get_thinking_budget() == 0, "the good half was applied anyway"
+    assert actor.get_thinking_budget() == actor.THINKING_BUDGET_DEFAULT, (
+        "the good half was applied anyway"
+    )
 
 
 def test_the_budget_appears_in_the_state_the_workbench_polls():
@@ -272,7 +279,7 @@ def test_a_mid_game_change_is_recorded_against_the_tick_it_happened_on(tmp_path,
         changes = state.thinking_budget_changes
         assert len(changes) == 1
         assert changes[0]["at_tick"] == 317
-        assert changes[0]["from"] == 0
+        assert changes[0]["from"] == actor.THINKING_BUDGET_DEFAULT
         assert changes[0]["to"] == 2048
     finally:
         state.active_tick = 0
@@ -283,8 +290,8 @@ def test_a_mid_game_change_is_recorded_against_the_tick_it_happened_on(tmp_path,
 def test_the_run_config_is_rewritten_when_the_budget_changes(tmp_path, monkeypatch):
     """The archive is copied when the game ends, long before the process does.
 
-    A run_config written once at startup would still be claiming `0` an hour
-    after the budget was raised.
+    A run_config written once at startup would still be claiming the default an
+    hour after the budget was raised.
     """
     monkeypatch.setenv("CAT_AGENT_RUNTIME_DIR", str(tmp_path))
     import importlib
@@ -297,7 +304,7 @@ def test_the_run_config_is_rewritten_when_the_budget_changes(tmp_path, monkeypat
         publish_run_config()
         first = json.loads(store.RUN_CONFIG_PATH.read_text())
         actor_entry = next(a for a in first["agents"] if a["name"] == "cat_tactician")
-        assert actor_entry["thinking_budget"] == 0
+        assert actor_entry["thinking_budget"] == actor.THINKING_BUDGET_DEFAULT
 
         client = TestClient(app)
         client.post("/api/agent/thinking-budget", json={"thinking_budget": 4096})

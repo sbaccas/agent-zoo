@@ -47,11 +47,29 @@ def restore_eval_thinking_settings():
 # --- the default ---------------------------------------------------------
 
 
-def test_the_coach_starts_with_thinking_disabled():
-    """Preserves the configuration every coaching note in the repo was written
-    under. A new default would silently invalidate the archive as a baseline."""
-    assert ev.get_eval_thinking_budget() == ev.THINKING_BUDGET_OFF
+def test_the_coach_starts_on_the_documented_default():
+    """Pinned as a literal deliberately -- see the actor's equivalent.
+
+    Also pins the gap to the actor. The coach is given far more room because it
+    reasons over a whole transcript once per cycle with nothing waiting on it,
+    while the actor answers one board four times a second. If those two numbers
+    ever converge it is much more likely to be a copy-paste than a decision.
+    """
+    assert ev.EVAL_THINKING_BUDGET_DEFAULT == 4096
+    assert ev.get_eval_thinking_budget() == 4096
+    assert ev.EVAL_THINKING_BUDGET_DEFAULT > actor.THINKING_BUDGET_DEFAULT
     assert ev.get_eval_timeout() == ev.EVAL_TIMEOUT_SECONDS
+
+
+def test_the_coachs_default_budget_fits_inside_its_default_timeout():
+    """An evaluator timeout publishes positional filler over the standing
+    orders, so a default that cannot finish in the default window would degrade
+    the Cat's coaching rather than merely skipping a cycle."""
+    affordable = ev.eval_affordable_thinking_tokens(ev.EVAL_TIMEOUT_SECONDS)
+    assert affordable > ev.EVAL_THINKING_BUDGET_DEFAULT, (
+        f"default budget {ev.EVAL_THINKING_BUDGET_DEFAULT} cannot finish inside "
+        f"the default {ev.EVAL_TIMEOUT_SECONDS:g}s timeout (affords {affordable})"
+    )
 
 
 def test_the_environment_can_seed_the_coach_budget(monkeypatch):
@@ -331,14 +349,18 @@ def test_the_actor_endpoint_is_untouched_by_the_coach_endpoint():
 
 def test_a_mid_game_coach_change_is_recorded_against_its_tick():
     state.active_tick = 412
+    # Deliberately not the default: setting a value to what it already is logs
+    # nothing, so posting 4096 here would make this test vacuous.
+    target = 8192
+    assert target != ev.EVAL_THINKING_BUDGET_DEFAULT
     with TestClient(app) as client:
         client.post(
-            "/api/agent/evaluator/thinking-budget", json={"thinking_budget": 4096}
+            "/api/agent/evaluator/thinking-budget", json={"thinking_budget": target}
         )
     assert len(state.eval_thinking_budget_changes) == 1
     entry = state.eval_thinking_budget_changes[0]
     assert entry["at_tick"] == 412
-    assert entry["to"] == 4096
+    assert entry["to"] == target
 
 
 def test_the_coachs_change_log_is_kept_apart_from_the_actors():

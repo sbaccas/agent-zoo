@@ -139,3 +139,26 @@ class InterrogateResponse(BaseModel):
     adopted_directive: Optional[str] = Field(default=None, description="Directive adopted if steer_directive was enabled")
     error: Optional[str] = Field(default=None, description="Error message if any occurred")
 
+
+class GeneralInterrogateRequest(BaseModel):
+    """A transmission on the General Radio -- the Commander's channel to the coach."""
+
+    prompt: str = Field(description="Plain-text question or instruction for the coach")
+    # Named to match the actor channel's `steer_directive` so the two radios read
+    # the same way, but it points at an entirely separate slot: this one survives
+    # the coach's wholesale rewrite of its dossier, the actor's survives the
+    # model's overwrite of `active_directive`.
+    steer_directive: bool = Field(
+        default=False,
+        description="Whether to also adopt this prompt as a standing order constraining future coaching",
+    )
+
+
+class GeneralInterrogateResponse(BaseModel):
+    reply: str = Field(description="The coach's prose reply")
+    engine: str = Field(default="adk_gemini", description="Engine used: adk_gemini or offline_fallback")
+    tick: int = Field(default=0, description="The tick at which the prompt was answered")
+    adopted_directive: Optional[str] = Field(default=None, description="Standing order adopted if steer_directive was enabled")
+    notes_in_force: int = Field(default=0, description="How many directives the coach's dossier currently holds")
+    error: Optional[str] = Field(default=None, description="Error message if any occurred")
+

@@ -960,6 +960,212 @@
     }
   }
 
+  // ---- Box 7: General Radio ----------------------------------------------
+  // The General's channel to the Coach. Structurally a twin of Box 4 above,
+  // but every endpoint, every DOM node and every piece of state is separate.
+  // The one thing deliberately NOT shared is the steer checkbox default: the
+  // actor's is checked, because an order to the cat is cheap and expires with
+  // the situation. This one is unchecked, because an order to the coach is
+  // injected into every future evaluation until it is explicitly rescinded,
+  // and adopting one by accident would quietly rewrite the cat's whole dossier.
+  const generalChatMessages = document.getElementById('generalChatMessages');
+  const generalPromptForm = document.getElementById('generalPromptForm');
+  const inputGeneralPrompt = document.getElementById('inputGeneralPrompt');
+  const btnSendGeneralPrompt = document.getElementById('btnSendGeneralPrompt');
+  const sendGeneralIcon = document.getElementById('sendGeneralIcon');
+  const sendGeneralText = document.getElementById('sendGeneralText');
+  const checkSteerCoach = document.getElementById('checkSteerCoach');
+  const generalTypingIndicator = document.getElementById('generalTypingIndicator');
+  const generalStandingOrder = document.getElementById('generalStandingOrder');
+  const generalStandingOrderText = document.getElementById('generalStandingOrderText');
+  const btnClearGeneralChat = document.getElementById('btnClearGeneralChat');
+  const btnClearGeneralDirective = document.getElementById('btnClearGeneralDirective');
+  const generalPresetChips = document.querySelectorAll('.general-preset');
+  let isSendingGeneralPrompt = false;
+
+  function renderGeneralStandingOrder(payload) {
+    if (!generalStandingOrder || !generalStandingOrderText) return;
+    const active = payload && payload.active && payload.directive;
+    if (!active) {
+      generalStandingOrder.classList.add('is-empty');
+      generalStandingOrderText.textContent =
+        'No standing order. The coach is writing its dossier unconstrained.';
+      return;
+    }
+    generalStandingOrder.classList.remove('is-empty');
+    const tick = payload.directive.tick;
+    const when = (tick !== undefined && tick !== null) ? ` (issued tick #${tick})` : '';
+    generalStandingOrderText.textContent =
+      `STANDING ORDER${when}: ${payload.directive.directive}`;
+  }
+
+  async function refreshGeneralDirective() {
+    try {
+      const res = await api('/api/agent/general/directive');
+      renderGeneralStandingOrder(res);
+    } catch (err) {
+      // Non-fatal: the banner is informational, the channel still works.
+      console.error('Failed to read coach standing order:', err);
+    }
+  }
+
+  function renderGeneralChat(chatList) {
+    if (!generalChatMessages) return;
+
+    if (!chatList || chatList.length === 0) {
+      const bubble = document.createElement('div');
+      bubble.className = 'chat-bubble general-bubble';
+      const hdr = document.createElement('div');
+      hdr.className = 'chat-bubble-header';
+      const sender = document.createElement('span');
+      sender.className = 'chat-sender';
+      sender.textContent = '🎓 Coach [cat_evaluator]';
+      const meta = document.createElement('span');
+      meta.className = 'chat-meta';
+      meta.textContent = (cachedState && cachedState.active_tick) ? `Tick #${cachedState.active_tick}` : 'Standby';
+      hdr.appendChild(sender);
+      hdr.appendChild(meta);
+      const body = document.createElement('div');
+      body.className = 'chat-bubble-body';
+      body.textContent = 'General, the Coach is on the channel. Ask me why any directive is in the Cat\u2019s dossier, what evidence I based it on, or whether I am coaching toward the right thing. I can pull the live box score if you want numbers.';
+      bubble.appendChild(hdr);
+      bubble.appendChild(body);
+      generalChatMessages.replaceChildren(bubble);
+      return;
+    }
+
+    const bubbles = chatList.map((msg) => {
+      const bubble = document.createElement('div');
+      // Keyed on `source`, not `sender`. On this channel the human IS the
+      // General, so a `sender` of 'general' is the operator -- but an older
+      // log written before the roles were corrected used 'general' for the
+      // replying agent. `source === 'user'` has always meant the operator
+      // and never meant anything else, so it survives that rename.
+      const isUser = msg.source === 'user';
+      bubble.className = isUser ? 'chat-bubble user-bubble' : 'chat-bubble general-bubble';
+
+      const hdr = document.createElement('div');
+      hdr.className = 'chat-bubble-header';
+      const sender = document.createElement('span');
+      sender.className = 'chat-sender';
+      sender.textContent = isUser ? '🎖️ General' : '🎓 Coach [cat_evaluator]';
+      const meta = document.createElement('span');
+      meta.className = 'chat-meta';
+      const tickText = (msg.tick !== undefined && msg.tick !== null && msg.tick > 0) ? `Tick #${msg.tick}` : '';
+      // The offline path is surfaced rather than hidden. A reply that came from
+      // the fallback contains no reasoning about the dossier at all, and reading
+      // it as the coach's actual position would be a real misunderstanding.
+      const engineText = (!isUser && msg.source === 'offline_fallback') ? '⚠️ offline' : '';
+      meta.textContent = [tickText, msg.timestamp || '', engineText].filter(Boolean).join(' • ');
+      hdr.appendChild(sender);
+      hdr.appendChild(meta);
+      bubble.appendChild(hdr);
+
+      const body = document.createElement('div');
+      body.className = 'chat-bubble-body';
+      body.textContent = msg.message || '';
+      bubble.appendChild(body);
+
+      if (msg.adopted_directive) {
+        const badge = document.createElement('span');
+        badge.className = 'chat-directive-badge';
+        badge.textContent = '📌 Adopted as Standing Order';
+        bubble.appendChild(badge);
+      }
+      return bubble;
+    });
+
+    generalChatMessages.replaceChildren(...bubbles);
+    generalChatMessages.scrollTop = generalChatMessages.scrollHeight;
+  }
+
+  async function refreshGeneralChat() {
+    try {
+      const res = await api('/api/agent/general/chat-history');
+      renderGeneralChat(res);
+    } catch (err) {
+      console.error('Failed to read general radio log:', err);
+    }
+  }
+
+  async function handleSendGeneralPrompt(e) {
+    if (e) e.preventDefault();
+    if (isSendingGeneralPrompt) return;
+    const promptText = (inputGeneralPrompt.value || '').trim();
+    if (!promptText) {
+      inputGeneralPrompt.focus();
+      return;
+    }
+
+    const steer = checkSteerCoach ? checkSteerCoach.checked : false;
+    isSendingGeneralPrompt = true;
+    btnSendGeneralPrompt.disabled = true;
+    inputGeneralPrompt.disabled = true;
+    if (generalTypingIndicator) generalTypingIndicator.style.display = 'inline-flex';
+    if (sendGeneralIcon) sendGeneralIcon.textContent = '⏳';
+    if (sendGeneralText) sendGeneralText.textContent = 'On the air...';
+
+    // Optimistic local bubble so the channel feels live. The coach can take a
+    // while: it may call get_boxscore before it answers.
+    const userBubble = document.createElement('div');
+    userBubble.className = 'chat-bubble user-bubble';
+    const hdr = document.createElement('div');
+    hdr.className = 'chat-bubble-header';
+    const sender = document.createElement('span');
+    sender.className = 'chat-sender';
+    sender.textContent = '👨‍✈️ Commander';
+    const meta = document.createElement('span');
+    meta.className = 'chat-meta';
+    meta.textContent = (cachedState && cachedState.active_tick) ? `Tick #${cachedState.active_tick}` : 'Now';
+    hdr.appendChild(sender);
+    hdr.appendChild(meta);
+    const body = document.createElement('div');
+    body.className = 'chat-bubble-body';
+    body.textContent = promptText;
+    userBubble.appendChild(hdr);
+    userBubble.appendChild(body);
+    generalChatMessages.appendChild(userBubble);
+    generalChatMessages.scrollTop = generalChatMessages.scrollHeight;
+
+    try {
+      // Raw fetch rather than api(): the shared helper discards the response
+      // body on a non-2xx, and the coach's error detail is the whole point of
+      // this channel.
+      const resp = await fetch('/api/agent/general/prompt', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt: promptText, steer_directive: steer }),
+      });
+      const payload = await resp.json().catch(() => null);
+      if (!resp.ok) {
+        throw new Error((payload && (payload.detail || payload.error)) || `HTTP ${resp.status}`);
+      }
+      inputGeneralPrompt.value = '';
+      if (checkSteerCoach) checkSteerCoach.checked = false;
+      await refreshGeneralChat();
+      await refreshGeneralDirective();
+    } catch (err) {
+      console.error('Failed to reach the General:', err);
+      const errBubble = document.createElement('div');
+      errBubble.className = 'chat-bubble general-bubble';
+      const errBody = document.createElement('div');
+      errBody.className = 'chat-bubble-body';
+      errBody.style.color = 'var(--danger-color)';
+      errBody.textContent = `⚠️ Radio failure: ${err.message || err}`;
+      errBubble.appendChild(errBody);
+      generalChatMessages.appendChild(errBubble);
+      generalChatMessages.scrollTop = generalChatMessages.scrollHeight;
+    } finally {
+      isSendingGeneralPrompt = false;
+      btnSendGeneralPrompt.disabled = false;
+      inputGeneralPrompt.disabled = false;
+      if (generalTypingIndicator) generalTypingIndicator.style.display = 'none';
+      if (sendGeneralIcon) sendGeneralIcon.textContent = '📻';
+      if (sendGeneralText) sendGeneralText.textContent = 'Send to General';
+      inputGeneralPrompt.focus();
+    }
+  }
+
   // Inspect a specific past tick
   // ---- Gemini payload inspector -----------------------------------------
   // Answers "what exactly did the model see when it decided this tick?".
@@ -2077,6 +2283,51 @@
       renderChatHistory([]);
     });
   }
+
+  // Event Listeners - Box 7: General Radio
+  if (generalPromptForm) {
+    generalPromptForm.addEventListener('submit', handleSendGeneralPrompt);
+  }
+
+  if (generalPresetChips && generalPresetChips.length > 0) {
+    generalPresetChips.forEach((chip) => {
+      chip.addEventListener('click', () => {
+        const text = chip.getAttribute('data-prompt');
+        if (text && inputGeneralPrompt) {
+          inputGeneralPrompt.value = text;
+          // Sends immediately, like the actor's presets. Safe to do here only
+          // because the steer checkbox defaults to OFF -- a one-click preset
+          // that silently rewrote the coach's standing order would be a trap.
+          handleSendGeneralPrompt();
+        }
+      });
+    });
+  }
+
+  if (btnClearGeneralChat) {
+    btnClearGeneralChat.addEventListener('click', async () => {
+      await api('/api/agent/general/clear-chat', 'POST');
+      renderGeneralChat([]);
+    });
+  }
+
+  if (btnClearGeneralDirective) {
+    btnClearGeneralDirective.addEventListener('click', async () => {
+      // Confirmed, unlike clearing the log. Rescinding is the only irreversible
+      // action in this box: the order text is not recoverable from the log if
+      // the log has since been cleared.
+      if (!window.confirm('Rescind the standing order? The next evaluation will run without it.')) {
+        return;
+      }
+      await api('/api/agent/general/clear-directive', 'POST');
+      await refreshGeneralDirective();
+    });
+  }
+
+  // Seed the channel on load so a reload does not appear to have lost the
+  // conversation or the order that is still very much in force.
+  refreshGeneralChat();
+  refreshGeneralDirective();
 
   // Event Listeners - Clear History
   btnClearHistory.addEventListener('click', async () => {

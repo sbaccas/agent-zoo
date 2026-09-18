@@ -25,6 +25,8 @@ from actors.models import (
     EvalIntervalRequest,
     EvalThinkingBudgetRequest,
     HistoryWindowRequest,
+    GeneralInterrogateRequest,
+    GeneralInterrogateResponse,
     InterrogateRequest,
     InterrogateResponse,
     Observation,
@@ -91,16 +93,24 @@ from actors.cat.subagents.eval import (
     EVAL_THINKING_MIN,
     EVAL_TIMEOUT_MAX_SEC,
     EVAL_TIMEOUT_MIN_SEC,
+    GENERAL_RADIO_SKILLS_PATH,
+    GENERAL_RADIO_TIMEOUT_SECONDS,
+    clear_coach_directive,
     coerce_eval_thinking_budget,
     coerce_eval_timeout,
     eval_affordable_thinking_tokens,
     eval_agent,
     eval_thinking_warning,
     evaluate_and_publish,
+    general_agent,
+    get_coach_directive,
     get_eval_instruction,
     get_eval_thinking_budget,
     get_eval_timeout,
+    get_general_radio_instruction,
     get_last_eval_telemetry,
+    interrogate_general,
+    set_coach_directive,
     set_eval_thinking_budget,
     set_eval_timeout,
     suggested_eval_timeout,
@@ -133,6 +143,13 @@ class AgentWorkbenchState:
         self.override_mode: str = "once"  # "once" or "sticky"
         self.history: List[Dict[str, Any]] = []
         self.chat_history: List[Dict[str, Any]] = []
+        # The General Radio log -- the General's conversation with the Coach.
+        # Its own list, not a `channel` field on `chat_history`, because the two
+        # transcripts answer different questions and the UI renders them in
+        # different boxes. Sharing one list would mean every reader had to filter
+        # correctly, and the first one that forgot would show the cat's answers
+        # attributed to the Coach.
+        self.general_chat_history: List[Dict[str, Any]] = []
         self.brain_engine: str = "Google ADK (gemini-2.5-flash)"
         self.skills_file: str = str(SKILLS_PATH)
         initial_health = check_gemini_auth_health()
@@ -1726,6 +1743,136 @@ def get_chat_history() -> List[Dict[str, Any]]:
 def clear_chat_history() -> Dict[str, str]:
     state.chat_history.clear()
     return {"status": "ok"}
+
+
+# ---------------------------------------------------------------------------
+# General Radio: the Commander's channel to the coach.
+#
+# Mirrors the Commander Radio above endpoint for endpoint, but every route is
+# namespaced under /general and every slot it touches is separate. The only
+# thing the two channels share is the shape of the request.
+# ---------------------------------------------------------------------------
+
+
+@app.post("/api/agent/general/prompt", response_model=GeneralInterrogateResponse)
+async def interrogate_general_agent(
+    req: GeneralInterrogateRequest,
+) -> GeneralInterrogateResponse:
+    """Put a question to the coach, and optionally leave it under a standing order."""
+    clean_prompt = req.prompt.strip()
+    notes = store.read_coaching_notes()
+    notes_count = sum(
+        1 for ln in (notes or "").splitlines() if ln.strip().startswith("-")
+    )
+
+    if not clean_prompt:
+        return GeneralInterrogateResponse(
+            reply="Commander, I received an empty transmission.",
+            engine="offline_fallback",
+            tick=state.active_tick,
+            notes_in_force=notes_count,
+        )
+
+    existing = get_coach_directive() or {}
+
+    # The coach reasons over the transcript it is actually fed, so the radio
+    # hands it the same window the next evaluation would see rather than the
+    # whole game. A question about "what you just told the cat" should be
+    # answerable from the evidence that produced those notes -- and the file is
+    # tens of megabytes by mid-game, so the slice is not optional.
+    try:
+        all_records = store.read_transcript_records()
+        window = max(1, int(state.eval_interval or 1))
+        records = all_records[-window:] if all_records else None
+    except Exception:
+        # A radio question must still get an answer if the transcript is
+        # unreadable; the coach simply answers from its dossier alone.
+        records = None
+
+    reply, engine, err = await interrogate_general(
+        user_prompt=clean_prompt,
+        notes=notes,
+        records=records,
+        standing_order=existing.get("directive"),
+        tick=state.active_tick,
+    )
+
+    adopted = None
+    if req.steer_directive:
+        # Recorded whatever the reply said, including on the fallback path. The
+        # order is the Commander's, not the coach's, and it must not be lost
+        # just because the officer happened to be off the air when it was given.
+        set_coach_directive(clean_prompt, tick=state.active_tick)
+        adopted = clean_prompt
+
+    now_str = datetime.now().strftime("%H:%M:%S")
+    # The human operator on this channel is the General; the officer answering
+    # is the Coach. One level down, on the Cat's channel, the same human speaks
+    # as the Commander and the Cat answers. The rank matches the tier of the
+    # agent being held to account, so the two logs never read alike.
+    state.general_chat_history.append({
+        "id": f"gen-{len(state.general_chat_history)+1}-user",
+        "sender": "general",
+        "message": clean_prompt,
+        "timestamp": now_str,
+        "tick": state.active_tick,
+        "source": "user",
+    })
+    state.general_chat_history.append({
+        "id": f"gen-{len(state.general_chat_history)+1}-agent",
+        "sender": "coach",
+        "message": reply,
+        "timestamp": now_str,
+        "tick": state.active_tick,
+        "source": engine,
+        "error": err,
+        "adopted_directive": adopted,
+    })
+
+    return GeneralInterrogateResponse(
+        reply=reply,
+        engine=engine,
+        tick=state.active_tick,
+        adopted_directive=adopted,
+        notes_in_force=notes_count,
+        error=err,
+    )
+
+
+@app.get("/api/agent/general/chat-history")
+def get_general_chat_history() -> List[Dict[str, Any]]:
+    return state.general_chat_history
+
+
+@app.post("/api/agent/general/clear-chat")
+def clear_general_chat_history() -> Dict[str, str]:
+    """Clears the radio log only.
+
+    Deliberately does NOT rescind the standing order. Tidying up a conversation
+    and revoking an order are different intentions, and silently coupling them
+    would mean the Commander lost a constraint they never asked to drop.
+    """
+    state.general_chat_history.clear()
+    return {"status": "ok"}
+
+
+@app.get("/api/agent/general/directive")
+def get_general_directive() -> Dict[str, Any]:
+    """The Commander's standing order to the coach, if one is in force."""
+    directive = get_coach_directive()
+    return {
+        "active": directive is not None,
+        "directive": directive,
+        "skills_path": str(GENERAL_RADIO_SKILLS_PATH),
+        "timeout_sec": GENERAL_RADIO_TIMEOUT_SECONDS,
+    }
+
+
+@app.post("/api/agent/general/clear-directive")
+def clear_general_directive() -> Dict[str, Any]:
+    """Rescinds the standing order. The next evaluation runs without it."""
+    had = clear_coach_directive()
+    return {"status": "ok", "cleared": had}
 
 
 

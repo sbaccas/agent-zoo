@@ -49,7 +49,7 @@ flowchart TB
     end
 
     subgraph CloudLayer["Google Cloud Vertex AI"]
-        Gemini["Gemini 2.5 Flash<br/>(thinking_budget: tunable, default 0)"]
+        Gemini["Gemini 2.5 Flash<br/>(thinking_budget: tunable, default 256)"]
     end
 
     BoardUI -->|HTTP / WebSocket| FastAPIServer
@@ -100,7 +100,7 @@ Any agent connects to the simulation by implementing the `/act` endpoint:
 
 ## ⚡ Performance & Optimization Highlights
 
-- **Chain-of-Thought Budgeting**: Defaults to `thinking_budget=0`, reducing Gemini 2.5 Flash response times from ~3.5s down to **~1.1s – 1.3s**. Adjustable at runtime — see below.
+- **Chain-of-Thought Budgeting**: Defaults to `thinking_budget=256` for the actor and `4096` for the coach. The two differ by design: the actor answers one board four times a second and pays for thought in latency, while the coach runs once per cycle off the tick loop with nothing waiting on it. Setting the actor to `0` returns it to the original reflex behaviour (~1.1s – 1.3s vs ~3.5s). Both adjustable at runtime — see below.
 - **Bounded Sliding Memory**: By refreshing the ADK session per tick and formatting the previous 3 moves (`(pos, facing, context, move, reason)`), context remains capped at ~250 tokens across hundreds of simulation ticks.
 - **Fail-Safe Heuristic Fallback**: If the Cat Agent takes longer than 3.0s or fails twice consecutively, the scheduler trips a circuit breaker and executes pure in-memory pursuit (0.008ms) until the service stabilizes.
 
@@ -148,7 +148,7 @@ with.
 | API | `GET`/`POST` `/api/agent/evaluator/thinking-budget` |
 | Environment | `CAT_EVAL_THINKING_BUDGET`, `CAT_EVAL_TIMEOUT_SEC` |
 
-Defaults: budget `0` (off), review timeout `60s`, clamped to `30–900s`. The
+Defaults: budget `4096`, review timeout `60s`, clamped to `30–900s`. The
 floor is not arbitrary — the coach's `get_boxscore` tool has its own 3s timeout,
 and the review window has to stay an order of magnitude above it or a slow box
 score would eat the entire review.

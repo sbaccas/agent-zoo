@@ -103,10 +103,25 @@ THINKING_BUDGET_MIN, THINKING_BUDGET_MAX, THINKING_CAN_BE_DISABLED = (
 # slider first -- which matters because the first ticks of a game are recorded
 # into the same transcript as the rest of it.
 #
-# Default 0, preserving the behaviour every measurement in this repo was taken
-# under. See CatTacticalDecision's docstring: the thought-before-action field
-# order exists *because* there is no scratchpad, and its 10/10 vs 1/10 result
-# was measured at 0.
+# Default 256. This was 0 for the whole history of the repo, and the move is
+# deliberate rather than incidental: at a budget of 128 the measured
+# `thoughts_token_count` sat at p50=125 / p90=129 across 781 consecutive calls,
+# i.e. the model was saturating the allowance on essentially every tick. A
+# ceiling that is hit every single time is not a budget, it is a truncation, and
+# the work being truncated is a per-mouse frame rotation the observation does
+# not do for the model. 256 gives that arithmetic somewhere to land.
+#
+# Two things this does NOT do, recorded here so nobody assumes otherwise:
+#   - It does not make the actor slow. 256 tokens is ~1.3s of generation against
+#     a deliberation ceiling that affords ~1,340 tokens, so the timeout is
+#     nowhere near binding at this setting.
+#   - It does not re-validate the prompt schema. CatTacticalDecision puts
+#     `thought` before `action` *because* there was no scratchpad, and that
+#     10/10 vs 1/10 result was measured at budget 0. It has not been re-measured
+#     with a real scratchpad available, and the field order is retained on the
+#     assumption that it is still neutral-to-helpful rather than on evidence.
+THINKING_BUDGET_DEFAULT = 256
+
 DEFAULT_THINKING_BUDGET_ENV = "CAT_THINKING_BUDGET"
 
 # How long a single Gemini decision call may run before it is abandoned and the
@@ -243,24 +258,25 @@ def describe_thinking_budget(budget: Optional[int]) -> str:
 def _initial_thinking_budget() -> int:
     """Reads the startup budget from the environment, falling back to 0.
 
-    A malformed value is a warning and a fall back to 0, not a crash: the
-    workbench failing to boot over a typo in a tuning variable would be a worse
-    outcome than starting in the configuration everything was measured under.
+    A malformed value is a warning and a fall back to THINKING_BUDGET_DEFAULT,
+    not a crash: the workbench failing to boot over a typo in a tuning variable
+    would be a worse outcome than starting on the documented default.
     The value is echoed either way, because a silently ignored setting is how
     you end up comparing two runs that were actually identical.
     """
     raw = os.environ.get(DEFAULT_THINKING_BUDGET_ENV)
     if raw is None or not str(raw).strip():
-        return THINKING_BUDGET_OFF
+        return THINKING_BUDGET_DEFAULT
     try:
         budget = coerce_thinking_budget(raw)
     except ValueError as exc:
         print(
             f"⚠️  [ACTOR] Ignoring {DEFAULT_THINKING_BUDGET_ENV}={raw!r}: {exc}. "
-            f"Starting with thinking disabled.",
+            f"Starting on the default: "
+            f"{describe_thinking_budget(THINKING_BUDGET_DEFAULT)}.",
             flush=True,
         )
-        return THINKING_BUDGET_OFF
+        return THINKING_BUDGET_DEFAULT
     print(
         f"🧠 [ACTOR] Thinking budget from {DEFAULT_THINKING_BUDGET_ENV}: "
         f"{describe_thinking_budget(budget)}",

@@ -50,6 +50,18 @@ logger = logging.getLogger("cat_agent")
 EVAL_MODEL = "gemini-2.5-flash"
 EVAL_SKILLS_PATH = Path(__file__).parent / "eval_skills.md"
 
+# Conversational persona for the General Radio -- the Commander's direct channel
+# to the coach. Kept in its own file, and deliberately NOT merged into
+# eval_skills.md, for the reason the actor keeps radio_skills.md separate: the
+# advisory manual governs what the coach writes into the dossier, and a persona
+# describing how to hold a conversation has no business leaking into that.
+GENERAL_RADIO_SKILLS_PATH = Path(__file__).parent / "general_radio_skills.md"
+
+# Label for the Commander's standing coaching directive inside the evaluator
+# prompt. A label, not an instruction: what the coach must do with the block is
+# stated in the block body itself, once, where it is written.
+COACH_DIRECTIVE_BLOCK_HEADER = "--- STANDING ORDER FROM THE COMMANDER ---"
+
 # Label for the actor manual block in the evaluator prompt.
 #
 # A label, not an instruction: what the coach must do with this block is stated
@@ -167,6 +179,47 @@ def set_eval_timeout(value: Any) -> float:
     return _eval_timeout_sec
 
 
+# The Commander's standing order to the coach, set over the General Radio.
+#
+# Held here rather than on the API's `state` object because it is an input to
+# the evaluation prompt, and every other runtime-adjustable evaluation input --
+# the thinking budget, the timeout -- already lives in this module behind a
+# get/set pair. Keeping them together is what lets the archive stamp the
+# complete coaching configuration from one place.
+#
+# Deliberately a separate slot from the published dossier in coaching_notes.md.
+# The coach rewrites that file wholesale on every cycle, so an order stored
+# there would survive exactly one evaluation before the coach overwrote it --
+# the same bug that made the actor's commander orders evaporate, which is why
+# `state.commander_directive` got its own slot too.
+_coach_directive: Optional[Dict[str, Any]] = None
+
+
+def get_coach_directive() -> Optional[Dict[str, Any]]:
+    """The Commander's standing order to the coach, or None if none is in force."""
+    return _coach_directive
+
+
+def set_coach_directive(text: str, tick: Optional[int] = None) -> Dict[str, Any]:
+    """Records a standing order. Applies from the next evaluation onward."""
+    global _coach_directive
+    _coach_directive = {
+        "directive": text.strip(),
+        "tick": tick,
+        "issued_at": datetime.now(timezone.utc).isoformat(),
+        "source": "general_radio",
+    }
+    return _coach_directive
+
+
+def clear_coach_directive() -> bool:
+    """Rescinds the standing order. Returns whether one was actually in force."""
+    global _coach_directive
+    had = _coach_directive is not None
+    _coach_directive = None
+    return had
+
+
 def get_eval_instruction() -> str:
     """Loads the evaluator's own skills manual, distinct from the actor's."""
     if EVAL_SKILLS_PATH.exists():
@@ -189,6 +242,28 @@ def _eval_instruction_provider(_ctx: ReadonlyContext) -> str:
     obeying the old ones -- the file looked applied when it was not.
     """
     return get_eval_instruction()
+
+
+def get_general_radio_instruction() -> str:
+    """Persona for free-form General radio replies, read fresh from disk."""
+    if not GENERAL_RADIO_SKILLS_PATH.exists():
+        raise FileNotFoundError(
+            f"General radio persona missing at {GENERAL_RADIO_SKILLS_PATH}."
+        )
+    return GENERAL_RADIO_SKILLS_PATH.read_text(encoding="utf-8")
+
+
+def _general_instruction_provider(_ctx: ReadonlyContext) -> str:
+    """The evaluator's own manual, plus the radio persona. Both read fresh.
+
+    The coach's manual leads for the same reason it does on the evaluation path:
+    the Coach answering the General's radio and the evaluator writing the
+    dossier must be the same officer. If the radio agent ran on the persona
+    alone it would happily defend directives using a model of the game it had
+    invented on the spot, which is the exact failure eval_skills.md section 1
+    exists to prevent.
+    """
+    return get_eval_instruction() + "\n\n" + get_general_radio_instruction()
 
 
 # ---------------------------------------------------------------------------
@@ -333,10 +408,31 @@ async def get_boxscore() -> Dict[str, Any]:
     }
 
 
+# The budget the coach starts on, and it is deliberately ~16x the actor's.
+#
+# The two agents are the same model doing opposite jobs, and the shape of the
+# job is what sets the number:
+#
+#   - The actor answers one question about one board, four times a second, and
+#     every token it spends thinking is latency against a tick that is already
+#     moving. Its constraint is the clock.
+#   - The coach runs once per evaluation cycle, off the tick loop entirely, and
+#     has to read a whole transcript, call `get_boxscore`, reconcile what it
+#     sees against directives it wrote earlier, and decide what to retract. Its
+#     constraint is the size of the reasoning, and nothing downstream is waiting
+#     on it.
+#
+# 4,096 sits well inside the 60s default timeout (which affords ~10,000 tokens),
+# so raising the budget to this does not bring the abandon ceiling into play.
+# That matters more here than on the actor side: an evaluator timeout does not
+# merely skip a turn, it publishes `_summarise_without_model` positional filler
+# *over* the standing orders the Cat is reading every tick.
+EVAL_THINKING_BUDGET_DEFAULT = 4096
+
 _initial_eval_budget: int = _initial_from_env(
     EVAL_THINKING_BUDGET_ENV,
     coerce_eval_thinking_budget,
-    THINKING_BUDGET_OFF,
+    EVAL_THINKING_BUDGET_DEFAULT,
     describe_thinking_budget,
 )
 
@@ -361,6 +457,58 @@ eval_runner = Runner(
 )
 
 _eval_lock = asyncio.Lock()
+
+# The General Radio agent -- the Commander's direct channel to the coach.
+#
+# Shares `eval_session_service` with the evaluator so the two are cheap to hold,
+# but runs on its own session id, so a radio conversation can never be mistaken
+# for evaluation context and vice versa.
+#
+# Deliberately NOT wired to `set_eval_thinking_budget`, for the same reason the
+# actor's interrogator is held out of the actor's dial: this agent answers the
+# human, it is off the evaluation cycle, its latency costs the Cat nothing, and
+# including it would mean an A/B on the coach's budget silently changed the
+# radio's behaviour too. An experiment about coaching quality should measure the
+# thing that writes the coaching.
+#
+# It carries `get_boxscore` because the persona tells it to fetch numbers rather
+# than quote them from memory -- without the tool that instruction is unfollowable
+# and the agent would invent statistics, which is the single worst thing this
+# channel could do.
+general_agent = LlmAgent(
+    name="cat_coach",
+    model=EVAL_MODEL,
+    instruction=_general_instruction_provider,
+    tools=[get_boxscore],
+    generate_content_config=types.GenerateContentConfig(
+        thinking_config=types.ThinkingConfig(thinking_budget=0)
+    ),
+)
+general_runner = Runner(
+    agent=general_agent,
+    app_name="cat_evaluator_app",
+    session_service=eval_session_service,
+)
+
+# Its own lock. Sharing `_eval_lock` would have meant a radio call blocking
+# behind a running evaluation -- up to the full evaluation timeout, which is
+# minutes at the top of its range -- and the Commander would have read that as
+# the channel being dead.
+_general_lock = asyncio.Lock()
+
+# How long a radio reply may take.
+#
+# Strictly below EVAL_TIMEOUT_MIN_SEC, and a test pins that. The two ceilings
+# are answering different questions: an evaluation is a background job whose
+# only cost is staleness, while this one has a human sitting in front of it. It
+# was briefly set equal to the evaluation floor, which satisfied neither reading.
+#
+# The budget: get_boxscore is capped at 3s, the agent thinks at budget 0, and a
+# 2.5-flash turn with one tool call lands well inside 10s. 20s leaves room for a
+# slow fetch and a long answer without ever making the Commander wonder whether
+# the channel is dead.
+GENERAL_RADIO_TIMEOUT_SECONDS = 20.0
+
 
 
 def get_eval_thinking_budget() -> Optional[int]:
@@ -603,7 +751,11 @@ def format_capabilities(records: List[Dict[str, Any]]) -> str:
     )
 
 
-def build_eval_prompt(records: List[Dict[str, Any]], previous: str) -> str:
+def build_eval_prompt(
+    records: List[Dict[str, Any]],
+    previous: str,
+    coach_directive: Optional[str] = None,
+) -> str:
     """Assembles the full evaluator prompt.
 
     Extracted from evaluate() purely so it can be tested. While this was inline,
@@ -669,6 +821,33 @@ def build_eval_prompt(records: List[Dict[str, Any]], previous: str) -> str:
             "imagined length, and do not pad it to look thorough.\n\n"
         )
 
+    # The Commander's standing order, if one is in force.
+    #
+    # Placed AFTER the dossier and the transcript, immediately before the write
+    # instruction, because it has to win. The dossier block above tells the coach
+    # that carrying directives forward verbatim is the default, and that default
+    # is strong enough to survive a contradicting instruction buried earlier in a
+    # prompt this long -- which would leave the Commander watching an order they
+    # gave get quietly overwritten by the coach's own previous opinion, every
+    # cycle, with no error anywhere.
+    directive_block = ""
+    if coach_directive and coach_directive.strip():
+        directive_block = (
+            f"{COACH_DIRECTIVE_BLOCK_HEADER}\n"
+            f"{coach_directive.strip()}\n\n"
+            "This order comes from the human Commander, who outranks you. It "
+            "applies to the dossier you are about to write and to every dossier "
+            "after it, until the Commander rescinds it.\n"
+            "  - It overrides your own standing directives where they conflict. "
+            "If a directive already in your dossier contradicts this order, "
+            "rewrite or drop that directive now rather than carrying it "
+            "forward.\n"
+            "  - It does not override your subordinate's manual. If the order "
+            "would have you tell the Cat to do something illegal or impossible "
+            "under that manual, do not issue it. Say so plainly in a directive "
+            "instead, and explain the conflict.\n\n"
+        )
+
     # No tick indices reach the model -- not on the lines, not in this
     # header. See format_transcript() for why.
     return (
@@ -678,6 +857,7 @@ def build_eval_prompt(records: List[Dict[str, Any]], previous: str) -> str:
         f"--- CAT TRANSCRIPT ({len(records)} consecutive ticks, "
         f"oldest first) ---\n"
         f"{format_transcript(records)}\n\n"
+        f"{directive_block}"
         "Write your standing orders for the Cat now, as markdown bullets. "
         "Every directive must be legal and correct under your subordinate's "
         "manual above. Do not refer to tick numbers; the Cat cannot see them."
@@ -728,7 +908,10 @@ async def evaluate(records: List[Dict[str, Any]]) -> Tuple[str, str]:
                 app_name="cat_evaluator_app", user_id=user_id, session_id=session_id
             )
 
-            prompt = build_eval_prompt(records, store.read_coaching_notes())
+            standing_order = (get_coach_directive() or {}).get("directive")
+            prompt = build_eval_prompt(
+                records, store.read_coaching_notes(), standing_order
+            )
 
             msg = types.Content(role="user", parts=[types.Part.from_text(text=prompt)])
             chunks: List[str] = []
@@ -816,3 +999,188 @@ async def evaluate_and_publish() -> Dict[str, Any]:
         source,
     )
     return result
+
+
+# ---------------------------------------------------------------------------
+# General Radio
+#
+# The Commander's direct, conversational channel to the coach. Entirely off the
+# evaluation cycle: calling it never publishes notes, never advances the tick
+# counter, and never touches coaching_notes.md. Asking the coach a question and
+# changing the coach's orders are two separate acts, and the caller has to opt
+# into the second one explicitly.
+# ---------------------------------------------------------------------------
+
+
+def _general_offline_reply(user_prompt: str, notes: str) -> str:
+    """What the Coach says on the General's radio when no model is reachable.
+
+    Deliberately says nothing about performance. The offline path on the
+    evaluation side can get away with positional filler because something must
+    be published; here the honest answer is that the officer is off the air.
+    Inventing a plausible-sounding coaching rationale would be worse than
+    silence -- the General is on this channel precisely to audit the coaching,
+    and a fabricated defence of it is the one reply that actively misleads them.
+    """
+    count = sum(1 for ln in (notes or "").splitlines() if ln.strip().startswith("-"))
+    return (
+        "General, the Coach is off the air -- no model backend is reachable "
+        "from the evaluator, so I cannot reason about your question or pull the "
+        f"box score. My dossier currently stands at {count} directive(s) and is "
+        "still being delivered to the Cat unchanged. Nothing about the coaching "
+        "has been altered by this transmission."
+    )
+
+
+async def interrogate_general(
+    user_prompt: str,
+    notes: Optional[str] = None,
+    records: Optional[List[Dict[str, Any]]] = None,
+    standing_order: Optional[str] = None,
+    tick: Optional[int] = None,
+) -> Tuple[str, str, Optional[str]]:
+    """Puts a question to the coach and returns its prose reply.
+
+    Args:
+        user_prompt: what the Commander said.
+        notes: the dossier currently in force. Read from the store when omitted.
+        records: recent transcript rows, for questions about what the coach saw.
+        standing_order: the Commander's existing standing order, so the coach
+            answers in light of it instead of contradicting an order it is
+            already under.
+        tick: the game tick, for the log line only. Never shown to the model --
+            the coach is held to the same no-tick-citations rule everywhere else.
+
+    Returns:
+        (reply_text, engine, error) where engine is 'adk_gemini' or
+        'offline_fallback'.
+    """
+    clean = (user_prompt or "").strip()
+    if notes is None:
+        notes = store.read_coaching_notes()
+
+    if not clean:
+        return (
+            "Commander, I received an empty transmission.",
+            "offline_fallback",
+            None,
+        )
+
+    # Same guard the evaluation path uses: no live network calls under pytest
+    # unless explicitly enabled.
+    if "PYTEST_CURRENT_TEST" in os.environ and not os.environ.get("ENABLE_LIVE_LLM_TESTS"):
+        return _general_offline_reply(clean, notes), "offline_fallback", None
+
+    if not has_gemini_credentials():
+        return _general_offline_reply(clean, notes), "offline_fallback", None
+
+    user_id = "cat_coach"
+    session_id = "session_cat_coach"
+
+    async with _general_lock:
+        try:
+            # Torn down and recreated per call, exactly as the actor's
+            # interrogator does it. The persona is re-read from disk on every
+            # run, and a surviving session would keep replaying the old one
+            # back to the model as conversation history -- so an edit to
+            # general_radio_skills.md would appear to have no effect.
+            try:
+                await eval_session_service.delete_session(
+                    app_name="cat_evaluator_app",
+                    user_id=user_id,
+                    session_id=session_id,
+                )
+            except Exception:
+                pass
+            await eval_session_service.create_session(
+                app_name="cat_evaluator_app",
+                user_id=user_id,
+                session_id=session_id,
+            )
+
+            dossier_block = (
+                "--- YOUR DOSSIER, CURRENTLY IN FORCE ---\n"
+                f"{notes.strip()}\n\n"
+                "These are your own directives. They are being delivered to the "
+                "Cat verbatim, every tick, right now.\n\n"
+                if (notes or "").strip()
+                else
+                "--- YOUR DOSSIER, CURRENTLY IN FORCE ---\n"
+                "You have not published any directives yet.\n\n"
+            )
+
+            order_block = ""
+            if standing_order and standing_order.strip():
+                order_block = (
+                    f"{COACH_DIRECTIVE_BLOCK_HEADER}\n"
+                    f"{standing_order.strip()}\n\n"
+                    "You are already under this order from the Commander. Answer "
+                    "in light of it.\n\n"
+                )
+
+            transcript_block = ""
+            if records:
+                transcript_block = (
+                    f"--- RECENT CAT TRANSCRIPT ({len(records)} ticks, oldest "
+                    f"first) ---\n{format_transcript(records)}\n\n"
+                )
+
+            prompt = (
+                f"{dossier_block}"
+                f"{order_block}"
+                f"{transcript_block}"
+                "--- GENERAL RADIO ---\n"
+                f'COMMANDER: "{clean}"\n'
+            )
+
+            msg = types.Content(role="user", parts=[types.Part.from_text(text=prompt)])
+            reply_parts: List[str] = []
+
+            async with asyncio.timeout(GENERAL_RADIO_TIMEOUT_SECONDS):
+                agen = general_runner.run_async(
+                    user_id=user_id, session_id=session_id, new_message=msg
+                )
+                try:
+                    while True:
+                        event = await agen.__anext__()
+                        if event.error_code or event.error_message:
+                            raise RuntimeError(
+                                f"ADK Error: {event.error_code} - {event.error_message}"
+                            )
+                        if event.content and event.content.parts:
+                            for p in event.content.parts:
+                                if p.text and not getattr(p, "thought", False):
+                                    reply_parts.append(p.text)
+                except StopAsyncIteration:
+                    pass
+
+            reply_text = "".join(reply_parts).strip()
+            if reply_text:
+                logger.info("General radio replied (tick %s)", tick)
+                return reply_text, "adk_gemini", None
+            return (
+                "Commander, I received your transmission but have nothing to add "
+                "beyond the dossier as it stands.",
+                "adk_gemini",
+                None,
+            )
+
+        except asyncio.TimeoutError:
+            err = f"general radio timed out after {GENERAL_RADIO_TIMEOUT_SECONDS:.0f}s"
+            logger.warning("%s", err)
+            return (
+                f"Commander, I ran out of time composing a reply "
+                f"({GENERAL_RADIO_TIMEOUT_SECONDS:.0f}s). My dossier is unchanged "
+                "and still reaching the Cat. Try a narrower question.",
+                "offline_fallback",
+                err,
+            )
+        except Exception as exc:
+            err = str(exc)
+            logger.warning("General radio error: %s", err)
+            return (
+                f"General, the link to the Coach broke: {err}. My dossier is "
+                "unchanged and still reaching the Cat.",
+                "offline_fallback",
+                err,
+            )
