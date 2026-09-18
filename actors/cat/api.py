@@ -38,8 +38,10 @@ from actors.cat.heuristic import (
 
 # Model / LLM tactical engine
 from actors.cat.actor import (
+    COMMANDER_FRESH_TICKS,
     SKILLS_PATH,
     adk_agent,
+    adk_interrogator_agent,
     adk_runner,
     check_gemini_auth_health,
     get_gemini_auth_mode,
@@ -52,6 +54,7 @@ from actors.cat.actor import (
     query_adk_gemini as model_query_adk_gemini,
     reset_adk_session,
     session_service,
+    summarize_agent,
 )
 
 # Runtime transcript / coaching-notes store (shared with the evaluator subagent)
@@ -61,9 +64,11 @@ from actors.cat import store
 from actors.cat.subagents.eval import (
     DEFAULT_EVAL_INTERVAL,
     EVAL_SKILLS_PATH,
+    eval_agent,
     evaluate_and_publish,
     get_eval_instruction,
 )
+
 
 logger = logging.getLogger("cat_agent")
 
@@ -855,6 +860,29 @@ async def lifespan(app: FastAPI):
     access_logger.addFilter(filt)
     for h in access_logger.handlers:
         h.addFilter(filt)
+
+    # Publish the settings this process is running with. Nothing reads it at
+    # runtime; the game server copies it into the archive when a game ends, so
+    # that a box score can later be attributed to a configuration rather than
+    # to a vague memory of what was being tried that afternoon.
+    store.write_run_config(
+        {
+            "agents": [
+                summarize_agent(adk_agent),
+                summarize_agent(adk_interrogator_agent),
+                summarize_agent(eval_agent),
+            ],
+            "prompt_assembly": {
+                # Ticks after which a commander order stops being emitted last.
+                "commander_fresh_ticks": COMMANDER_FRESH_TICKS,
+            },
+            "evaluation": {
+                "enabled": state.eval_enabled,
+                "interval_ticks": state.eval_interval,
+                "default_interval_ticks": DEFAULT_EVAL_INTERVAL,
+            },
+        }
+    )
 
     # Auto-connect WebSocket client in background if enabled
     if os.environ.get("CAT_AGENT_AUTO_CONNECT", "1") != "0":

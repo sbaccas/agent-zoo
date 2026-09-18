@@ -3,6 +3,7 @@ import logging
 import uuid
 from typing import Optional
 from app.game.actions import ActionHandler
+from app.game.archive import archive_game
 from app.game.entities import EntityManager
 from app.game.scheduler import Scheduler
 from app.game.stats import StatsTracker
@@ -227,6 +228,15 @@ class Simulation:
         async with self._lock:
             if self._loop_task and not self._loop_task.done():
                 self._loop_task.cancel()
+
+            # Before anything is mutated. `stats.reset()` below is destructive
+            # and the cat actor cannot save the box score on its own behalf: it
+            # only learns a reset happened on a later poll, when it sees the
+            # tick counter has gone backwards, and by then these counters read
+            # zero. Awaited rather than backgrounded so the copy finishes while
+            # the tick still reads its final value -- the actor wipes its own
+            # runtime files the moment it notices the rewind.
+            await archive_game(self, reason="reset")
 
             self.history.clear()
             self.scheduler.tick = 0

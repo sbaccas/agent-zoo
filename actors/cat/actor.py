@@ -120,6 +120,36 @@ adk_interrogator_runner = Runner(
     session_service=session_service,
 )
 
+
+def summarize_agent(agent: Any) -> Dict[str, Any]:
+    """The settings an agent is actually running with, for the game archive.
+
+    Introspected off the live object rather than restated as a literal, so it
+    cannot drift from the code it describes. A hand-written dict would keep
+    reporting `thinking_budget: 0` for months after someone raised it, and the
+    archive's whole purpose is to tell two runs apart.
+
+    Every lookup is defensive because this is diagnostics: a future ADK version
+    that renames a field should cost a null in a manifest, not a failed
+    startup.
+    """
+    cfg = getattr(agent, "generate_content_config", None)
+    thinking = getattr(cfg, "thinking_config", None)
+    schema = getattr(agent, "output_schema", None)
+    return {
+        "name": getattr(agent, "name", None),
+        "model": getattr(agent, "model", None),
+        "thinking_budget": getattr(thinking, "thinking_budget", None),
+        "include_thoughts": getattr(thinking, "include_thoughts", None),
+        "temperature": getattr(cfg, "temperature", None),
+        "max_output_tokens": getattr(cfg, "max_output_tokens", None),
+        "output_schema": getattr(schema, "__name__", None),
+        "tools": sorted(
+            getattr(t, "__name__", str(t)) for t in (getattr(agent, "tools", None) or [])
+        ),
+    }
+
+
 _llm_lock = asyncio.Lock()
 
 _auth_cache: Dict[str, Any] = {"timestamp": 0.0, "result": None}

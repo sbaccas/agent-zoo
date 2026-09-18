@@ -30,6 +30,12 @@ TRANSCRIPT_PATH = RUNTIME_DIR / "transcript.jsonl"
 COACHING_NOTES_PATH = RUNTIME_DIR / "coaching_notes.md"
 # Full model inputs, one record per Gemini call, for the workbench's inspector.
 PROMPTS_PATH = RUNTIME_DIR / "prompts.jsonl"
+# The model settings in force for this run. Written once at startup and read by
+# nothing at runtime: it exists so that the game archive can say which
+# configuration produced a given box score. Comparing two runs is meaningless
+# without it, because the settings that matter most -- the thinking budget, the
+# model name -- live in Python and leave no trace in the transcript.
+RUN_CONFIG_PATH = RUNTIME_DIR / "run_config.json"
 
 
 def _ensure_runtime_dir() -> None:
@@ -216,6 +222,23 @@ def reset_prompts() -> None:
             PROMPTS_PATH.unlink()
     except Exception as exc:
         logger.warning("Failed to reset prompt log: %s", exc)
+
+
+def write_run_config(config: Dict[str, Any]) -> None:
+    """Records the model settings behind this run, for the game archive.
+
+    Deliberately not cleared by a reset, unlike everything else in here. The
+    other files are scoped to one game; this one describes the process, which
+    outlives any number of games. Wiping it would leave the next archive unable
+    to say what produced it.
+    """
+    try:
+        _ensure_runtime_dir()
+        payload = dict(config)
+        payload["written_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        RUN_CONFIG_PATH.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    except Exception as exc:
+        logger.warning("Failed to write run config: %s", exc)
 
 
 def write_coaching_notes(notes: str, tick_range: Optional[str] = None) -> None:

@@ -5,9 +5,10 @@ from fastapi import FastAPI, Request, Response
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
-from app.api.admin import router as admin_router
+from app.api.admin import router as admin_router, simulations
 from app.api.agents import router as agents_router
 from app.api.ws import router as ws_router
+from app.game.archive import archive_game, env_flag
 
 
 class PollingLogFilter(logging.Filter):
@@ -36,6 +37,19 @@ async def lifespan(app: FastAPI):
     for h in access_logger.handlers:
         h.addFilter(filt)
     yield
+    # A reset is not the only way a game ends. Editing any .py file trips
+    # uvicorn's reloader, which tears down this process and takes the whole
+    # in-memory simulation with it -- including the box score, which exists
+    # nowhere else. Without this hook the runs most worth keeping, the ones
+    # interrupted by a change, would be exactly the ones lost.
+    #
+    # Costs a few seconds on shutdown for a long game, since the prompt log
+    # runs to tens of megabytes. Set CAT_GAME_ARCHIVE_ON_SHUTDOWN=0 to skip it
+    # while iterating rapidly on code that has nothing to do with the cat.
+    if env_flag("CAT_GAME_ARCHIVE_ON_SHUTDOWN", default=True):
+        for sim in list(simulations.values()):
+            await archive_game(sim, reason="shutdown")
+
 
 
 app = FastAPI(

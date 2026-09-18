@@ -46,3 +46,8 @@ htmlcov/
 
 # Cat agent runtime scratch (per-game transcript & coaching notes)
 actors/cat/runtime/
+
+# Archived games, written automatically when a game resets or the server stops.
+# Local evidence for comparing runs, not source. One game costs ~13 MB, almost
+# all of it the compressed prompt log.
+archive/
