@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Cat Agent Workbench (Port 8001)</title>
-  <link rel="stylesheet" href="/static/workbench.css?v=23">
+  <link rel="stylesheet" href="/static/workbench.css?v=24">
 </head>
 <body>
   <div class="workbench-layout">
@@ -393,6 +393,43 @@
 
         </div>
       </section>
+
+      <!-- Box 7: Deliberation Timing — answers "is my model actually playing,
+           or is the heuristic playing for it?". Scoped to a rolling recent
+           window, not the whole run, so it will not match the box score's
+           lifetime Control figures. Populated by workbench.js. -->
+      <section class="wb-card delib-card" id="cardDeliberation">
+        <div class="wb-card-header">
+          <div class="wb-card-title">
+            <span>⏱️ 7. Deliberation Timing</span>
+            <span class="chip" title="These counts cover only the most recent deliberations the agent kept, not the whole run. The box score's Control section is the lifetime figure, so the two will legitimately disagree.">Recent window</span>
+            <span id="delibStateBadge" class="engine-badge" title="Share of recent deliberations that reached the board in time">No samples</span>
+          </div>
+        </div>
+        <div class="wb-card-body">
+
+          <div class="eval-chip-row">
+            <span class="chip delib-chip-hit" title="Deliberations whose action reached the board">Answered: <strong id="delibAnswered">--</strong></span>
+            <span class="chip delib-chip-miss" title="Model blew its time budget; the built-in heuristic played that turn instead">Abandoned: <strong id="delibAbandoned">--</strong></span>
+            <span class="chip delib-chip-miss" title="A newer observation arrived while the model was still thinking; this answer could no longer be used">Superseded: <strong id="delibSuperseded">--</strong></span>
+            <span class="chip delib-chip-miss" title="Deliberations that raised an error or could not be sent">Errors: <strong id="delibErrors">--</strong></span>
+            <span class="chip" title="Mean round trip of the deliberations that were answered. Dash until something has been answered">Avg answered: <strong id="delibAvgMs">--</strong></span>
+            <span class="chip" title="Slowest answered deliberation. Dash until something has been answered">Max answered: <strong id="delibMaxMs">--</strong></span>
+          </div>
+
+          <!-- Recent deliberations, newest first -->
+          <div class="delib-recent-block">
+            <div class="delib-recent-header">
+              <span>🛰️ Latest deliberations — every miss is a turn the heuristic played</span>
+              <span id="delibSamples" class="chip-n-badge" title="Size of the rolling window these counts are drawn from. The agent keeps the most recent deliberations only, so this is not a run total.">0 samples</span>
+            </div>
+            <div id="delibRecentList" class="delib-recent-list delib-recent-empty">
+              No deliberations recorded yet. Connect to the Game Server and advance ticks.
+            </div>
+          </div>
+
+        </div>
+      </section>
     </main>
   </div>
 
@@ -513,6 +550,6 @@
     </div>
   </div>
 
-  <script src="/static/workbench.js?v=23"></script>
+  <script src="/static/workbench.js?v=24"></script>
 </body>
 </html>

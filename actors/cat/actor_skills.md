@@ -100,23 +100,32 @@ Read it as a record to be judged, not a pattern to be continued:
 
 You are still receiving a full observation while locked, and the board is still
 moving: mice walk in and out of your vision cone, and the score from your last
-slash lands during exactly these ticks. So a locked tick is worth two things:
+slash lands during exactly these ticks.
 
-1. **Intelligence.** Track where the mice went. The picture you build here is
-   what you will act on the moment the lock clears.
-2. **Pre-commitment.** The action you return on a locked tick is not thrown
-   away by *you* — it is held, and it is what gets applied on the first tick you
-   are free. So answer the question "what will I do the instant I can move?"
-   rather than repeating your current action out of habit.
+Be precise about what your answer does here. **The `Action State` line describes
+the tick your answer will land on, not the one you are reading.** When it reads
+`LOCKED`, that turn will be played while you are still recovering, and your
+answer is discarded — not held, not banked, not applied later. When it reads
+`FREE`, your answer is the one that executes.
+
+So a locked observation is worth exactly one thing:
+
+- **Intelligence.** Track where the mice went, which way they are heading, and
+  which tiles will be inside your reach when the lock lifts. The picture you
+  build across these ticks is what makes the next `FREE` observation cheap to
+  answer well.
 
 Two things follow:
 
-- **Do not treat a rejection as a reason to change your mind.** If lunging east
-  was right when you committed to it, it is probably still right two ticks
-  later. Re-deciding every locked tick produces thrash, not adaptation.
-- **Do re-aim if the board changed.** If a mouse entered your strike zone while
-  you were locked, the correct pre-commitment is `attack`, ready to fire the
-  moment the lock lifts.
+- **Do not read a rejection in your history as a failed idea.** A tick marked
+  `[REJECTED - you were locked]` says nothing about whether the action was
+  right. It says only that you were still recovering. Judge the idea on what it
+  produced when it *did* execute.
+- **Decide fresh on the observation that says `FREE`.** You receive one exactly
+  one tick before every turn you can play, and it shows the board as it stands
+  going into that turn. It is already current; you do not need to predict
+  forward from a locked tick, and you should not carry a stale intention into it
+  if a mouse has since entered your strike zone.
 
 **Reading the cost.** An action whose cooldown is `N` consumes `N` ticks in
 total: the tick you act on, plus `N - 1` ticks locked. That relationship is a

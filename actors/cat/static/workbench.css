@@ -1591,3 +1591,135 @@ body {
   overflow-y: auto;
   border-top: 1px solid var(--border-color);
 }
+
+/* ============================================================
+   Box 7: Deliberation Timing — did the model reach the board?
+   Misses are tinted, not greyed: a turn the heuristic covered is
+   the finding, not a footnote.
+   ============================================================ */
+
+.delib-card {
+  margin-top: 4px;
+}
+
+.delib-chip-hit strong {
+  color: var(--success-color);
+}
+
+.delib-chip-miss {
+  border-color: #fca5a5;
+  background-color: #fef2f2;
+  color: #b91c1c;
+}
+
+.delib-chip-miss strong {
+  color: var(--danger-color);
+}
+
+.delib-recent-block {
+  margin-top: 16px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  overflow: hidden;
+  background-color: var(--bg-card);
+}
+
+.delib-recent-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 12px;
+  background: linear-gradient(135deg, #f8fafc 0%, #eef2f7 100%);
+  border-bottom: 1px solid var(--border-color);
+  font-size: 0.76rem;
+  font-weight: 700;
+  color: var(--text-secondary);
+}
+
+.delib-recent-list {
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.delib-recent-list.delib-recent-empty {
+  padding: 18px 16px;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+/* One deliberation per row, built as discrete nodes (no innerHTML). */
+.delib-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border-color);
+  font-size: 0.76rem;
+}
+
+.delib-row:last-child {
+  border-bottom: none;
+}
+
+.delib-row-miss {
+  background-color: #fef2f2;
+}
+
+.delib-row-tick {
+  flex-shrink: 0;
+  width: 56px;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.delib-row-elapsed {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  color: var(--text-secondary);
+}
+
+.delib-row-at {
+  flex-shrink: 0;
+  width: 90px;
+  text-align: right;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
+.delib-outcome-badge {
+  flex-shrink: 0;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.delib-outcome-badge.answered {
+  background-color: #dcfce7;
+  color: #15803d;
+  border: 1px solid #86efac;
+}
+
+.delib-outcome-badge.abandoned {
+  background-color: #fee2e2;
+  color: #b91c1c;
+  border: 1px solid #fca5a5;
+}
+
+.delib-outcome-badge.superseded {
+  background-color: #ffedd5;
+  color: #c2410c;
+  border: 1px solid #fdba74;
+}
+
+.delib-outcome-badge.error {
+  background-color: #fae8ff;
+  color: #a21caf;
+  border: 1px solid #f0abfc;
+}

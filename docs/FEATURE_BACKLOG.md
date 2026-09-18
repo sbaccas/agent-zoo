@@ -50,17 +50,35 @@ A living backlog tracking architectural initiatives, gameplay mechanics, and age
   - **Future Roadmap**: Extensible to vector-based Retrieval-Augmented Generation (RAG) and inter-agent memory sharing.
 
 ### `AI-02`: Asynchronous Thinking & Decoupled Clock Deliberation
-- **Status**: ✅ Done (Implemented Sept 12)
+- **Status**: ✅ Done (Implemented Sept 12, superseded Sept 18 — see `AI-02b`)
 - **Target**: Authoritative Game Server & Agent Clients
 - **Description**: Decouple agent deliberation latency from the simulation clock so the authoritative server progresses without stalling for external LLM calls, implementing RuneScape-style target-lock combat and fast spinal reflexes.
 - **Delivered Capabilities**:
   - Authoritative simulation advances on a steady tick cadence without stalling for LLM round-trips.
   - Non-blocking observation dispatch over WebSockets via `send_observation` and `action_buffers`.
-  - Game scheduler implements `request_action_with_budget(budget_sec=0.8)`: defaults to `stay` (hesitation) if budget elapses, preventing game freezes.
+  - Game scheduler implemented `request_action_with_budget(budget_sec=0.8)`: defaulted to `stay` (hesitation) if the budget elapsed, preventing game freezes.
   - Cat Agent System 1/2 Architecture:
     - **System 1 (Fast Reflexes)**: Instantaneous execution of strike-zone pounces, gap-closing lunges, and RuneScape-style target-lock pursuit (`compute_reflex_decision`).
     - **System 2 (Gemini Deliberation)**: Asynchronous background macro-strategic reasoning (`_run_background_deliberation`), dynamically steering target locks and tactical directives.
   - Removed legacy phantom `HP` chip from UI and prompts, keeping data strictly authoritative.
+
+### `AI-02b`: Fully Asynchronous Dispatch / Collect
+- **Status**: ✅ Done (Implemented Sept 18)
+- **Target**: Authoritative Game Server & Agent Clients
+- **Description**: Remove the last place the simulation waited on an agent, and bound how stale an accepted answer may be.
+- **Why `AI-02` needed replacing**:
+  - `request_action_with_budget` still blocked the tick for up to `budget_sec` *per agent, serially*, so the real tick period was the configured one plus every agent's latency, and N agents divided one window instead of sharing it.
+  - Its `stay` default is a legal action and therefore truthy, so the heuristic fallback sitting underneath it was unreachable: a WebSocket cat that missed its window stood still rather than being covered.
+  - The action buffer was unstamped, so staleness was unbounded. A reply computed several ticks earlier executed exactly like a fresh one.
+- **Delivered Capabilities**:
+  - Observations are dispatched once per tick, after the board is final, to every connected agent at once (`Scheduler._dispatch_observations`). Nothing is awaited on an agent's behalf.
+  - Answers are taken at the start of the following tick (`WsAgentManager.collect_action`) and validated against `last_dispatched_tick`. A mismatched answer is discarded as stale.
+  - A missed or stale answer hands the turn to the species heuristic.
+  - The deliberation budget travels to the agent as a *duration* (`budget_sec`), derived from `tick_rate` so the promise cannot drift from the enforced interval.
+  - The agent deliberates in a cancellable task rather than inline, so a slow answer no longer blocks its own receive loop and push it further behind each tick. A newer observation supersedes an older deliberation.
+  - Late and failed deliberations are abandoned silently rather than answered with `stay`; the heuristic plays those turns instead.
+  - Box score reports `decisions_by_model`, `decisions_by_fallback`, `decisions_stale` and `model_control_pct`, so the heuristic's strong play cannot be misread as the model's.
+  - Agent status reports deliberation latency and outcome counts, including abandoned attempts.
 
 ### `AI-03`: Agent-to-Agent (A2A) Coordination & Communication
 - **Status**: 💡 Future Discovery

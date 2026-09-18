@@ -8,7 +8,7 @@ from actors.mouse.heuristic import act as mouse_agent_act, Observation as MouseO
 from app.game.actions import ActionHandler
 from app.game.entities import EntityManager
 from app.game.world import World
-from app.game.ws_manager import ws_agent_manager
+from app.game.ws_manager import ws_agent_manager, COLLECT_STALE
 from app.models.action import ActionType
 from app.models.entity import Direction, Entity, EntityType, Position
 from app.models.simulation import GameEvent
@@ -34,6 +34,11 @@ class Scheduler:
         # the loop owns only the ones it alone can see, namely locked ticks and
         # capture credit.
         self.stats = stats
+        # How long an agent has to answer an observation, in seconds. Owned by
+        # Simulation because it is derived from tick_rate, which is live-tunable.
+        # None means "unknown": the budget is then omitted from the wire rather
+        # than guessed at, since a wrong figure is worse than no figure.
+        self.tick_budget_sec: Optional[float] = None
 
     def get_scoreboard(self) -> Dict[str, int]:
         """Cumulative captures for every cat on the board, including those on zero.
@@ -274,12 +279,10 @@ class Scheduler:
                 cat.action_cooldown -= 1
                 if cat.action_cooldown == 0:
                     cat.locked_action = None
-                if has_ws and mode != "manual":
-                    # can_act=False: this tick is being skipped. The decrement
-                    # above may already have reached 0, so the counter alone
-                    # would advertise this tick as playable.
-                    obs = self._build_observation_payload(cat, can_act=False)
-                    await ws_agent_manager.send_observation(cat.id, obs)
+                # No observation is dispatched here any more. Every connected
+                # agent, locked or free, is served by the dispatch phase at the
+                # end of the step, which sees the final board rather than a
+                # half-resolved one.
                 continue
 
             if mode == "manual":
@@ -288,16 +291,26 @@ class Scheduler:
 
             action_val = None
             if has_ws:
-                obs = self._build_observation_payload(cat)
-                action_data = await ws_agent_manager.request_action_with_budget(cat.id, obs, budget_sec=0.8)
-                if action_data:
+                collected = ws_agent_manager.collect_action(cat.id)
+                if self.stats is not None:
+                    self.stats.record_decision_source(
+                        cat,
+                        collected.status,
+                        engine=(collected.action or {}).get("engine"),
+                    )
+                if collected.action:
+                    action_data = collected.action
                     action_val = action_data.get("action")
                     thought = action_data.get("thought", "")
                     strategy = action_data.get("strategy", "")
                     print(f"🤖 [WS AGENT {cat.id} @ Tick {self.tick}] -> {action_val} | Strategy: {strategy} | Thought: \"{thought}\"", flush=True)
+                elif collected.status == COLLECT_STALE:
+                    print(f"🗑️ [WS AGENT {cat.id} @ Tick {self.tick}] Discarded answer to tick {collected.answered_tick} (board is at {collected.expected_tick}) -> heuristic", flush=True)
                 else:
-                    action_val = ActionType.STAY.value
-                    print(f"⏳ [WS AGENT {cat.id} @ Tick {self.tick}] Deliberating in background (hesitating/stay in place)", flush=True)
+                    print(f"⏳ [WS AGENT {cat.id} @ Tick {self.tick}] Missed the window -> heuristic", flush=True)
+                # Deliberately no 'stay' default. A missed deadline hands the turn
+                # to the heuristic below; defaulting to stay here is what used to
+                # make that fallback unreachable, because 'stay' is truthy.
             elif mode == "http":
                 agent_url = self.entity_manager.get_agent_url(cat.id)
                 err_count = self.consecutive_http_errors.get(cat.id, 0)
@@ -356,9 +369,7 @@ class Scheduler:
                 mouse.action_cooldown -= 1
                 if mouse.action_cooldown == 0:
                     mouse.locked_action = None
-                if has_ws and mode != "manual":
-                    obs = self._build_observation_payload(mouse, can_act=False)
-                    await ws_agent_manager.send_observation(mouse.id, obs)
+                # Observation dispatch happens once, at the end of the step.
                 continue
 
             if mode == "manual":
@@ -367,15 +378,22 @@ class Scheduler:
 
             action_val = None
             if has_ws:
-                obs = self._build_observation_payload(mouse)
-                action_data = await ws_agent_manager.request_action_with_budget(mouse.id, obs, budget_sec=0.8)
-                if action_data:
+                collected = ws_agent_manager.collect_action(mouse.id)
+                if self.stats is not None:
+                    self.stats.record_decision_source(
+                        mouse,
+                        collected.status,
+                        engine=(collected.action or {}).get("engine"),
+                    )
+                if collected.action:
+                    action_data = collected.action
                     action_val = action_data.get("action")
                     thought = action_data.get("thought", "")
                     print(f"🤖 [WS AGENT {mouse.id} @ Tick {self.tick}] -> {action_val} | Thought: \"{thought}\"", flush=True)
+                elif collected.status == COLLECT_STALE:
+                    print(f"🗑️ [WS AGENT {mouse.id} @ Tick {self.tick}] Discarded answer to tick {collected.answered_tick} (board is at {collected.expected_tick}) -> heuristic", flush=True)
                 else:
-                    action_val = ActionType.STAY.value
-                    print(f"⏳ [WS AGENT {mouse.id} @ Tick {self.tick}] Deliberating (stay in place)", flush=True)
+                    print(f"⏳ [WS AGENT {mouse.id} @ Tick {self.tick}] Missed the window -> heuristic", flush=True)
             elif mode == "http":
                 agent_url = self.entity_manager.get_agent_url(mouse.id)
                 err_count = self.consecutive_http_errors.get(mouse.id, 0)
@@ -433,4 +451,35 @@ class Scheduler:
         # survivable by passing through between phases.
         self._resolve_hazard_zones()
 
+        # 4. Dispatch. Every connected agent is handed the finished board and
+        # then left alone until the next step collects whatever it managed to
+        # produce. Nothing here is awaited on the agent's behalf, so N agents
+        # share one window rather than dividing it, and a slow agent costs the
+        # simulation nothing.
+        await self._dispatch_observations(skip_entity_id=skip_entity_id)
+
         return self.tick
+
+    async def _dispatch_observations(self, skip_entity_id: Optional[str] = None) -> None:
+        """Sends each connected agent the observation it will answer next tick.
+
+        `can_act` describes the *next* tick, not this one, because that is the
+        tick the agent's reply will execute on. A cooldown of zero here means the
+        next turn is playable; any positive value means it will be skipped. The
+        previous arrangement reported the current tick's playability to an agent
+        whose answer could only ever land on the following one, so the first line
+        of the prompt described a tick the cat was not deciding for.
+        """
+        for entity in self.entity_manager.get_alive_entities():
+            if entity.id == skip_entity_id:
+                continue
+            if not ws_agent_manager.has_agent(entity.id):
+                continue
+            if self.entity_manager.get_agent_mode(entity.id) == "manual":
+                continue
+            obs = self._build_observation_payload(
+                entity, can_act=(entity.action_cooldown == 0)
+            )
+            await ws_agent_manager.send_observation(
+                entity.id, obs, budget_sec=self.tick_budget_sec
+            )

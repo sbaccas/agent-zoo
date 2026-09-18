@@ -33,6 +33,11 @@ _STEP_ACTIONS = {
 }
 
 
+# The engine name the cat agent reports when a completed Gemini deliberation
+# supplied the action. Anything else it reports is one of its own fast paths.
+MODEL_ENGINE = "adk_gemini"
+
+
 class CatStats:
     """Counters for a single cat.
 
@@ -73,6 +78,23 @@ class CatStats:
         self.ticks_locked = 0
         self.prey_in_sight_ticks = 0
 
+        # Who actually decided. Three distinct players can supply a cat's action
+        # and only one of them is the language model:
+        #   - the model, via a completed background deliberation;
+        #   - the agent's own System-1 reflex, when no deliberation was ready;
+        #   - the server-side heuristic, when the agent said nothing usable.
+        # The latter two are strong players. The reflex pounces on anything in
+        # the strike zone and the heuristic only ever swings on a guaranteed
+        # kill, so a model that rarely speaks inherits their accuracy and reads
+        # as if it had improved.
+        self.decisions_by_model = 0
+        self.decisions_by_agent_reflex = 0
+        self.decisions_by_fallback = 0
+        # Of the fallbacks, how many were an answer that arrived describing a
+        # board that had already moved on. Separated from plain silence because
+        # the two call for different fixes: a longer budget versus a faster agent.
+        self.decisions_stale = 0
+
         # zone_id -> kills credited to that slash. Not a reported statistic; it
         # exists so a slash whose blade kills on the tick *after* it lands is
         # not filed as a whiff.
@@ -90,6 +112,8 @@ class CatStats:
         "kills", "slash_attempts", "landed_slashes", "multi_kills",
         "zone_chances", "zone_attempts", "tiles_run", "moves", "lunges",
         "wall_bonks", "ticks_free", "ticks_locked", "prey_in_sight_ticks",
+        "decisions_by_model", "decisions_by_agent_reflex",
+        "decisions_by_fallback", "decisions_stale",
     )
 
     def snapshot(self) -> Dict[str, Any]:
@@ -133,6 +157,45 @@ class StatsTracker:
         if entity.type != EntityType.CAT:
             return
         self.get(entity.id).ticks_locked += 1
+
+    def record_decision_source(
+        self, entity: Entity, status: str, engine: Optional[str] = None
+    ) -> None:
+        """Files who supplied this tick's action, to three levels of precision.
+
+        Called only for entities that have an agent attached, so the denominator
+        is "ticks where a model could have answered" rather than "ticks". A cat
+        with no agent has no opinion to miss, and padding its row with fallbacks
+        would read as a model failing when there was never a model.
+
+        `engine` matters because an answer arriving on time does not mean the
+        language model produced it. The cat agent runs a two-system design: it
+        serves a completed background deliberation when one is ready and
+        otherwise answers from its own fast reflex, and both reach the server
+        within milliseconds. Counting arrivals alone would credit the model for
+        every tick its reflex covered, which is the same mistake in a different
+        place as crediting it for the server-side heuristic.
+        """
+        if entity.type != EntityType.CAT:
+            return
+        # Imported rather than spelled out: a rename on the transport side would
+        # otherwise quietly file every model decision as a fallback.
+        from app.game.ws_manager import COLLECT_FRESH, COLLECT_STALE
+
+        stats = self.get(entity.id)
+        if status == COLLECT_FRESH:
+            # An agent that declares no engine is taken at its word as a model
+            # answer; only a self-declared reflex is filed as one. Guessing the
+            # other way would mute every third-party agent that does not know
+            # about this field.
+            if engine is not None and engine != MODEL_ENGINE:
+                stats.decisions_by_agent_reflex += 1
+            else:
+                stats.decisions_by_model += 1
+            return
+        stats.decisions_by_fallback += 1
+        if status == COLLECT_STALE:
+            stats.decisions_stale += 1
 
     def record_action(
         self,
@@ -249,6 +312,11 @@ class StatsTracker:
             unique_tiles = len(s.visited_order)
             traversals = s.moves + s.lunges
             total_ticks = s.ticks_free + s.ticks_locked
+            decisions_total = (
+                s.decisions_by_model
+                + s.decisions_by_agent_reflex
+                + s.decisions_by_fallback
+            )
 
             rows.append({
                 "id": cat.id,
@@ -287,6 +355,14 @@ class StatsTracker:
                 "ticks_locked": s.ticks_locked,
                 "locked_pct": _rate(s.ticks_locked, total_ticks),
                 "prey_in_sight_pct": _rate(s.prey_in_sight_ticks, s.ticks_free),
+
+                # Decision provenance. Null for a cat with no agent attached:
+                # there was no model to answer, so there is no share to report.
+                "decisions_by_model": s.decisions_by_model,
+                "decisions_by_agent_reflex": s.decisions_by_agent_reflex,
+                "decisions_by_fallback": s.decisions_by_fallback,
+                "decisions_stale": s.decisions_stale,
+                "model_control_pct": _rate(s.decisions_by_model, decisions_total),
             })
         return rows
 

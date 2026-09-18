@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import time
 import uuid
 from typing import Optional
 from app.game.actions import ActionHandler
@@ -60,6 +61,9 @@ class Simulation:
         self.stats = StatsTracker(self.world)
         self.action_handler = ActionHandler(self.world, self.entity_manager, stats=self.stats)
         self.scheduler = Scheduler(self.world, self.entity_manager, self.action_handler, stats=self.stats)
+        # Seeded here as well as in the run loop so the single-step and paused
+        # paths advertise a window rather than sending none.
+        self._sync_tick_budget()
 
         self.status = SimulationStatus.CREATED
         self._loop_task: Optional[asyncio.Task] = None
@@ -149,13 +153,29 @@ class Simulation:
             "cats": cats,
         }
 
+    def _sync_tick_budget(self) -> None:
+        """Tells the scheduler how long agents have between ticks.
+
+        Derived rather than configured separately, so the promise made to the
+        agent cannot drift away from the interval actually enforced.
+        """
+        self.scheduler.tick_budget_sec = 1.0 / max(0.1, self.config.tick_rate)
+
     async def _run_loop(self):
         try:
             while self.status == SimulationStatus.RUNNING:
+                period = 1.0 / max(0.1, self.config.tick_rate)
+                self._sync_tick_budget()
+                started = time.monotonic()
                 self._save_snapshot()
                 await self.scheduler.execute_simulation_step()
-                sleep_sec = 1.0 / max(0.1, self.config.tick_rate)
-                await asyncio.sleep(sleep_sec)
+                # Sleep the remainder, not the whole period. The step itself used
+                # to block for up to the agent budget, so the real interval was
+                # the configured one plus however long every agent took in turn,
+                # and an agent promised a window of 1/tick_rate was quietly given
+                # more. Now the step is cheap and the interval is what it says.
+                elapsed = time.monotonic() - started
+                await asyncio.sleep(max(0.0, period - elapsed))
         except asyncio.CancelledError:
             pass
         except Exception as e:
@@ -264,6 +284,9 @@ class Simulation:
 
     def set_tick_rate(self, tick_rate: float) -> float:
         self.config.tick_rate = max(0.1, min(100.0, tick_rate))
+        # The budget travels to the agent on the next dispatch; without this a
+        # speed change would leave agents working to the old window.
+        self._sync_tick_budget()
         return self.config.tick_rate
 
     def modify_population(self, species: str, delta: int) -> int:

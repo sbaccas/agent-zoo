@@ -54,10 +54,36 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   /**
+   * Decides whether a cat is even a candidate for a row's leader highlight.
+   *
+   * A cat with no agent attached never had a model to miss with, so its empty
+   * decision counters are not an achievement. Without this, a heuristic-only
+   * cat sitting at 0 fallbacks would outrank an LLM cat's 5 and the Control
+   * section would decorate the exact opposite of what it measures -- the
+   * agentless cat did not win that contest, it never entered it.
+   *
+   * `model_control_pct` is the marker because the server emits it as null
+   * precisely when the decision denominator is empty (see _rate in
+   * app/game/stats.py). Testing `decisions_* === 0` instead would lock out a
+   * genuine agent that has simply never missed a tick, which is the one cat
+   * that most deserves to win the row.
+   */
+  function hasAttachedAgent(cat) {
+    return isNum(cat.model_control_pct);
+  }
+
+  /**
    * KPI row definitions grouped into box-score sections.
    * `dir` encodes which direction wins the row highlight:
-   *   'high' = higher value is better, 'low' = lower value is better.
-   * NOTE: only Whiffs, Declined, Wall bonks, Locked and Revisit ratio are 'low'.
+   *   'high' = higher value is better, 'low' = lower value is better,
+   *   'none' = raw context with no better direction, so nothing is highlighted.
+   * NOTE: the 'low' rows are Tiles per kill, Whiffs, Declined, Wall bonks,
+   * Locked, Ticks per tile, Fallback decisions and Stale answers.
+   *
+   * `eligible` is an optional per-row opt-in: a predicate on a cat that gates
+   * whether that cat may win or be highlighted for the row. Rows without one
+   * put every cat in contention, which is the behaviour of every section other
+   * than Control.
    *
    * Tooltip formulas are kept verbatim in step with app/game/stats.py so the
    * team shares one unambiguous definition per KPI.
@@ -107,6 +133,18 @@ document.addEventListener('DOMContentLoaded', () => {
         { label: 'Prey in sight', key: 'prey_in_sight_pct', dir: 'high', format: (v) => fmtPct(v), tip: 'ticks with a mouse in the vision cone / ticks free (locked ticks excluded, since visibility is only sampled when the cat acts)' },
         { label: 'Locked', key: 'locked_pct', dir: 'low', format: (v) => fmtPct(v), tip: 'ticks locked in attack/lunge recovery / (ticks free + ticks locked)' },
         { label: 'Ticks per tile', key: 'ticks_per_tile', dir: 'low', format: (v) => fmtFloat(v, 2), tip: '(ticks free + ticks locked) / unique tiles — how long the cat loiters per tile it occupies. Higher means camping' },
+      ],
+    },
+    {
+      title: 'Control',
+      // Every row here is gated on the cat having had an agent at all: these
+      // counters only move for a cat a model was attached to, so an agentless
+      // cat's zeroes are an absence of data rather than a good score.
+      rows: [
+        { label: 'Model control', key: 'model_control_pct', dir: 'high', eligible: hasAttachedAgent, format: (v) => fmtPct(v), tip: 'decisions by model / (decisions by model + fallbacks) — dash means no agent was ever attached to this cat, which is not the same as 0%' },
+        { label: 'Decisions by model', key: 'decisions_by_model', dir: 'high', eligible: hasAttachedAgent, format: (v) => fmtInt(v), tip: 'ticks where the attached agent answered in time and its action was played' },
+        { label: 'Fallback decisions', key: 'decisions_by_fallback', dir: 'low', eligible: hasAttachedAgent, format: (v) => fmtInt(v), tip: 'ticks where no usable answer arrived and the built-in heuristic played instead' },
+        { label: 'Stale answers', key: 'decisions_stale', dir: 'low', eligible: hasAttachedAgent, format: (v) => fmtInt(v), tip: 'of the fallbacks, answers that did arrive but described a tick the board had already moved past' },
       ],
     },
   ];
@@ -160,7 +198,13 @@ document.addEventListener('DOMContentLoaded', () => {
     // they are context for Lunge share rather than a contest. Without this a
     // higher count would be decorated as if it were an achievement.
     if (row.dir !== 'low' && row.dir !== 'high') return null;
-    const values = cats.map((cat) => cat[row.key]).filter(isNum);
+    // Rows may exclude cats that were never in the running -- see `eligible`
+    // on the row definitions.
+    const contenders = row.eligible ? cats.filter(row.eligible) : cats;
+    // One contender is not a contest. Naming it "best in row" would restate the
+    // same false comparison the filter just removed, in a one-LLM-cat game.
+    if (contenders.length < 2) return null;
+    const values = contenders.map((cat) => cat[row.key]).filter(isNum);
     if (values.length === 0) return null;
     const distinct = new Set(values);
     if (distinct.size < 2) return null; // single cat or a tie: highlight nothing
@@ -338,7 +382,12 @@ document.addEventListener('DOMContentLoaded', () => {
           td.className = 'boxscore-stat-value';
           const raw = cat[row.key];
           td.textContent = row.format(raw);
-          if (best !== null && isNum(raw) && raw === best) {
+          // The eligibility check is repeated here on purpose: an excluded cat
+          // can still happen to hold the winning number (an agentless cat's 0
+          // fallbacks ties an LLM cat that has never missed), and matching on
+          // value alone would decorate it anyway.
+          const eligible = !row.eligible || row.eligible(cat);
+          if (best !== null && eligible && isNum(raw) && raw === best) {
             td.classList.add('stat-leader');
             td.title = row.dir === 'low' ? 'Best in row (lower is better)' : 'Best in row (higher is better)';
           }

@@ -6,6 +6,7 @@ import logging
 import os
 from pathlib import Path
 import sys
+import time
 from typing import Any, Dict, List, Optional
 import uvicorn
 import websockets
@@ -582,8 +583,20 @@ class WsClientManager:
         self._ws = None
         self._task: Optional[asyncio.Task] = None
         self._stop_event = asyncio.Event()
+        # The deliberation currently in flight. Exactly one at a time: a new
+        # observation supersedes whatever is still thinking, because that older
+        # answer can no longer be accepted by the server anyway.
+        self._deliberation: Optional[asyncio.Task] = None
+        # Rolling record of how long deliberations took and how they ended.
+        # Abandoned attempts are kept: a run where the model is consistently a
+        # little over the budget looks identical to one where it is wildly over,
+        # unless the overruns themselves are recorded.
+        self.deliberation_log: List[Dict[str, Any]] = []
+        self.max_deliberation_log: int = 200
 
     def get_status(self) -> Dict[str, Any]:
+        recent = self.deliberation_log[-50:]
+        answered = [d for d in recent if d["outcome"] == "answered"]
         return {
             "connected": self.connected,
             "connecting": self.connecting,
@@ -592,6 +605,21 @@ class WsClientManager:
             "requested_cat_id": self.requested_cat_id,
             "last_error": self.last_error,
             "auto_reconnect": self.auto_reconnect,
+            # Deliberation timing over the recent window. `answered` is the only
+            # outcome that reached the board; the rest are the cost of being slow.
+            "deliberation": {
+                "samples": len(recent),
+                "answered": len(answered),
+                "abandoned": len([d for d in recent if d["outcome"] == "abandoned"]),
+                "superseded": len([d for d in recent if d["outcome"] == "superseded"]),
+                "errors": len([d for d in recent if d["outcome"] in ("error", "send_failed")]),
+                "avg_answered_ms": (
+                    int(sum(d["elapsed_ms"] for d in answered) / len(answered))
+                    if answered else None
+                ),
+                "max_answered_ms": max((d["elapsed_ms"] for d in answered), default=None),
+                "recent": recent[-10:],
+            },
         }
 
     async def connect(self, server_url: Optional[str] = None, cat_id: Optional[str] = None):
@@ -637,6 +665,8 @@ class WsClientManager:
     async def disconnect(self):
         self.auto_reconnect = False
         self._stop_event.set()
+        # Nothing in flight can be delivered over a socket that is closing.
+        self._supersede_deliberation("disconnecting")
         if self._ws:
             try:
                 await self._ws.close()
@@ -647,6 +677,100 @@ class WsClientManager:
             self._task.cancel()
         self.connected = False
         self.connecting = False
+
+    def _record_deliberation(self, tick: Any, elapsed_ms: int, outcome: str) -> None:
+        """Logs how long one deliberation took and how it ended.
+
+        Kept on the agent rather than the game server: the server knows only
+        whether an answer showed up in time, which cannot distinguish a model
+        that was a fraction late from one that never had a chance.
+        """
+        self.deliberation_log.append({
+            "tick": tick,
+            "elapsed_ms": elapsed_ms,
+            "outcome": outcome,
+            "at": datetime.now(timezone.utc).isoformat(),
+        })
+        if len(self.deliberation_log) > self.max_deliberation_log:
+            del self.deliberation_log[:-self.max_deliberation_log]
+
+    def _supersede_deliberation(self, reason: str) -> None:
+        """Cancels any in-flight deliberation. Its answer could not be used now."""
+        task = self._deliberation
+        if task and not task.done():
+            task.cancel()
+        self._deliberation = None
+
+    async def _deliberate_and_reply(
+        self,
+        ws,
+        obs_dict: Dict[str, Any],
+        budget_sec: Optional[float],
+    ) -> None:
+        """Thinks about one observation and answers, or gives up quietly.
+
+        A late answer is never sent. The server would discard it anyway (it
+        carries a tick the board has moved past), and the turn it was meant for
+        has already been played by the heuristic. Sending it would only risk it
+        being mistaken for a fresh answer by a future, laxer server.
+
+        An error is treated the same way, deliberately. The previous behaviour
+        was to send `stay` on failure, which is a real decision and a poor one;
+        staying silent hands the turn to the heuristic instead, which plays it
+        considerably better.
+        """
+        started = time.monotonic()
+        tick = obs_dict.get("tick")
+
+        def elapsed_ms() -> int:
+            return int((time.monotonic() - started) * 1000)
+
+        try:
+            obs_obj = Observation(**obs_dict)
+            coro = act_async(obs_obj, decoupled=True)
+            if budget_sec and budget_sec > 0:
+                action_resp = await asyncio.wait_for(coro, timeout=budget_sec)
+            else:
+                action_resp = await coro
+        except asyncio.TimeoutError:
+            self._record_deliberation(tick, elapsed_ms(), "abandoned")
+            print(
+                f"⏱️ [WS CLIENT] Abandoned tick {tick} after {elapsed_ms()}ms "
+                f"(budget {budget_sec}s) - heuristic will cover",
+                flush=True,
+            )
+            return
+        except asyncio.CancelledError:
+            self._record_deliberation(tick, elapsed_ms(), "superseded")
+            raise
+        except Exception as err:
+            self._record_deliberation(tick, elapsed_ms(), "error")
+            print(f"⚠️ [WS CLIENT] Error computing action for tick {tick}: {err}", flush=True)
+            return
+
+        meta = state.latest_autonomous.get("meta", {}) if state.latest_autonomous else {}
+        try:
+            await ws.send(json.dumps({
+                "type": "action",
+                "tick": obs_obj.tick,
+                "action": action_resp.action,
+                "thought": action_resp.thought,
+                "strategy": meta.get("strategy", "ROAMING"),
+                "target_mouse_id": meta.get("target_mouse_id", ""),
+                # Which system actually chose this. `act_async(decoupled=True)`
+                # never waits for Gemini: it serves a completed deliberation if
+                # one is ready and otherwise answers from the System-1 reflex.
+                # Both arrive at the server equally promptly, so arrival time
+                # cannot distinguish them and the server would credit the model
+                # for every tick the reflex played.
+                "engine": meta.get("engine"),
+            }))
+        except Exception as err:
+            self._record_deliberation(tick, elapsed_ms(), "send_failed")
+            print(f"⚠️ [WS CLIENT] Could not deliver action for tick {tick}: {err}", flush=True)
+            return
+
+        self._record_deliberation(tick, elapsed_ms(), "answered")
 
     async def _worker_loop(self):
         while self.auto_reconnect and not self._stop_event.is_set():
@@ -690,28 +814,19 @@ class WsClientManager:
                                     pass
 
                         elif mtype == "observation":
-                            obs_dict = data.get("payload", {})
-                            try:
-                                obs_obj = Observation(**obs_dict)
-                                action_resp = await act_async(obs_obj, decoupled=True)
-                                meta = state.latest_autonomous.get("meta", {}) if state.latest_autonomous else {}
-                                resp_msg = {
-                                    "type": "action",
-                                    "tick": obs_obj.tick,
-                                    "action": action_resp.action,
-                                    "thought": action_resp.thought,
-                                    "strategy": meta.get("strategy", "ROAMING"),
-                                    "target_mouse_id": meta.get("target_mouse_id", ""),
-                                }
-                                await ws.send(json.dumps(resp_msg))
-                            except Exception as err:
-                                print(f"⚠️ [WS CLIENT] Error computing action: {err}", flush=True)
-                                await ws.send(json.dumps({
-                                    "type": "action",
-                                    "tick": data.get("tick", 0),
-                                    "action": "stay",
-                                    "thought": "Fallback stay action",
-                                }))
+                            # Spawned, not awaited. Awaiting here blocked the
+                            # receive loop for the whole deliberation, so a slow
+                            # answer pushed the next observation back behind it
+                            # and the actor drifted further from the live board
+                            # with every tick it was late.
+                            self._supersede_deliberation("newer observation arrived")
+                            self._deliberation = asyncio.create_task(
+                                self._deliberate_and_reply(
+                                    ws,
+                                    data.get("payload", {}),
+                                    data.get("budget_sec"),
+                                )
+                            )
 
             except asyncio.CancelledError:
                 break

@@ -1152,6 +1152,168 @@
     }
   }
 
+  // DOM Elements - Box 7: Deliberation Timing
+  const delibStateBadge = document.getElementById('delibStateBadge');
+  const delibAnswered = document.getElementById('delibAnswered');
+  const delibAbandoned = document.getElementById('delibAbandoned');
+  const delibSuperseded = document.getElementById('delibSuperseded');
+  const delibErrors = document.getElementById('delibErrors');
+  const delibAvgMs = document.getElementById('delibAvgMs');
+  const delibMaxMs = document.getElementById('delibMaxMs');
+  const delibSamples = document.getElementById('delibSamples');
+  const delibRecentList = document.getElementById('delibRecentList');
+
+  // Signature of the recent window currently on screen, so an unchanged poll
+  // does not rebuild the list. Mirrors how the evaluator notes are handled.
+  let lastDelibSignature = '';
+
+  // How each recorded outcome is presented. Only 'answered' reached the board;
+  // every other outcome is a tick the built-in heuristic played instead, so they
+  // are all styled as misses rather than as neutral bookkeeping.
+  // `cls` -> modifier for `.delib-outcome-badge`
+  function describeOutcome(outcome) {
+    switch (outcome) {
+      case 'answered':
+        return { label: '\u2713 ANSWERED', cls: 'answered', miss: false,
+                 title: 'The model answered in time and its action was played' };
+      case 'abandoned':
+        return { label: '\u2715 ABANDONED', cls: 'abandoned', miss: true,
+                 title: 'The model blew its time budget; the heuristic played this turn' };
+      case 'superseded':
+        return { label: '\u2715 SUPERSEDED', cls: 'superseded', miss: true,
+                 title: 'A newer observation arrived while the model was still thinking, '
+                   + 'so this answer could no longer be used; the heuristic played this turn' };
+      case 'error':
+        return { label: '\u2715 ERROR', cls: 'error', miss: true,
+                 title: 'The deliberation raised an error; the heuristic played this turn' };
+      case 'send_failed':
+        return { label: '\u2715 SEND FAILED', cls: 'error', miss: true,
+                 title: 'The answer was produced but could not be sent; the heuristic played this turn' };
+      default:
+        return { label: outcome ? String(outcome).toUpperCase() : 'UNKNOWN', cls: 'error', miss: true,
+                 title: 'Unrecognised deliberation outcome' };
+    }
+  }
+
+  // Latency is null until something has actually been answered. A zero there
+  // would read as an instant model rather than as an absent one.
+  function fmtMs(val) {
+    if (typeof val !== 'number' || isNaN(val)) return '--';
+    return `${Math.round(val)} ms`;
+  }
+
+  function fmtClockTime(iso) {
+    if (!iso) return '--';
+    const when = new Date(iso);
+    if (isNaN(when.getTime())) return '--';
+    return when.toLocaleTimeString();
+  }
+
+  // Render Box 7: Deliberation Timing (Zero innerHTML)
+  function renderDeliberation(delib) {
+    if (!delibRecentList) return;
+
+    const d = delib || {};
+    const samples = typeof d.samples === 'number' ? d.samples : 0;
+    const answered = typeof d.answered === 'number' ? d.answered : 0;
+    const abandoned = typeof d.abandoned === 'number' ? d.abandoned : 0;
+    const superseded = typeof d.superseded === 'number' ? d.superseded : 0;
+    const errors = typeof d.errors === 'number' ? d.errors : 0;
+
+    if (delibAnswered) delibAnswered.textContent = String(answered);
+    if (delibAbandoned) delibAbandoned.textContent = String(abandoned);
+    if (delibSuperseded) delibSuperseded.textContent = String(superseded);
+    if (delibErrors) delibErrors.textContent = String(errors);
+    if (delibAvgMs) delibAvgMs.textContent = fmtMs(d.avg_answered_ms);
+    if (delibMaxMs) delibMaxMs.textContent = fmtMs(d.max_answered_ms);
+    if (delibSamples) {
+      delibSamples.textContent = `${samples} sample${samples === 1 ? '' : 's'}`;
+    }
+
+    // Headline: what share of the window the model actually drove. Stated as a
+    // miss count as well, because "80% answered" and "1 in 5 turns played by the
+    // heuristic" are the same fact and only the second one reads as a problem.
+    if (delibStateBadge) {
+      if (samples === 0) {
+        delibStateBadge.className = 'engine-badge';
+        delibStateBadge.textContent = 'No samples';
+        delibStateBadge.title = 'No deliberations recorded in the recent window yet';
+      } else {
+        const misses = samples - answered;
+        const pct = Math.round((answered / samples) * 100);
+        delibStateBadge.textContent = `${pct}% reached the board`;
+        delibStateBadge.title = misses === 0
+          ? `All ${samples} recent deliberations were played`
+          : `${misses} of ${samples} recent deliberations missed; the heuristic played those turns`;
+        if (misses === 0) {
+          delibStateBadge.className = 'engine-badge adk';
+        } else if (pct >= 50) {
+          delibStateBadge.className = 'engine-badge fallback';
+        } else {
+          delibStateBadge.className = 'engine-badge error';
+        }
+      }
+    }
+
+    const recent = Array.isArray(d.recent) ? d.recent : [];
+    if (recent.length === 0) {
+      if (lastDelibSignature !== '') {
+        lastDelibSignature = '';
+        delibRecentList.classList.add('delib-recent-empty');
+        delibRecentList.textContent =
+          'No deliberations recorded yet. Connect to the Game Server and advance ticks.';
+      }
+      return;
+    }
+
+    // Only rebuild when the window actually changed, so the 500ms poll cannot
+    // wipe a scroll position or a text selection out from under the user.
+    const signature = recent
+      .map((e) => (e ? `${e.tick}|${e.outcome}|${e.elapsed_ms}|${e.at}` : '-'))
+      .join('\n');
+    if (signature === lastDelibSignature) return;
+    lastDelibSignature = signature;
+
+    delibRecentList.classList.remove('delib-recent-empty');
+
+    // Newest first, to match the trajectory history table.
+    const rows = [];
+    for (let i = recent.length - 1; i >= 0; i--) {
+      const entry = recent[i] || {};
+      const desc = describeOutcome(entry.outcome);
+
+      const row = document.createElement('div');
+      row.className = desc.miss ? 'delib-row delib-row-miss' : 'delib-row';
+      row.title = desc.title;
+
+      const tick = document.createElement('span');
+      tick.className = 'delib-row-tick';
+      tick.textContent = (entry.tick === undefined || entry.tick === null)
+        ? '#--'
+        : `#${entry.tick}`;
+      row.appendChild(tick);
+
+      const badge = document.createElement('span');
+      badge.className = `delib-outcome-badge ${desc.cls}`;
+      badge.textContent = desc.label;
+      row.appendChild(badge);
+
+      const elapsed = document.createElement('span');
+      elapsed.className = 'delib-row-elapsed';
+      elapsed.textContent = fmtMs(entry.elapsed_ms);
+      row.appendChild(elapsed);
+
+      const at = document.createElement('span');
+      at.className = 'delib-row-at';
+      at.textContent = fmtClockTime(entry.at);
+      row.appendChild(at);
+
+      rows.push(row);
+    }
+
+    delibRecentList.replaceChildren(...rows);
+  }
+
   function renderLiveState(state) {
     cachedState = state;
 
@@ -1168,6 +1330,9 @@
     const conn = state.server_connection || {};
     const isWsConnected = Boolean(state.server_connected || conn.connected);
     const isConnecting = Boolean(conn.connecting);
+
+    // Deliberation timing rides along on the connection status payload.
+    renderDeliberation(conn.deliberation);
 
     if (isWsConnected) {
       statusBadge.className = 'wb-status-badge online';
