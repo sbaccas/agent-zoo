@@ -6,6 +6,7 @@ from typing import Optional
 from app.game.actions import ActionHandler
 from app.game.archive import archive_game
 from app.game.entities import EntityManager
+from app.game import heatmap
 from app.game.scheduler import Scheduler
 from app.game.stats import StatsTracker
 from app.game.world import World
@@ -152,6 +153,17 @@ class Simulation:
             "leader": leader,
             "cats": cats,
         }
+
+    def get_heatmap(
+        self, grid_size: int = heatmap.DEFAULT_GRID_SIZE, last_n: Optional[int] = None
+    ) -> dict:
+        """Per-cat movement map, downsampled for the popout and the coach.
+
+        Derived on demand from `history` rather than maintained during play. The
+        snapshots are already being taken for step-back, so this costs nothing
+        until someone asks, and it inherits rewind correctness for free.
+        """
+        return heatmap.build(self, grid_size=grid_size, last_n=last_n)
 
     def _sync_tick_budget(self) -> None:
         """Tells the scheduler how long agents have between ticks.

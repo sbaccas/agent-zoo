@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Movement Map — Cat &amp; Mouse</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🔥</text></svg>">
+  <link rel="stylesheet" href="/static/styles.css?v=15">
+</head>
+<body class="settings-standalone-body">
+  <div class="settings-standalone-container boxscore-container">
+    <header class="settings-standalone-header">
+      <div class="modal-title-group">
+        <span class="modal-icon">🔥</span>
+        <div>
+          <h2>Movement Map</h2>
+          <div class="subtitle">Where each cat spends its ticks</div>
+        </div>
+      </div>
+      <div class="settings-header-badge" id="syncStatus">Connecting…</div>
+    </header>
+
+    <main class="settings-standalone-content">
+      <!-- Simulation meta strip: populated by heatmap.js -->
+      <div class="boxscore-meta" id="heatmapMeta"></div>
+
+      <!-- Shown only when history has hit its cap and the window is partial -->
+      <div class="boxscore-caveat" id="heatmapCaveat" style="display: none;"></div>
+
+      <div class="heatmap-controls">
+        <label class="heatmap-control">
+          <span>Digest grid</span>
+          <select id="gridSize">
+            <option value="2">2 x 2</option>
+            <option value="3">3 x 3</option>
+            <option value="4">4 x 4</option>
+            <option value="5" selected>5 x 5</option>
+          </select>
+        </label>
+        <label class="heatmap-control">
+          <span>Window</span>
+          <select id="windowTicks">
+            <option value="">All recorded ticks</option>
+            <option value="100">Last 100 ticks</option>
+            <option value="300">Last 300 ticks</option>
+            <option value="500">Last 500 ticks</option>
+          </select>
+        </label>
+        <label class="heatmap-control heatmap-control-check">
+          <input type="checkbox" id="showPath" checked>
+          <span>Trace path</span>
+        </label>
+      </div>
+
+      <!-- Loading / error / empty states -->
+      <div class="boxscore-state" id="heatmapState">Loading movement map…</div>
+
+      <!-- Per-cat canvases and digests: populated by heatmap.js -->
+      <div id="heatmapCats"></div>
+
+      <p class="boxscore-legend">
+        The canvas is full arena resolution — brighter means more ticks spent there.
+        The digest below each map is the coarse version the coach receives; its
+        digits are percentages of ticks and always sum to 100.
+      </p>
+    </main>
+
+    <footer class="settings-standalone-footer">
+      <div class="boxscore-updated" id="heatmapUpdated">Auto-refreshing every 3s</div>
+      <div class="modal-footer-right">
+        <button id="btnCloseWindow" class="btn btn-secondary" title="Close this window">Close Window</button>
+        <button id="btnCopyDigest" class="btn btn-secondary" title="Copy the coach-facing text digest to the clipboard">Copy Digest</button>
+        <button id="btnRefreshHeatmap" class="btn btn-primary" title="Fetch the latest movement map now">Refresh</button>
+      </div>
+    </footer>
+  </div>
+
+  <script src="/static/heatmap.js?v=1"></script>
+</body>
+</html>

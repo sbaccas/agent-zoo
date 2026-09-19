@@ -16,6 +16,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // Buttons
   const btnRefreshBoxscore = document.getElementById('btnRefreshBoxscore');
   const btnCloseWindow = document.getElementById('btnCloseWindow');
+  const btnOpenHeatmap = document.getElementById('btnOpenHeatmap');
 
   const REFRESH_MS = 2000;
 
@@ -472,9 +473,37 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
+  /**
+   * Opens the movement map in its own window.
+   *
+   * The `?v=` stamp is the same trick app.js documents for this pair of
+   * popouts: re-opening a named window that already exists is a no-op focus,
+   * so an already-open map would never pick up a new build. A throwaway
+   * timestamp makes each open a genuinely different URL and forces the
+   * navigation. The server routes /heatmap with FileResponse and ignores the
+   * query string, and the page does not read its own params, so it is inert
+   * beyond that.
+   */
+  function openHeatmapWindow() {
+    const width = 1000;
+    const height = 860;
+    const screenW = window.screen.availWidth || window.innerWidth;
+    const left = Math.max(10, Math.min(screenW - width - 20, (window.screenX || 0) + 40));
+    const top = Math.max(20, (window.screenY || 0) + 30);
+    const features = `width=${width},height=${height},left=${left},top=${top},resizable=yes,scrollbars=yes,status=no,toolbar=no,menubar=no,location=no`;
+
+    const popup = window.open(`/heatmap?v=${Date.now()}`, 'CMMovementMap', features);
+    if (popup && !popup.closed) {
+      popup.focus();
+    } else {
+      console.warn('Movement Map pop-out was blocked by the browser. Allow pop-ups for this site to view it.');
+    }
+  }
+
   // Event Listeners
   if (btnRefreshBoxscore) btnRefreshBoxscore.addEventListener('click', loadBoxScore);
   if (btnCloseWindow) btnCloseWindow.addEventListener('click', () => window.close());
+  if (btnOpenHeatmap) btnOpenHeatmap.addEventListener('click', openHeatmapWindow);
 
   // Initial load + polling
   loadBoxScore();

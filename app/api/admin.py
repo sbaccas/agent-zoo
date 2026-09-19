@@ -1,5 +1,7 @@
 from typing import Dict, Optional
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import PlainTextResponse
+from app.game.heatmap import DEFAULT_GRID_SIZE, MAX_GRID_SIZE, MIN_GRID_SIZE
 from app.game.simulation import Simulation
 from app.models.simulation import (
     ModifyPopulationRequest,
@@ -123,6 +125,43 @@ async def get_boxscore(sim_id: str):
     """
     sim = get_simulation_or_404(sim_id)
     return sim.get_boxscore()
+
+
+@router.get("/{sim_id}/heatmap")
+async def get_heatmap(
+    sim_id: str,
+    grid: int = Query(
+        DEFAULT_GRID_SIZE,
+        ge=MIN_GRID_SIZE,
+        le=MAX_GRID_SIZE,
+        description="Cells per side, e.g. 5 draws a 5x5 map",
+    ),
+    last: Optional[int] = Query(None, ge=1, description="Restrict to the last N ticks"),
+):
+    """Per-cat movement map: where each cat spent its ticks.
+
+    Derived on request from the step-back snapshots rather than polled, so it is
+    heavier than the box score and the UI fetches it on demand rather than every
+    two seconds.
+    """
+    sim = get_simulation_or_404(sim_id)
+    return sim.get_heatmap(grid_size=grid, last_n=last)
+
+
+@router.get("/{sim_id}/heatmap.txt", response_class=PlainTextResponse)
+async def get_heatmap_text(
+    sim_id: str,
+    grid: int = Query(DEFAULT_GRID_SIZE, ge=MIN_GRID_SIZE, le=MAX_GRID_SIZE),
+    last: Optional[int] = Query(None, ge=1),
+):
+    """The same map as plain text, for a reader with a context window.
+
+    Exists so the coach can spend one tool call and paste the result straight
+    into a prompt, rather than fetching JSON it would only have to re-render.
+    """
+    sim = get_simulation_or_404(sim_id)
+    return sim.get_heatmap(grid_size=grid, last_n=last)["ascii"]
+
 
 
 @router.get("/{sim_id}/species", response_model=Dict[str, SpeciesConfig])
