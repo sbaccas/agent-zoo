@@ -119,7 +119,7 @@ def test_a_plain_question_leaves_the_coach_unconstrained(client):
 def test_a_plain_question_does_not_touch_the_published_dossier(client):
     store.write_coaching_notes("- Keep your strike zone discipline")
     before = store.read_coaching_notes()
-    client.post("/api/agent/general/prompt", json={"prompt": "wtf man"})
+    client.post("/api/agent/general/prompt", json={"prompt": "explain this directive"})
     assert store.read_coaching_notes() == before
 
 
@@ -295,7 +295,7 @@ async def test_the_offline_reply_refuses_to_invent_a_rationale():
 @pytest.mark.asyncio
 async def test_the_offline_reply_states_the_coaching_is_unchanged():
     """A failed radio call must not leave the General guessing."""
-    reply, _, _ = await ev.interrogate_general("wtf", notes="- a\n- b")
+    reply, _, _ = await ev.interrogate_general("status inquiry", notes="- a\n- b")
     assert "unchanged" in reply
     assert "2 directive(s)" in reply
 

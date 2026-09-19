@@ -392,7 +392,7 @@
 
       ctx.save();
       for (const t of slash.aoeTiles) {
-        // User rule: "you dont have to put one on the mouse if it gets hit but i do wnana be able to see where the fucking slash tiles are"
+        // User rule: Render "!" indicator on empty slash tiles so the slash coverage remains visible
         const hasAliveMouse = (state.entities || []).some(
           e => e.type === 'mouse' && e.alive && e.position.x === t.x && e.position.y === t.y
         );

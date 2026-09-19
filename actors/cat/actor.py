@@ -834,22 +834,33 @@ def build_decision_prompt(
         h_can_act = h_self.get("can_act")
         h_locked = (h_cd > 0) if h_can_act is None else (not h_can_act)
         outcome = "REJECTED - you were locked" if h_locked else "executed"
-        # Deliberately excludes the thought that produced this action. Measured
-        # over 277 live prompts, the cat chose the modal action of its own
-        # history window 51.5% of the time against a 16.7% chance baseline
-        # (free ticks, executed-only, so the action lock cannot explain it).
-        # Replaying its own reasoning turned the window into 25 worked examples
-        # arguing for the behaviour the coach was simultaneously trying to
-        # correct -- and the reasoning outweighed the coaching notes four to
-        # one by volume. What happened is evidence; why it seemed sensible at
-        # the time is advocacy, and it is dropped.
-        #
-        # The interrogator prompt keeps its thoughts on purpose: that agent is
-        # asked to explain itself to the commander, so its past reasoning is
-        # the subject matter rather than a distraction.
+        # Rich tactical record matching Box 5 transcript:
+        # Includes posture transition, score, action outcome, target, and the
+        # previous thought/perception rationale so the cat maintains pursuit
+        # persistence and object permanence when turning off-axis.
+        h_resp = h.get("response", {})
+        h_thought = (h_resp.get("thought") or "").strip()
+        h_auto = h.get("autonomous_decision", {})
+        h_meta = h_auto.get("meta", {}) if isinstance(h_auto, dict) else {}
+        h_target = (
+            h_meta.get("target_mouse_id")
+            or h_meta.get("target_id")
+            or h_resp.get("target_mouse_id")
+            or ""
+        )
+        rp = h_resp.get("resulting_posture") if isinstance(h_resp, dict) else None
+        if rp and rp.get("position"):
+            rp_pos = rp.get("position", {})
+            rp_facing = (rp.get("facing") or "").upper()
+            posture_str = f"({h_pos.get('x',0)}, {h_pos.get('y',0)}) [{h_facing.upper()}] ➔ ({rp_pos.get('x',0)}, {rp_pos.get('y',0)}) [{rp_facing}]"
+        else:
+            posture_str = f"Pos ({h_pos.get('x',0)}, {h_pos.get('y',0)}) facing {h_facing}"
+
+        target_str = f" Target: {h_target}." if h_target else ""
+        thought_str = f" Thought: \"{h_thought}\"" if h_thought else ""
         history_lines.append(
-            f"  • Tick {h_tick}: Pos ({h_pos.get('x',0)}, {h_pos.get('y',0)}) facing {h_facing}. "
-            f"SCORE: {h_score}. Context: {vis_info}. Move: {h_act} [{outcome}]"
+            f"  • Tick {h_tick}: {posture_str}. SCORE: {h_score}. Context: {vis_info}. "
+            f"Move: {h_act} [{outcome}].{target_str}{thought_str}"
         )
 
     history_context = ""
