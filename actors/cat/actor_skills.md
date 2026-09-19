@@ -14,14 +14,48 @@ You play as the **Cat** (`cat-1`), an apex predator hunting elusive mice across 
 
 ### Perception & Field of View (FoV)
 - **Facing Direction**: The cat faces one of four cardinal directions: `"north"`, `"south"`, `"east"`, or `"west"`.
-- **Vision Cone**: A 90° angular field of view extending forward up to `capabilities.vision_radius` tiles in your current facing direction. This radius is a live, tunable value — read it from the observation rather than assuming a figure.
-- **Occlusion**: Solid walls completely block line of sight. Entities behind walls or outside your 90° cone are hidden from your perception.
+- **Viewport**: A **box drawn around you**, not a beam out of your face. Three numbers from your `capabilities` define it, and **all three can be retuned between games** — always read them, never assume:
+
+  | direction | capability | ships as |
+  |---|---|---|
+  | ahead | `vision_radius` | 10 |
+  | behind | `vision_rear` | 2 |
+  | either side | `vision_half_width` | 3 |
+
+  At the shipped values you see this, facing east — you are the `C`:
+
+  ```
+  X X X X X X X X X X X X X
+  X X X X X X X X X X X X X
+  X X X X X X X X X X X X X
+  X X C X X X X X X X X X X
+  X X X X X X X X X X X X X
+  X X X X X X X X X X X X X
+  X X X X X X X X X X X X X
+  ```
+
+  That is 13 deep by 7 wide. The side reach is a **half**-width, so the full width is `2 * vision_half_width + 1` — always an odd number, with you on the centre line.
+
+- **The membership test**: Rotate a target's offset into your frame to get two integers: `forward` (tiles ahead; **negative means behind you**) and `offaxis` (tiles to your side, either direction). You can see it when:
+
+  ```
+  -vision_rear <= forward <= vision_radius   AND   |offaxis| <= vision_half_width
+  ```
+
+  There is no angle, no cone, and no trigonometry in this — two integer comparisons against two numbers you were handed. Crucially, **neither bound changes with distance or facing**: `vision_half_width` is the same at one tile ahead as at ten. Note that `forward = 0` and `forward = -1` are both **visible** (at the shipped `vision_rear`), so something beside you or at your back is not hidden from you.
+
+> [!WARNING]
+> If `vision_rear` is 0 you are **blind behind** and can be flanked from contact range. If `vision_half_width` is 0 you see a **single-file lane** directly ahead. Both are legal settings. Check them rather than assuming the shipped box.
+- **Facing still matters — but for *reach*, not for *sight*.** You see behind you; you cannot *hit* behind you. Turning is how you bring a target you can already see into the strike zone.
+- **Occlusion**: Solid walls completely block line of sight. Entities behind walls or outside the box are hidden from your perception.
 - **Visible Entities**: An observation lists all entities currently within your line of sight:
   - Mice: `{"id": "mouse-1", "type": "mouse", "position": {"x": 5, "y": 7}}`
   - Cheese: `{"id": "cheese-1", "type": "cheese", "position": {"x": 10, "y": 12}}`
 - **Dynamic Capabilities**: Your observation provides a `capabilities` dictionary containing your current dynamic stats:
   - `attack_range`: The forward reach (in tiles) of your slash `attack`.
-  - `vision_radius`: The distance (in tiles) your 90° vision cone penetrates.
+  - `vision_radius`: How far **ahead** your viewport reaches.
+  - `vision_rear`: How far **behind** you the viewport reaches.
+  - `vision_half_width`: How far to **either side** it reaches. Full width is `2n + 1`.
   - `move_cooldown`: Total ticks a single step costs you.
   - `attack_cooldown`: Total ticks a single slash costs you.
   - `lunge_cooldown`: Total ticks a single lunge costs you.

@@ -13,6 +13,8 @@ document.addEventListener('DOMContentLoaded', () => {
   const settingCatAttackCd = document.getElementById('settingCatAttackCd');
   const settingCatLungeCd = document.getElementById('settingCatLungeCd');
   const settingCatVision = document.getElementById('settingCatVision');
+  const settingCatVisionRear = document.getElementById('settingCatVisionRear');
+  const settingCatVisionHalfWidth = document.getElementById('settingCatVisionHalfWidth');
   const settingCatWeight = document.getElementById('settingCatWeight');
 
   // Mouse inputs
@@ -62,7 +64,10 @@ document.addEventListener('DOMContentLoaded', () => {
         if (settingCatAttackCd) settingCatAttackCd.value = data.cat.attack_cooldown ?? 3;
         if (settingCatLungeCd) settingCatLungeCd.value = data.cat.lunge_cooldown ?? 2;
         if (settingCatVision) settingCatVision.value = data.cat.vision_radius ?? 10;
+        if (settingCatVisionRear) settingCatVisionRear.value = data.cat.vision_rear ?? 2;
+        if (settingCatVisionHalfWidth) settingCatVisionHalfWidth.value = data.cat.vision_half_width ?? 3;
         if (settingCatWeight) settingCatWeight.value = data.cat.weight ?? 10;
+        updateCatVisionBoxReadout();
       }
 
       if (data.mouse) {
@@ -90,6 +95,8 @@ document.addEventListener('DOMContentLoaded', () => {
       attack_cooldown: parseIntDefault(settingCatAttackCd?.value, 3, 0),
       lunge_cooldown: parseIntDefault(settingCatLungeCd?.value, 2, 0),
       vision_radius: parseIntDefault(settingCatVision?.value, 10, 1),
+      vision_rear: parseIntDefault(settingCatVisionRear?.value, 2, 0),
+      vision_half_width: parseIntDefault(settingCatVisionHalfWidth?.value, 3, 0),
       weight: parseIntDefault(settingCatWeight?.value, 10, 1),
     };
 
@@ -129,13 +136,36 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
+
+  // Renders the box the three vision numbers actually describe. The stored
+  // field is a *half*-width, so without this you have to do 2n+1 in your head
+  // to know what you just built -- and the whole reason the viewport is a box
+  // rather than a taper is to keep that arithmetic off the operator as well as
+  // off the actor.
+  function updateCatVisionBoxReadout() {
+    const el = document.getElementById('catVisionBoxReadout');
+    if (!el) return;
+    const fwd = parseIntDefault(settingCatVision?.value, 10, 1);
+    const rear = parseIntDefault(settingCatVisionRear?.value, 2, 0);
+    const half = parseIntDefault(settingCatVisionHalfWidth?.value, 3, 0);
+    const depth = fwd + rear + 1;       // +1 for the cat's own row
+    const width = 2 * half + 1;         // always odd, by construction
+    let msg = `Box: ${depth} deep \u00d7 ${width} wide = ${depth * width} tiles`;
+    if (rear === 0) msg += ' \u2014 blind behind';
+    if (half === 0) msg += ' \u2014 single-file lane';
+    el.textContent = msg;
+  }
+
   function resetToDefaults() {
     if (settingCatMove) settingCatMove.value = 3;
     if (settingCatAttackRange) settingCatAttackRange.value = 2;
     if (settingCatAttackCd) settingCatAttackCd.value = 3;
     if (settingCatLungeCd) settingCatLungeCd.value = 2;
-    if (settingCatVision) settingCatVision.value = 4;
+    if (settingCatVision) settingCatVision.value = 10;
+    if (settingCatVisionRear) settingCatVisionRear.value = 2;
+    if (settingCatVisionHalfWidth) settingCatVisionHalfWidth.value = 3;
     if (settingCatWeight) settingCatWeight.value = 10;
+    updateCatVisionBoxReadout();
 
     if (settingMouseMove) settingMouseMove.value = 2;
     if (settingMouseVision) settingMouseVision.value = 4;
@@ -148,6 +178,12 @@ document.addEventListener('DOMContentLoaded', () => {
   if (btnSaveSettings) btnSaveSettings.addEventListener('click', saveSettings);
   if (btnResetSettings) btnResetSettings.addEventListener('click', resetToDefaults);
   if (btnCloseWindow) btnCloseWindow.addEventListener('click', () => window.close());
+
+  // Keep the derived-shape readout honest while the operator is still typing,
+  // not just after a save round-trips.
+  [settingCatVision, settingCatVisionRear, settingCatVisionHalfWidth].forEach((el) => {
+    if (el) el.addEventListener('input', updateCatVisionBoxReadout);
+  });
 
   // Initial load
   loadCurrentSpecies();

@@ -130,7 +130,7 @@ document.addEventListener('DOMContentLoaded', () => {
     {
       title: 'Positioning',
       rows: [
-        { label: 'Prey in sight', key: 'prey_in_sight_pct', dir: 'high', format: (v) => fmtPct(v), tip: 'ticks with a mouse in the vision cone / ticks free (locked ticks excluded, since visibility is only sampled when the cat acts)' },
+        { label: 'Prey in sight', key: 'prey_in_sight_pct', dir: 'high', format: (v) => fmtPct(v), tip: 'ticks with a mouse in the vision box / ticks free (locked ticks excluded, since visibility is only sampled when the cat acts)' },
         { label: 'Locked', key: 'locked_pct', dir: 'low', format: (v) => fmtPct(v), tip: 'ticks locked in attack/lunge recovery / (ticks free + ticks locked)' },
         { label: 'Ticks per tile', key: 'ticks_per_tile', dir: 'low', format: (v) => fmtFloat(v, 2), tip: '(ticks free + ticks locked) / unique tiles — how long the cat loiters per tile it occupies. Higher means camping' },
       ],

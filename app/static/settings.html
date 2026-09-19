@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Game Settings — Cat &amp; Mouse</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>⚙️</text></svg>">
-  <link rel="stylesheet" href="/static/styles.css?v=11">
+  <link rel="stylesheet" href="/static/styles.css?v=14">
 </head>
 <body class="settings-standalone-body">
   <div class="settings-standalone-container">
@@ -65,12 +65,30 @@
             <span class="setting-hint">Ticks to recover from 2-tile burst leap</span>
           </div>
           <div class="setting-item">
-            <label for="settingCatVision">Vision Radius:</label>
+            <label for="settingCatVision">Vision &mdash; Forward:</label>
             <div class="setting-input-row">
               <input type="number" id="settingCatVision" min="1" max="100" step="1" class="form-input">
-              <span class="setting-unit">tiles</span>
+              <span class="setting-unit">tiles ahead</span>
             </div>
-            <span class="setting-hint">Forward-facing 90° cone distance</span>
+            <span class="setting-hint">How far the sight box reaches in front of the cat</span>
+          </div>
+          <div class="setting-item">
+            <label for="settingCatVisionRear">Vision &mdash; Rear:</label>
+            <div class="setting-input-row">
+              <input type="number" id="settingCatVisionRear" min="0" max="100" step="1" class="form-input">
+              <span class="setting-unit">tiles behind</span>
+            </div>
+            <span class="setting-hint">0 = blind behind, so the cat can be flanked from contact range</span>
+          </div>
+          <div class="setting-item">
+            <label for="settingCatVisionHalfWidth">Vision &mdash; Side Reach:</label>
+            <div class="setting-input-row">
+              <input type="number" id="settingCatVisionHalfWidth" min="0" max="100" step="1" class="form-input">
+              <span class="setting-unit">tiles each side</span>
+            </div>
+            <!-- Half-width, not full width: the box is symmetric about the centre
+                 line so full width is always odd. The readout does the 2n+1 for you. -->
+            <span class="setting-hint" id="catVisionBoxReadout">&nbsp;</span>
           </div>
           <div class="setting-item">
             <label for="settingCatWeight">Weight:</label>
@@ -99,12 +117,12 @@
             <span class="setting-hint">2 = OSRS default pace (1 tile every 2 ticks)</span>
           </div>
           <div class="setting-item">
-            <label for="settingMouseVision">Vision Radius:</label>
+            <label for="settingMouseVision">Vision Radius (360&deg;):</label>
             <div class="setting-input-row">
               <input type="number" id="settingMouseVision" min="1" max="100" step="1" class="form-input">
               <span class="setting-unit">tiles</span>
             </div>
-            <span class="setting-hint">360° omnidirectional detection radius</span>
+            <span class="setting-hint">True circle, all directions &mdash; prey have eyes on the sides, so unlike the cat there is no facing, no rear and no side reach to set</span>
           </div>
           <div class="setting-item">
             <label for="settingMouseWeight">Weight:</label>
@@ -129,6 +147,6 @@
     </footer>
   </div>
 
-  <script src="/static/settings.js?v=1"></script>
+  <script src="/static/settings.js?v=2"></script>
 </body>
 </html>

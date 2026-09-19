@@ -120,28 +120,118 @@ class World:
 
         return legal
 
-    def get_forward_fov_tiles(
-        self, pos: Position, facing: Direction, distance: int = 4
+    # The field of view is a box drawn around the entity, not a beam projected
+    # out of its face. Three numbers define it, all measured in the entity's own
+    # frame (forward = the way it faces, offaxis = perpendicular), and all three
+    # are tunable per species and at runtime -- see SpeciesConfig.vision_radius,
+    # vision_rear and vision_half_width:
+    #
+    #   forward  : up to `distance` tiles ahead
+    #   backward : `rear` tiles
+    #   sideways : `half_width` tiles in either direction
+    #
+    # The shipped rear margin is deliberately small. The cat is a predator built
+    # to face its prey, and a symmetric box would make facing irrelevant to
+    # perception and collapse a whole dimension of the game. Two tiles is enough
+    # that the cat cannot be silently flanked from contact range -- which is
+    # what kept happening -- without making it omniscient. Nothing stops you
+    # setting it higher, but that is the trade you are making.
+    #
+    # The width is deliberately uniform with distance, and that is the one
+    # property here that is *not* a tunable. A tapered version was tried and
+    # reverted: three bands of decreasing half-width (10/4/2) put far more
+    # resolution in the near field, which is where the game is decided, but it
+    # cost something worth more than coverage. See `get_fov_tiles`.
+    #
+    # These two constants are now only fallbacks, used when a caller supplies no
+    # per-species values. The live game always supplies them. They are kept
+    # rather than deleted because `get_fov_tiles` is called from several places
+    # and defaulting to a silent 0 would be a far worse failure mode than a
+    # slightly stale constant.
+    FOV_HALF_WIDTH = 3
+    FOV_REAR_DEPTH = 2
+
+    def get_fov_tiles(
+        self,
+        pos: Position,
+        facing: Direction,
+        distance: int = 4,
+        rear: Optional[int] = None,
+        half_width: Optional[int] = None,
     ) -> List[Tuple[int, int]]:
+        """Tiles the entity can see: a box around it, biased forward.
+
+        All three dimensions are caller-supplied and independently tunable:
+        `distance` ahead, `rear` behind, `half_width` either side. Facing east
+        from C, with distance 4, rear 2, half_width 3::
+
+            X X X X X X X
+            X X X X X X X
+            X X X X X X X
+            X X C X X X X
+            X X X X X X X
+            X X X X X X X
+            X X X X X X X
+
+        Membership is two integer comparisons::
+
+            -rear <= forward <= distance
+            |offaxis| <= half_width
+
+        That line is the whole design, and it outranks the shape. The actor is
+        an LLM that has to decide membership in its head, for several mice, four
+        times a second, before committing to an action it cannot take back. Any
+        rule it cannot evaluate reliably shows up as a whiff. Note that tuning
+        the numbers does not change the *form* of the rule -- it stays two
+        comparisons against two constants no matter what they are set to.
+
+        Three shapes have occupied this method. The history is worth keeping
+        because the two that were rejected failed for different reasons.
+
+        The original was a cone spreading as ``1 if dist <= 2 else dist // 2``.
+        Two separate faults: nothing in the observation described that integer
+        division, so the actor could not predict membership before acting; and
+        the spread was only +/-1 at forward 1..3, so a mouse three ahead and two
+        to the side -- one sidestep from the strike zone -- was invisible. A
+        cone is narrow exactly where the game is decided.
+
+        The second was a forward-only rectangle of constant width. It fixed the
+        near-field blind spot and made membership statable, but it kept the
+        cone's unexamined premise: that the entity sits *on the boundary* of its
+        own perception. A mouse standing directly beside or behind the cat did
+        not exist, so the actor would walk away from adjacent prey.
+
+        A fourth was tried and reverted: a tapered box, 21 tiles wide at
+        forward -2..2, narrowing to 9 and then 5. It was strictly better on
+        coverage -- it put the resolution in the near field where the cone had
+        none, at 161 tiles against the default box's 91. But membership became
+        a band lookup, a conditional half-width that changes with the same
+        ``forward`` value being compared. That is a strictly harder thing to
+        hold in your head than a constant, and it was being asked of the one
+        component already measured to be struggling with this arithmetic: sign
+        errors on ``offaxis`` run 6.5x the rate of errors on ``forward``.
+        Buying coverage with reasoning load is a bad trade when the failure
+        being chased is a reasoning failure. Keep this rule flat -- tune the
+        numbers, not the form.
         """
-        Returns tiles in front of the entity's face up to `distance` steps,
-        including a forward-facing cone.
-        """
+        if rear is None:
+            rear = self.FOV_REAR_DEPTH
+        if half_width is None:
+            half_width = self.FOV_HALF_WIDTH
+        # Clamp rather than raise. These arrive from a live PATCH that can land
+        # mid-tick, and a perception call is the wrong place to take down the
+        # simulation over a bad number.
+        rear = max(0, rear)
+        half_width = max(0, half_width)
+
         dx, dy = self.get_forward_delta(facing)
-        # Perpendicular vector for lateral vision in forward cone
-        px, py = -dy, dx
+        px, py = -dy, dx  # unit vector perpendicular to facing
 
         tiles = []
-        for dist in range(1, distance + 1):
-            # Direct forward line
-            fx = pos.x + dx * dist
-            fy = pos.y + dy * dist
-
-            # Forward cone spread: at dist 1 -> direct + 1 lateral; at dist 2..4 -> direct + spread
-            lateral_spread = 1 if dist <= 2 else (dist // 2)
-            for lat in range(-lateral_spread, lateral_spread + 1):
-                cx = fx + px * lat
-                cy = fy + py * lat
+        for dist in range(-rear, distance + 1):
+            for lat in range(-half_width, half_width + 1):
+                cx = pos.x + dx * dist + px * lat
+                cy = pos.y + dy * dist + py * lat
                 if self.topology == Topology.TORUS:
                     tiles.append(self.wrap_position(cx, cy))
                 elif self.is_in_bounds(cx, cy):

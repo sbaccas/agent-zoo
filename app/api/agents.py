@@ -2,6 +2,7 @@ import logging
 from typing import List
 from fastapi import APIRouter, HTTPException
 from app.api.admin import get_simulation_or_404
+from app.game.world import World
 from app.models.action import ActionRequest, ActionResult, ActionType, ObservationResponse, RegisterAgentRequest
 from app.models.entity import EntityType
 from app.models.simulation import GameEvent, SimulationStatus
@@ -58,14 +59,26 @@ async def get_agent_observation(sim_id: str, agent_id: str):
 
     species_key = entity.type.value
     vision_radius = 4
+    vision_rear = World.FOV_REAR_DEPTH
+    vision_half_width = World.FOV_HALF_WIDTH
     if species_key in sim.config.species:
-        vision_radius = sim.config.species[species_key].vision_radius
+        _cfg = sim.config.species[species_key]
+        vision_radius = _cfg.vision_radius
+        vision_rear = _cfg.vision_rear
+        vision_half_width = _cfg.vision_half_width
 
     # Calculate visible entities based on predator vs prey vision models:
     visible = []
     if entity.type == EntityType.CAT:
-        # Predator: forward-facing vision cone
-        fov_tiles = set(sim.world.get_forward_fov_tiles(entity.position, entity.facing, distance=vision_radius))
+        # Predator: a box around the cat, biased forward. Not a cone -- that
+        # shape was removed; see World.get_fov_tiles for why.
+        fov_tiles = set(sim.world.get_fov_tiles(
+            entity.position,
+            entity.facing,
+            distance=vision_radius,
+            rear=vision_rear,
+            half_width=vision_half_width,
+        ))
         for other in sim.entity_manager.get_alive_entities():
             if other.id != entity.id and (other.position.x, other.position.y) in fov_tiles:
                 visible.append(other)
@@ -87,6 +100,8 @@ async def get_agent_observation(sim_id: str, agent_id: str):
     attack_range = spec_cfg.attack_range if spec_cfg else (2 if entity.type == EntityType.CAT else 0)
     capabilities = {
         "vision_radius": vision_radius,
+        "vision_rear": vision_rear,
+        "vision_half_width": vision_half_width,
         "attack_range": attack_range,
         "move_cooldown": spec_cfg.move_cooldown if spec_cfg else 1,
         "attack_cooldown": spec_cfg.attack_cooldown if spec_cfg else 0,

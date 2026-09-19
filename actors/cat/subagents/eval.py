@@ -686,7 +686,7 @@ def _summarise_without_model(records: List[Dict[str, Any]]) -> str:
     if unfaced:
         bullets.append(
             f"- **Blind Directions**: You never faced {', '.join(sorted(unfaced))}. "
-            "Your vision cone is forward-only, so those bearings are unobserved."
+            "Your viewport is forward-only, so those bearings are unobserved."
         )
     bullets.append(
         "- **Note**: Generated without model credentials; directives are positional only."
@@ -732,6 +732,29 @@ def format_capabilities(records: List[Dict[str, Any]]) -> str:
             "or column -- that discards two thirds of its reach.\n"
         )
 
+    # The viewport, spelled out the same way as the strike zone. Without this
+    # the evaluator sees three unexplained integers and has no way to tell a
+    # "should have taken that shot" from a "could not see it", which are
+    # opposite coaching notes. Derived rather than hardcoded because all three
+    # dimensions are operator-tunable at runtime.
+    viewport = ""
+    v_fwd = latest.get("vision_radius")
+    v_rear = latest.get("vision_rear")
+    v_half = latest.get("vision_half_width")
+    if all(isinstance(v, int) for v in (v_fwd, v_rear, v_half)):
+        viewport = (
+            f"\nViewport implied by those vision values: a box around the Cat, "
+            f"{v_fwd + v_rear + 1} deep and {2 * v_half + 1} wide. It sees a "
+            f"mouse if and only if\n"
+            f"  {-v_rear} <= forward <= {v_fwd}   AND   {-v_half} <= offaxis <= {v_half}\n"
+            "Anything outside that the Cat genuinely could not see, so never "
+            "fault it for missing one. The box is wider than the strike zone, "
+            "so most mice it can see are ones it cannot hit from where it "
+            "stands -- holding fire on those is correct play, not a lost "
+            "chance. Only fault it for passing up a mouse that was inside the "
+            "strike zone above.\n"
+        )
+
     retuned = ""
     if len(seen) > 1:
         retuned = (
@@ -745,6 +768,7 @@ def format_capabilities(records: List[Dict[str, Any]]) -> str:
         + "\n".join(lines)
         + "\n"
         + zone
+        + viewport
         + retuned
         + "\nThese are the live values from the game server and they override "
         "every illustrative figure printed in the manual above.\n\n"

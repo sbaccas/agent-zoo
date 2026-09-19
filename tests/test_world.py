@@ -42,12 +42,105 @@ def test_torus_topology_wrapping():
 def test_directional_fov():
     world = World(width=50, height=50, topology=Topology.BOUNDED)
     pos = Position(x=10, y=10)
-    # Looking East: forward tiles should have x > 10 and not x < 10
-    fov = world.get_forward_fov_tiles(pos, Direction.EAST, distance=4)
+    # Looking East: the box reaches 4 tiles ahead and only FOV_REAR_DEPTH behind.
+    fov = world.get_fov_tiles(pos, Direction.EAST, distance=4)
     assert len(fov) > 0
     for tx, ty in fov:
-        assert tx > 10, f"FoV tile ({tx}, {ty}) should be in front (x > 10)"
-        assert tx <= 14, f"FoV tile ({tx}, {ty}) should be within 4 tiles"
+        assert tx >= 10 - World.FOV_REAR_DEPTH, f"FoV tile ({tx}, {ty}) is too far behind"
+        assert tx <= 14, f"FoV tile ({tx}, {ty}) should be within 4 tiles ahead"
+    # Facing is still meaningful: the box is biased forward, not symmetric.
+    assert (14, 10) in fov
+    assert (6, 10) not in fov
+
+
+def test_fov_is_a_box_around_the_entity_in_every_facing():
+    """The viewport surrounds the entity and is biased forward.
+
+    Pinned per-facing because the shape is built from a perpendicular vector
+    ``(px, py) = (-dy, dx)`` whose sign flips with facing, and from a forward
+    delta that decides which side the rear margin lands on. A bug in either
+    would produce a box that is correct facing east and mirrored or rotated
+    facing west -- exactly the class of error the old cone made hard to spot.
+    """
+    world = World(width=100, height=100, topology=Topology.BOUNDED)
+    pos = Position(x=50, y=50)
+    deltas = {
+        Direction.NORTH: (0, -1),
+        Direction.SOUTH: (0, 1),
+        Direction.EAST: (1, 0),
+        Direction.WEST: (-1, 0),
+    }
+    expected = {
+        (f, l)
+        for f in range(-World.FOV_REAR_DEPTH, 11)
+        for l in range(-World.FOV_HALF_WIDTH, World.FOV_HALF_WIDTH + 1)
+    }
+
+    for facing, (dx, dy) in deltas.items():
+        px, py = -dy, dx
+        tiles = world.get_fov_tiles(pos, facing, distance=10)
+        # Re-express every tile in the cat's own frame: forward and offaxis.
+        in_frame = set()
+        for tx, ty in tiles:
+            ox, oy = tx - pos.x, ty - pos.y
+            in_frame.add((ox * dx + oy * dy, ox * px + oy * py))
+        assert in_frame == expected, f"viewport facing {facing} is not the box"
+        assert len(tiles) == 13 * 7  # forward 10 + rear 2 + the entity's own row
+
+
+def test_fov_width_does_not_vary_with_distance():
+    """The viewport is a box, not a cone and not a taper.
+
+    Both rejected shapes varied width with forward distance, and both were
+    rejected for the same underlying reason rather than for their coverage: a
+    width that depends on ``forward`` makes membership a conditional the actor
+    has to evaluate in its head, mid-decision, for every mouse. The cone
+    spread as ``dist // 2``; the taper stepped down through bands. Constant
+    width is what makes the rule a single comparison against a fixed number.
+
+    If a future change reintroduces a distance-dependent width, this fails.
+    """
+    world = World(width=100, height=100, topology=Topology.BOUNDED)
+    pos = Position(x=50, y=50)
+    tiles = set(world.get_fov_tiles(pos, Direction.EAST, distance=10))
+
+    widths = []
+    for forward in range(-World.FOV_REAR_DEPTH, 11):
+        row = [off for off in range(-20, 21) if (50 + forward, 50 + off) in tiles]
+        widths.append(len(row))
+    assert len(set(widths)) == 1, f"width varies with distance: {widths}"
+    assert widths[0] == 2 * World.FOV_HALF_WIDTH + 1
+
+
+def test_fov_includes_the_tiles_touching_the_entity():
+    """Regression: nothing adjacent to the cat may be invisible.
+
+    Two shapes in a row got this wrong. The cone saw only ``|offaxis| <= 1`` at
+    forward 1..3, so a mouse three ahead and two to the side -- one sidestep
+    from the strike zone -- did not appear. The forward-only rectangle that
+    replaced it fixed that but still started at ``forward == 1``, so a mouse
+    standing directly beside or behind the cat did not appear either, and the
+    actor would walk away from adjacent prey.
+    """
+    world = World(width=100, height=100, topology=Topology.BOUNDED)
+    pos = Position(x=50, y=50)
+    tiles = set(world.get_fov_tiles(pos, Direction.EAST, distance=10))
+
+    # All eight neighbours, including the three directly behind.
+    for ox in (-1, 0, 1):
+        for oy in (-1, 0, 1):
+            assert (50 + ox, 50 + oy) in tiles, f"neighbour ({ox}, {oy}) is invisible"
+
+    # The near-field tiles the cone could not see.
+    for forward in (1, 2, 3):
+        for offaxis in (-3, -2, 2, 3):
+            assert (50 + forward, 50 + offaxis) in tiles
+
+    # The box still has edges: 3 off-axis and FOV_REAR_DEPTH behind.
+    assert (51, 54) not in tiles
+    assert (51, 46) not in tiles
+    assert (50 - World.FOV_REAR_DEPTH, 50) in tiles
+    assert (50 - World.FOV_REAR_DEPTH - 1, 50) not in tiles
 
 
 def test_slash_aoe():

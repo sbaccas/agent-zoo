@@ -69,6 +69,12 @@ for _h in _acc_log.handlers:
 
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    # Paths whose bodies change every time we edit the frontend. Everything the
+    # browser loads to render the UI is in here: the static bundle plus the
+    # three HTML shells, which are served by FileResponse routes rather than
+    # from the /static mount.
+    _REVALIDATE_EXACT = frozenset({"/", "/settings", "/boxscore"})
+
     async def dispatch(self, request: Request, call_next):
         response: Response = await call_next(request)
         response.headers["X-Content-Type-Options"] = "nosniff"
@@ -80,6 +86,42 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             "img-src 'self' data:; "
             "connect-src 'self' ws: wss:;"
         )
+
+        # Force revalidation on everything the UI is built from.
+        #
+        # StaticFiles emits ETag and Last-Modified but no Cache-Control at all.
+        # With no explicit freshness directive a browser is entitled to invent
+        # one (the usual heuristic is a fraction of the time elapsed since
+        # Last-Modified), so a long-lived tab can go on serving a JS file from
+        # disk cache for hours without ever asking us whether it changed.
+        #
+        # The codebase's previous defence was a hand-written query stamp in the
+        # HTML -- app.js?v=16, settings.js?v=1, and so on. That only works if a
+        # human remembers to bump the number in the same commit that edits the
+        # file, and the numbers had visibly drifted: the *same* styles.css was
+        # requested as v=11, v=12 and v=13 from the three different pages,
+        # while settings.js sat at v=1 across every change it had ever
+        # received. The concrete failure this caused: the cat viewport overlay
+        # was taught to read vision_rear and vision_half_width from the live
+        # species config, the stamp was not bumped, and an already-open board
+        # kept running the older renderer that hardcoded those two numbers. The
+        # engine, the API and the state payload were all correct and only the
+        # forward dial appeared to move the rectangle, which is a genuinely
+        # nasty thing to debug because every surface you can inspect from the
+        # server says the feature works.
+        #
+        # "no-cache" does not mean "do not store" -- it means "always
+        # revalidate before reuse". The existing ETag turns that into a
+        # conditional request that answers 304 with an empty body whenever
+        # nothing changed, so the steady-state cost is one tiny round trip per
+        # asset per page load against a loopback server. That is the right
+        # trade for a workbench whose whole purpose is watching code changes
+        # take effect, and it makes the ?v= stamps redundant rather than
+        # load-bearing.
+        path = request.url.path
+        if path.startswith("/static/") or path in self._REVALIDATE_EXACT:
+            response.headers["Cache-Control"] = "no-cache"
+
         return response
 
 

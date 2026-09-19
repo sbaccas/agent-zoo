@@ -858,6 +858,13 @@ def build_decision_prompt(
     caps = obs.capabilities or {}
     atk_range = caps.get("attack_range", 2)
     vision_rad = caps.get("vision_radius", 4)
+    # The other two viewport dimensions are operator-tunable at runtime, so the
+    # prompt derives its description from them instead of restating constants.
+    # A prompt that says "3 either side" while the engine is running a
+    # half-width of 8 is worse than saying nothing: the actor's membership test
+    # is the only thing standing between it and swinging at what it cannot see.
+    vision_rear = caps.get("vision_rear", 2)
+    vision_half = caps.get("vision_half_width", 3)
     move_cd = caps.get("move_cooldown", 3)
     atk_cd = caps.get("attack_cooldown", 3)
     lunge_cd = caps.get("lunge_cooldown", 2)
@@ -912,11 +919,12 @@ def build_decision_prompt(
         f"Rival Cats: {rival_text}\n"
         f"Capabilities this tick:\n"
         f"  • attack_range: {atk_range} tiles deep, strike zone 3 tiles wide\n"
-        f"  • vision_radius: {vision_rad} tiles\n"
+        f"  • vision_radius: {vision_rad} tiles ahead, plus {vision_rear} behind and "
+        f"{vision_half} either side (a box around you, {2 * vision_half + 1} tiles wide)\n"
         f"  • move_cooldown: {move_cd} tick(s)\n"
         f"  • attack_cooldown: {atk_cd} tick(s)\n"
         f"  • lunge_cooldown: {lunge_cd} tick(s)\n"
-        f"Visible Entities in Vision Cone: {entities}\n"
+        f"Visible Entities in Viewport: {entities}\n"
         f"Legal Actions this tick: {legal}"
     )
 
@@ -1261,9 +1269,10 @@ async def interrogate_adk_gemini(
                 f"Agent ID: {agent_id}\n"
                 f"Current Position: (x={pos.get('x', 0)}, y={pos.get('y', 0)})\n"
                 f"Current Facing: {facing}\n"
-                f"vision_radius: {caps.get('vision_radius', 4)} tiles (90° forward cone)\n"
+                f"vision_radius: {caps.get('vision_radius', 4)} tiles ahead, plus "
+                f"{caps.get('vision_rear', 2)} behind and {caps.get('vision_half_width', 3)} either side\n"
                 f"attack_range: {caps.get('attack_range', 2)} tiles\n"
-                f"Visible Entities in Vision Cone: {entities}\n"
+                f"Visible Entities in Viewport: {entities}\n"
                 f"Legal Actions available: {legal}\n"
                 f"{directive_context}"
                 f"{COMMANDER_BLOCK_HEADER}\n"

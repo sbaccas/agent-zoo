@@ -70,6 +70,8 @@
   const settingCatAttackCd = document.getElementById('settingCatAttackCd');
   const settingCatLungeCd = document.getElementById('settingCatLungeCd');
   const settingCatVision = document.getElementById('settingCatVision');
+  const settingCatVisionRear = document.getElementById('settingCatVisionRear');
+  const settingCatVisionHalfWidth = document.getElementById('settingCatVisionHalfWidth');
   const settingCatWeight = document.getElementById('settingCatWeight');
 
   const settingMouseMove = document.getElementById('settingMouseMove');
@@ -946,13 +948,38 @@
       const cy = e.position.y * cellH + cellH / 2;
 
       if (e.type === 'cat') {
-        const angle = getFacingAngle(e.facing || 'north');
-        const radius = catVision * cellW;
+        // Draw the viewport as the engine actually computes it: a box *around*
+        // the cat -- forward, rear and lateral reach all read live from the
+        // species config, the same three numbers `World.get_fov_tiles` is
+        // called with. They are deliberately NOT hardcoded here: all three are
+        // editable from the settings tab at runtime, and an overlay that kept
+        // its own copy would quietly disagree with the engine the moment
+        // anyone touched a dial.
+        //
+        // This started life as a `ctx.arc` pie sector spanning angle +/- PI/4,
+        // which matched nothing in the engine -- it was a decorative 90 degree
+        // wedge. Watching the cat ignore a mouse sitting plainly inside the red
+        // wedge was misleading: the mouse was outside the real tile set. The
+        // fallbacks below mirror World.FOV_* only for the case where species
+        // config has not arrived yet.
+        //
+        // A tapered version was tried and reverted, which is why this is a
+        // single rect: the shape is uniform with distance, so one rect is exact.
+        const HALF_WIDTH = state.species?.cat?.vision_half_width ?? 3;
+        const REAR_DEPTH = state.species?.cat?.vision_rear ?? 2;
+        const [fdx, fdy] = { north: [0, -1], south: [0, 1], east: [1, 0], west: [-1, 0] }[e.facing || 'north'];
+        const pdx = -fdy, pdy = fdx;
+        const corners = [
+          [-REAR_DEPTH, -HALF_WIDTH], [-REAR_DEPTH, HALF_WIDTH],
+          [catVision, -HALF_WIDTH], [catVision, HALF_WIDTH],
+        ].map(([f, l]) => [e.position.x + fdx * f + pdx * l, e.position.y + fdy * f + pdy * l]);
+        const minX = Math.min(...corners.map(c => c[0]));
+        const maxX = Math.max(...corners.map(c => c[0]));
+        const minY = Math.min(...corners.map(c => c[1]));
+        const maxY = Math.max(...corners.map(c => c[1]));
         ctx.save();
         ctx.beginPath();
-        ctx.moveTo(cx, cy);
-        ctx.arc(cx, cy, radius, angle - Math.PI / 4, angle + Math.PI / 4);
-        ctx.closePath();
+        ctx.rect(minX * cellW, minY * cellH, (maxX - minX + 1) * cellW, (maxY - minY + 1) * cellH);
         ctx.fillStyle = 'rgba(239, 68, 68, 0.12)';
         ctx.fill();
         ctx.strokeStyle = 'rgba(220, 38, 38, 0.35)';
@@ -1669,7 +1696,10 @@
         if (settingCatAttackCd) settingCatAttackCd.value = data.cat.attack_cooldown ?? 3;
         if (settingCatLungeCd) settingCatLungeCd.value = data.cat.lunge_cooldown ?? 2;
         if (settingCatVision) settingCatVision.value = data.cat.vision_radius ?? 10;
+        if (settingCatVisionRear) settingCatVisionRear.value = data.cat.vision_rear ?? 2;
+        if (settingCatVisionHalfWidth) settingCatVisionHalfWidth.value = data.cat.vision_half_width ?? 3;
         if (settingCatWeight) settingCatWeight.value = data.cat.weight ?? 10;
+        updateCatVisionBoxReadout();
       }
       if (data.mouse) {
         if (settingMouseMove) settingMouseMove.value = data.mouse.move_cooldown ?? 2;
@@ -1688,13 +1718,36 @@
     hideSettingsFeedback();
   }
 
+
+  // Renders the box the three vision numbers actually describe. The stored
+  // field is a *half*-width, so without this you have to do 2n+1 in your head
+  // to know what you just built -- and the whole reason the viewport is a box
+  // rather than a taper is to keep that arithmetic off the operator as well as
+  // off the actor.
+  function updateCatVisionBoxReadout() {
+    const el = document.getElementById('catVisionBoxReadout');
+    if (!el) return;
+    const fwd = parseIntDefault(settingCatVision?.value, 10, 1);
+    const rear = parseIntDefault(settingCatVisionRear?.value, 2, 0);
+    const half = parseIntDefault(settingCatVisionHalfWidth?.value, 3, 0);
+    const depth = fwd + rear + 1;       // +1 for the cat's own row
+    const width = 2 * half + 1;         // always odd, by construction
+    let msg = `Box: ${depth} deep \u00d7 ${width} wide = ${depth * width} tiles`;
+    if (rear === 0) msg += ' \u2014 blind behind';
+    if (half === 0) msg += ' \u2014 single-file lane';
+    el.textContent = msg;
+  }
+
   function resetSettingsToDefaults() {
     if (settingCatMove) settingCatMove.value = 3;
     if (settingCatAttackRange) settingCatAttackRange.value = 8;
     if (settingCatAttackCd) settingCatAttackCd.value = 3;
     if (settingCatLungeCd) settingCatLungeCd.value = 2;
     if (settingCatVision) settingCatVision.value = 10;
+    if (settingCatVisionRear) settingCatVisionRear.value = 2;
+    if (settingCatVisionHalfWidth) settingCatVisionHalfWidth.value = 3;
     if (settingCatWeight) settingCatWeight.value = 10;
+    updateCatVisionBoxReadout();
 
     if (settingMouseMove) settingMouseMove.value = 2;
     if (settingMouseVision) settingMouseVision.value = 4;
@@ -1712,6 +1765,8 @@
       attack_cooldown: parseIntDefault(settingCatAttackCd?.value, 3, 0),
       lunge_cooldown: parseIntDefault(settingCatLungeCd?.value, 2, 0),
       vision_radius: parseIntDefault(settingCatVision?.value, 10, 1),
+      vision_rear: parseIntDefault(settingCatVisionRear?.value, 2, 0),
+      vision_half_width: parseIntDefault(settingCatVisionHalfWidth?.value, 3, 0),
       weight: parseIntDefault(settingCatWeight?.value, 10, 1)
     };
 
@@ -1743,6 +1798,31 @@
 
   const btnPopoutWindow = document.getElementById('btnPopoutWindow');
 
+  // Both pop-outs are opened with a *fixed* window name so that clicking the
+  // button twice focuses the existing window instead of littering the desktop
+  // with duplicates. That is the behaviour we want, but it has a nasty side
+  // effect: when a window with the given name already exists AND the URL is
+  // byte-identical to the one it is already showing, the browser treats the
+  // call as a pure focus request. It does not navigate, so it never re-fetches
+  // the HTML, so the popup keeps showing whatever markup it loaded when it was
+  // first opened -- potentially hours earlier.
+  //
+  // This bit us for real: the Cat vision controls were split into Forward /
+  // Rear / Side Reach, the server was verifiably serving the new markup, and
+  // the settings popup still showed the old single "Vision Radius" dial. The
+  // page was not cached in the ordinary sense and a reload of the *parent*
+  // window did nothing, because the popup is an independent browsing context
+  // that was simply never told to load anything again.
+  //
+  // Appending a throwaway timestamp makes each open a genuinely different URL,
+  // which forces the navigation and therefore a fresh fetch. The server routes
+  // /settings and /boxscore with FileResponse and ignores the query string, and
+  // neither page reads its own query params, so the parameter is inert beyond
+  // defeating the no-op-focus path.
+  function popoutUrl(path) {
+    return `${path}?v=${Date.now()}`;
+  }
+
   function openSettingsWindow() {
     const width = 560;
     const height = 780;
@@ -1752,7 +1832,7 @@
     const top = Math.max(20, (window.screenY || 0) + 30);
     const features = `width=${width},height=${height},left=${left},top=${top},resizable=yes,scrollbars=yes,status=no,toolbar=no,menubar=no,location=no`;
 
-    const popup = window.open('/settings', 'CMGameSettings', features);
+    const popup = window.open(popoutUrl('/settings'), 'CMGameSettings', features);
     if (popup && !popup.closed) {
       popup.focus();
       closeSettingsModal();
@@ -1773,7 +1853,7 @@
     const top = Math.max(20, (window.screenY || 0) + 30);
     const features = `width=${width},height=${height},left=${left},top=${top},resizable=yes,scrollbars=yes,status=no,toolbar=no,menubar=no,location=no`;
 
-    const popup = window.open('/boxscore', 'CMBoxScore', features);
+    const popup = window.open(popoutUrl('/boxscore'), 'CMBoxScore', features);
     if (popup && !popup.closed) {
       popup.focus();
     } else {
@@ -1789,6 +1869,11 @@
   if (btnCancelSettings) btnCancelSettings.addEventListener('click', closeSettingsModal);
   if (btnSaveSettings) btnSaveSettings.addEventListener('click', saveSettings);
   if (btnResetSettings) btnResetSettings.addEventListener('click', resetSettingsToDefaults);
+  // Keep the derived-shape readout honest while the operator is still typing,
+  // not just after a save round-trips.
+  [settingCatVision, settingCatVisionRear, settingCatVisionHalfWidth].forEach((el) => {
+    if (el) el.addEventListener('input', updateCatVisionBoxReadout);
+  });
 
   // Real-time canvas AoE preview update when user edits attack range in settings
   if (settingCatAttackRange) {

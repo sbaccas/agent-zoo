@@ -18,7 +18,36 @@ class Topology(str, Enum):
 
 
 class SpeciesConfig(BaseModel):
-    vision_radius: int = Field(default=4, ge=1, description="Vision radius in grid tiles")
+    # The three dimensions of the viewport, all measured in the entity's own
+    # frame. Together they define the box `World.get_fov_tiles` builds:
+    #
+    #     -vision_rear <= forward <= vision_radius
+    #     |offaxis|    <= vision_half_width
+    #
+    # These only govern predators. Prey use a radial check against
+    # `vision_radius` instead (360 degree panoramic vision, eyes on the sides),
+    # so `vision_rear` and `vision_half_width` are ignored for mice. They are
+    # still declared here rather than on a cat-only model because the species
+    # table is keyed generically and the settings UI PATCHes both species
+    # through the same endpoint.
+    vision_radius: int = Field(default=4, ge=1, description="Forward reach of vision, in tiles")
+    vision_rear: int = Field(
+        default=2,
+        ge=0,
+        le=100,
+        description="How far behind the entity the viewport extends, in tiles (predators only)",
+    )
+    # Half-width rather than full width because the box is symmetric about the
+    # centre line, so the full width is always 2n+1 and therefore always odd. A
+    # full-width field would accept 6 and then silently render as 5 or 7. This
+    # way every accepted value is exactly representable; the UI displays the
+    # derived full width so nobody has to do the arithmetic.
+    vision_half_width: int = Field(
+        default=3,
+        ge=0,
+        le=100,
+        description="Lateral reach either side of the centre line, in tiles (predators only)",
+    )
     action_budget: int = Field(default=1, ge=1, description="Action budget per turn")
     weight: int = Field(default=1, ge=1, description="Physics weight for bumps and displacement")
     attack_range: int = Field(default=0, ge=0, description="Range in tiles for directional slash AoE")
@@ -75,6 +104,12 @@ class SimulationConfig(BaseModel):
         default_factory=lambda: {
             "cat": SpeciesConfig(
                 vision_radius=10,
+                # The viewport: 10 ahead, 2 behind, 3 either side -- a 13x7
+                # box, 91 tiles. Stated here rather than left to the field
+                # defaults because the cat is the only entity that uses the
+                # box at all, so these are the numbers that actually ship.
+                vision_rear=2,
+                vision_half_width=3,
                 action_budget=2,
                 weight=10,
                 # Depth of the strike zone in tiles. The zone is a rectangle
@@ -153,6 +188,11 @@ class ModifyPopulationRequest(BaseModel):
 
 class UpdateSpeciesConfigRequest(BaseModel):
     vision_radius: Optional[int] = Field(default=None, ge=1)
+    # Bounds mirror SpeciesConfig exactly. They are repeated rather than shared
+    # because this model's job is to reject a bad PATCH at the edge, before
+    # `update_species_config` setattr's it onto the live config mid-tick.
+    vision_rear: Optional[int] = Field(default=None, ge=0, le=100)
+    vision_half_width: Optional[int] = Field(default=None, ge=0, le=100)
     action_budget: Optional[int] = Field(default=None, ge=1)
     weight: Optional[int] = Field(default=None, ge=1)
     attack_range: Optional[int] = Field(default=None, ge=0)

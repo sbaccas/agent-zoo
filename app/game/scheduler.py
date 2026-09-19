@@ -63,16 +63,29 @@ class Scheduler:
 
     def _build_observation_payload(self, entity: Entity, can_act: bool = True) -> dict:
         species_key = entity.type.value
+        # All three viewport dimensions are per-species and live-tunable, so
+        # they are read fresh every observation rather than cached anywhere.
         vision_radius = 4
+        vision_rear = World.FOV_REAR_DEPTH
+        vision_half_width = World.FOV_HALF_WIDTH
         if species_key in self.entity_manager.species_config:
-            vision_radius = self.entity_manager.species_config[species_key].vision_radius
+            _cfg = self.entity_manager.species_config[species_key]
+            vision_radius = _cfg.vision_radius
+            vision_rear = _cfg.vision_rear
+            vision_half_width = _cfg.vision_half_width
 
         visible = []
         # Hoisted: also used below to decide which hazard zones this entity can
-        # see. Empty for mice, which use a radial check instead of a cone.
+        # see. Empty for mice, which use a radial check instead of the box.
         fov_tiles: set = set()
         if entity.type == EntityType.CAT:
-            fov_tiles = set(self.world.get_forward_fov_tiles(entity.position, entity.facing, distance=vision_radius))
+            fov_tiles = set(self.world.get_fov_tiles(
+                entity.position,
+                entity.facing,
+                distance=vision_radius,
+                rear=vision_rear,
+                half_width=vision_half_width,
+            ))
             for other in self.entity_manager.get_alive_entities():
                 if other.id != entity.id and (other.position.x, other.position.y) in fov_tiles:
                     visible.append({
@@ -141,6 +154,13 @@ class Scheduler:
 
         capabilities = {
             "vision_radius": vision_radius,
+            # The other two dimensions of the viewport. Shipped to the agent
+            # because the actor manual now derives its membership test from
+            # these rather than quoting fixed numbers -- if they were tuned and
+            # the prompt still said "3 either side", the manual would be lying
+            # about the only rule the actor uses to decide what it can see.
+            "vision_rear": vision_rear,
+            "vision_half_width": vision_half_width,
             "attack_range": attack_range,
             "move_cooldown": move_cd,
             "attack_cooldown": attack_cd,

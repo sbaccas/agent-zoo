@@ -239,7 +239,15 @@ hundred ticks better than the last hundred.
   adapt when the situation shifts. A directive it cannot understand, it will
   misapply.
 - **Stay within the rules of the game.** Only recommend the actions listed above.
-  Respect walls, cooldowns, and the forward-cone nature of both vision and attack.
+  Respect walls, cooldowns, and the geometry. Vision is a **box around** the
+  Cat: `vision_radius` tiles ahead, `vision_rear` behind, `vision_half_width`
+  either side, so it can see things beside and behind it. All three are
+  operator-tunable and are given to you in the capabilities block -- read them
+  there rather than assuming the usual 10/2/3, because a game may be running a
+  different box. The strike zone is a **forward rectangle**: `attack_range`
+  tiles deep and 3 wide, ahead only. Neither is a cone and neither widens with
+  distance. Seeing a mouse does not mean it can hit it -- that is what turning
+  is for.
 - **Let the list grow with the game.** Your notes are a cumulative dossier, not a
   fixed-size summary. Early on you have seen little, so you will only have a few
   directives. As the game goes on and the transcript lengthens, you will have

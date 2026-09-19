@@ -57,15 +57,23 @@ class ActionHandler:
     def _scan_prey(self, entity: Entity) -> tuple:
         """Return (prey_visible, prey_in_strike_zone) for a cat, pre-action.
 
-        Visibility deliberately reuses `get_forward_fov_tiles`, the same cone
+        Visibility deliberately reuses `get_fov_tiles`, the same box
         the observation payload is built from, so "prey in sight" means what
         the agent was actually shown rather than a looser radial guess.
         """
         spec_cfg = self.entity_manager.species_config.get(entity.type.value)
         vision = spec_cfg.vision_radius if spec_cfg else 4
+        rear = spec_cfg.vision_rear if spec_cfg else World.FOV_REAR_DEPTH
+        half_width = spec_cfg.vision_half_width if spec_cfg else World.FOV_HALF_WIDTH
         atk_range = spec_cfg.attack_range if spec_cfg and spec_cfg.attack_range > 0 else 2
 
-        fov = set(self.world.get_forward_fov_tiles(entity.position, entity.facing, distance=vision))
+        fov = set(self.world.get_fov_tiles(
+            entity.position,
+            entity.facing,
+            distance=vision,
+            rear=rear,
+            half_width=half_width,
+        ))
         strike = set(self.world.get_slash_aoe_tiles(entity.position, entity.facing, range_tiles=atk_range))
 
         prey_visible = False
