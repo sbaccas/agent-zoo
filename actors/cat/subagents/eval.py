@@ -20,6 +20,7 @@ from datetime import datetime, timezone
 import logging
 import os
 from pathlib import Path
+import re
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -888,6 +889,97 @@ def build_eval_prompt(
     )
 
 
+def _is_final_event(event: Any) -> bool:
+    """True when this event carries the model's answer rather than narration.
+
+    ADK's `is_final_response()` is false for partial streaming frames and for
+    any turn carrying a function call or response. Those are precisely the turns
+    the evaluator used to publish: the coach calls `get_boxscore`, and the turn
+    that issues that call can carry commentary alongside it. Treating such a turn
+    as part of the answer is what put a box-score dump and a chain-of-thought
+    aside into the Cat's standing orders.
+
+    Wrapped rather than called inline for two reasons: it is the single decision
+    that separates a clean dossier from a polluted one, so it deserves a name and
+    a test; and it belongs to a library we do not own, so a change in its
+    semantics should fail one obvious test instead of quietly corrupting the
+    coaching channel.
+
+    Fails *open* on error -- an unrecognised event is treated as narration, not as
+    the answer. If this helper is wrong in that direction the run falls back to
+    collecting every chunk, which is the old behaviour: ugly, but never silent.
+    """
+    try:
+        return bool(event.is_final_response())
+    except Exception:
+        return False
+
+
+# A markdown list item: `-`, `*`, `+`, or `1.` / `1)`, with at most three spaces
+# of leading indent (more than that is a nested list or a code block).
+_BULLET_RE = re.compile(r"^ {0,3}(?:[-*+]|\d+[.)])\s+\S")
+
+
+def _strip_to_directives(text: str) -> str:
+    """Drops narration that precedes the directive list.
+
+    Second line of defence behind the final-response filter in `evaluate`. That
+    filter removes narration that arrived in a *separate* turn, which is the
+    failure we actually observed. This one removes narration that arrives in the
+    *same* turn as the answer -- a model writing "Here is my analysis... therefore
+    the revised directives are:" before the list it was asked for.
+
+    The rule is "keep the trailing run of list items". Anchoring on the *first*
+    bullet instead would not work, and the real failure shows why: that dossier
+    rendered its box-score dump as a bullet list (``- `kills`: 16``), so the
+    first bullet in the document was data, not a directive. The last contiguous
+    block of bullets is far more reliably the answer, because the answer is the
+    last thing a model writes.
+
+    Two guards matter:
+
+    * A line that is indented or blank does not break the run, so a directive
+      wrapped across lines is not mistaken for prose and does not sever the
+      list above it.
+    * If the result would be empty -- no bullets at all, e.g. the model wrote a
+      single prose paragraph -- the original text is returned untouched. Coaching
+      that is badly formatted is still coaching; coaching that is gone is a
+      silent regression to positional filler.
+
+    This never reorders, rewrites or truncates the directives themselves.
+    """
+    if not text:
+        return text
+
+    lines = text.splitlines()
+    # Index of the last line that is unambiguously prose: non-blank, flush left,
+    # and not a list item. Everything after it is the directive block.
+    last_prose = -1
+    for i, line in enumerate(lines):
+        if not line.strip():
+            continue
+        if line[:1].isspace():
+            continue  # continuation of the bullet above
+        if not _BULLET_RE.match(line):
+            last_prose = i
+
+    if last_prose < 0:
+        return text.strip()
+
+    trimmed = "\n".join(lines[last_prose + 1:]).strip()
+    if not trimmed:
+        # Nothing followed the prose -- the model answered without a list. Keep
+        # what it said rather than publishing an empty file.
+        return text.strip()
+
+    if last_prose >= 0:
+        logger.warning(
+            "Stripped %d line(s) of narration preceding the coach's directives.",
+            last_prose + 1,
+        )
+    return trimmed
+
+
 async def evaluate(records: List[Dict[str, Any]]) -> Tuple[str, str]:
     """Runs one evaluation pass over a transcript.
 
@@ -938,7 +1030,30 @@ async def evaluate(records: List[Dict[str, Any]]) -> Tuple[str, str]:
             )
 
             msg = types.Content(role="user", parts=[types.Part.from_text(text=prompt)])
-            chunks: List[str] = []
+            # Two buckets, not one. `final_chunks` is the answer; `all_chunks` is
+            # everything the model said, kept only as a fallback.
+            #
+            # The single-bucket version of this shipped a 70-line dossier into the
+            # standing orders: a full box-score dump, an "Analysis of Existing
+            # Directives" section, a chain-of-thought aside ("Wait, slash_attempts
+            # is 15 ... This is a crucial finding!"), and then the directive list
+            # twice over -- once with `*` bullets and once with `-`, welded
+            # together mid-line because `"".join` adds no separator.
+            #
+            # None of that was the model disobeying. eval_skills.md 3 says "Write
+            # only the bullets. Nothing else." and it complied -- in its *final*
+            # turn. The rest was narration emitted alongside the `get_boxscore`
+            # call, which splits one evaluation into several turns. The old code
+            # collected text from every one of them.
+            #
+            # It stayed hidden while the evaluator's thinking budget was 0,
+            # because an unthinking model answered in a single turn and there was
+            # only ever one chunk to join. Raising the budget made the model plan,
+            # call the tool, and narrate around it -- so the latent bug started
+            # firing, intermittently, depending on whether a given run chose to
+            # call the tool at all.
+            final_chunks: List[str] = []
+            all_chunks: List[str] = []
 
             async with asyncio.timeout(timeout_sec):
                 agen = eval_runner.run_async(
@@ -956,18 +1071,45 @@ async def evaluate(records: List[Dict[str, Any]]) -> Tuple[str, str]:
                         # turns, and reading only the final turn would report
                         # the thinking that followed the boxscore fetch while
                         # silently dropping the thinking that decided to fetch.
+                        #
+                        # Note this is the opposite policy to the text below, and
+                        # deliberately so. Cost is incurred by every turn, so it
+                        # accumulates; the answer is produced by one turn, so it
+                        # does not. Conflating the two is what caused the bug.
                         usage = getattr(event, "usage_metadata", None)
                         spent = getattr(usage, "thoughts_token_count", None)
                         if spent is not None:
                             thoughts = (thoughts or 0) + spent
-                        if event.content and event.content.parts:
-                            for p in event.content.parts:
-                                if p.text and not getattr(p, "thought", False):
-                                    chunks.append(p.text)
+                        if not (event.content and event.content.parts):
+                            continue
+                        # See `_is_final_event`: this is what separates the
+                        # answer from narration emitted around a tool call.
+                        is_final = _is_final_event(event)
+                        for p in event.content.parts:
+                            if not p.text or getattr(p, "thought", False):
+                                continue
+                            all_chunks.append(p.text)
+                            if is_final:
+                                final_chunks.append(p.text)
                 except StopAsyncIteration:
                     pass
 
-            notes = "".join(chunks).strip()
+            # Prefer the final response. Fall back to everything only if the run
+            # produced no final-response text at all -- publishing a polluted
+            # dossier is bad, publishing nothing is worse, because a blank reply
+            # drops through to `_summarise_without_model` and the positional
+            # filler overwrites the real standing orders.
+            notes = "".join(final_chunks).strip()
+            if not notes:
+                notes = "".join(all_chunks).strip()
+                if notes:
+                    logger.warning(
+                        "Evaluator produced no final-response text; falling back "
+                        "to the full transcript of %d part(s).",
+                        len(all_chunks),
+                    )
+
+            notes = _strip_to_directives(notes)
             if notes:
                 return notes, "adk_gemini"
             logger.warning("Evaluator returned empty notes; using offline fallback.")
