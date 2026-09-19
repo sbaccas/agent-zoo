@@ -339,6 +339,7 @@ async def get_boxscore() -> Dict[str, Any]:
       ticks_measured: tick minus tracking_since_tick
       arena: width, height, tiles
       leader: id of the cat with the most kills, or null
+      mice_alive, mice_initial, captures: population counts (when disclosed)
       cats: one row per cat, each with
         id, mode, alive, position (x, y)
         kills, kills_per_100_ticks, tiles_per_kill
@@ -392,7 +393,7 @@ async def get_boxscore() -> Dict[str, Any]:
     # measured: a tracker attached mid-game reports partial counters.
     measured = tick - since if isinstance(tick, int) and isinstance(since, int) else None
 
-    return {
+    result = {
         "available": True,
         "simulation_id": payload.get("simulation_id"),
         "status": payload.get("status"),
@@ -406,6 +407,57 @@ async def get_boxscore() -> Dict[str, Any]:
         # point: filtering to cat-1 here would leave the coach with a number and
         # nothing to measure it against.
         "cats": cats,
+    }
+
+    if "mice_alive" in payload:
+        result["mice_alive"] = payload["mice_alive"]
+    if "mice_initial" in payload:
+        result["mice_initial"] = payload["mice_initial"]
+    if "captures" in payload:
+        result["captures"] = payload["captures"]
+
+    return result
+
+
+def _coverage_map_unavailable(reason: str) -> Dict[str, Any]:
+    """The one shape returned when coverage map could not be obtained."""
+    return {"available": False, "reason": reason}
+
+
+async def get_coverage_map() -> Dict[str, Any]:
+    """Call get_coverage_map to see where on the board the cat has spent its ticks."""
+    if not _boxscore_fetch_enabled():
+        return _coverage_map_unavailable(
+            f"coverage map fetch is switched off ({BOXSCORE_FETCH_ENV}=0)"
+        )
+
+    base = (os.environ.get(GAME_SERVER_URL_ENV) or DEFAULT_GAME_SERVER_URL).rstrip("/")
+    url = f"{base}/api/simulations/{BOXSCORE_SIM_ID}/heatmap"
+
+    try:
+        async with httpx.AsyncClient(timeout=BOXSCORE_TIMEOUT_SECONDS) as client:
+            resp = await client.get(url)
+            if resp.status_code == 403:
+                return _coverage_map_unavailable("coverage map disclosure is disabled")
+            if resp.status_code != 200:
+                return _coverage_map_unavailable(
+                    f"game server returned HTTP {resp.status_code}"
+                )
+            payload = resp.json()
+    except Exception as exc:
+        logger.warning("Coverage map fetch failed: %s: %s", type(exc).__name__, exc)
+        return _coverage_map_unavailable(f"{type(exc).__name__}: {exc}")
+
+    if not isinstance(payload, dict):
+        return _coverage_map_unavailable("game server returned an unexpected payload")
+
+    return {
+        "available": True,
+        "ascii": payload.get("ascii"),
+        "arena": payload.get("arena"),
+        "grid_size": payload.get("grid_size"),
+        "cell_size": payload.get("cell_size"),
+        "cats": payload.get("cats"),
     }
 
 
@@ -445,7 +497,7 @@ eval_agent = LlmAgent(
     name="cat_evaluator",
     model=EVAL_MODEL,
     instruction=_eval_instruction_provider,
-    tools=[get_boxscore],
+    tools=[get_boxscore, get_coverage_map],
     generate_content_config=types.GenerateContentConfig(
         thinking_config=types.ThinkingConfig(thinking_budget=_initial_eval_budget)
     ),
@@ -609,6 +661,7 @@ _last_eval_telemetry: Dict[str, Any] = {
     "thoughts_token_count": None,
     "latency_ms": None,
     "timed_out": False,
+    "tool_calls": [],
 }
 
 
@@ -1054,6 +1107,7 @@ async def evaluate(records: List[Dict[str, Any]]) -> Tuple[str, str]:
             # call the tool at all.
             final_chunks: List[str] = []
             all_chunks: List[str] = []
+            tool_calls: List[Dict[str, Any]] = []
 
             async with asyncio.timeout(timeout_sec):
                 agen = eval_runner.run_async(
@@ -1082,6 +1136,24 @@ async def evaluate(records: List[Dict[str, Any]]) -> Tuple[str, str]:
                             thoughts = (thoughts or 0) + spent
                         if not (event.content and event.content.parts):
                             continue
+
+                        # Capture tool calls: function_call on call, function_response on result
+                        for p in event.content.parts:
+                            fc = getattr(p, "function_call", None)
+                            if fc and getattr(fc, "name", None):
+                                tool_calls.append({"name": fc.name, "ok": True})
+                            fr = getattr(p, "function_response", None)
+                            if fr and getattr(fr, "name", None) and tool_calls:
+                                # If function_response indicates failure or error, mark ok: False
+                                resp = getattr(fr, "response", {})
+                                if isinstance(resp, dict):
+                                    inner = resp.get("response") if "response" in resp else resp
+                                    if isinstance(inner, dict) and inner.get("available") is False:
+                                        for tc in reversed(tool_calls):
+                                            if tc["name"] == fr.name:
+                                                tc["ok"] = False
+                                                break
+
                         # See `_is_final_event`: this is what separates the
                         # answer from narration emitted around a tool call.
                         is_final = _is_final_event(event)
@@ -1132,6 +1204,7 @@ async def evaluate(records: List[Dict[str, Any]]) -> Tuple[str, str]:
                 "thoughts_token_count": thoughts,
                 "latency_ms": int((time.monotonic() - started) * 1000),
                 "timed_out": timed_out,
+                "tool_calls": tool_calls,
             })
 
     return _summarise_without_model(records), "offline_fallback"

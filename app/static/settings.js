@@ -23,6 +23,11 @@ document.addEventListener('DOMContentLoaded', () => {
   const settingMouseVision = document.getElementById('settingMouseVision');
   const settingMouseWeight = document.getElementById('settingMouseWeight');
 
+  // Disclosure inputs
+  const settingCoachPopulation = document.getElementById('settingCoachPopulation');
+  const settingCoachCoverageMap = document.getElementById('settingCoachCoverageMap');
+  const settingActorOwnTrail = document.getElementById('settingActorOwnTrail');
+
   // Buttons
   const btnSaveSettings = document.getElementById('btnSaveSettings');
   const btnResetSettings = document.getElementById('btnResetSettings');
@@ -82,6 +87,19 @@ document.addEventListener('DOMContentLoaded', () => {
         if (settingMouseVision) settingMouseVision.value = data.mouse.vision_radius ?? 4;
         if (settingMouseWeight) settingMouseWeight.value = data.mouse.weight ?? 1;
       }
+
+      // Load disclosure
+      try {
+        const discResp = await fetch('/api/simulations/active/disclosure');
+        if (discResp.ok) {
+          const disc = await discResp.json();
+          if (settingCoachPopulation) settingCoachPopulation.checked = disc.coach_sees_population ?? true;
+          if (settingCoachCoverageMap) settingCoachCoverageMap.checked = disc.coach_sees_coverage_map ?? true;
+          if (settingActorOwnTrail) settingActorOwnTrail.checked = disc.actor_sees_own_trail ?? false;
+        }
+      } catch (discErr) {
+        console.warn('Failed to load disclosure config:', discErr);
+      }
     } catch (err) {
       console.error('Failed to load species data:', err);
       if (syncStatus) {
@@ -116,8 +134,14 @@ document.addEventListener('DOMContentLoaded', () => {
       weight: parseIntDefault(settingMouseWeight?.value, 1, 1),
     };
 
+    const disclosurePayload = {
+      coach_sees_population: !!settingCoachPopulation?.checked,
+      coach_sees_coverage_map: !!settingCoachCoverageMap?.checked,
+      actor_sees_own_trail: !!settingActorOwnTrail?.checked,
+    };
+
     try {
-      const [resCat, resMouse] = await Promise.all([
+      const [resCat, resMouse, resDisc] = await Promise.all([
         fetch('/api/simulations/active/species/cat', {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
@@ -128,10 +152,15 @@ document.addEventListener('DOMContentLoaded', () => {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(mousePayload),
         }),
+        fetch('/api/simulations/active/disclosure', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(disclosurePayload),
+        }),
       ]);
 
-      if (!resCat.ok || !resMouse.ok) {
-        throw new Error('Failed to update species parameters');
+      if (!resCat.ok || !resMouse.ok || !resDisc.ok) {
+        throw new Error('Failed to update parameters');
       }
 
       showFeedback('✓ Settings applied live! Active on next simulation tick.', false);
@@ -192,15 +221,19 @@ document.addEventListener('DOMContentLoaded', () => {
     if (settingCatVisionHalfWidth) settingCatVisionHalfWidth.value = 3;
     if (settingCatWeight) settingCatWeight.value = 10;
     // Matches SpeciesConfig.aim_assist's default. Reset means "back to the
-    // shipped baseline", and the shipped baseline is the unassisted condition
-    // every archived prompt was recorded under.
-    if (settingCatAimAssist) settingCatAimAssist.checked = false;
+    // shipped baseline", and the shipped baseline has aim assist enabled.
+    if (settingCatAimAssist) settingCatAimAssist.checked = true;
     updateCatVisionBoxReadout();
     updateAimAssistReadout();
 
     if (settingMouseMove) settingMouseMove.value = 2;
     if (settingMouseVision) settingMouseVision.value = 4;
     if (settingMouseWeight) settingMouseWeight.value = 1;
+
+    // Matches DisclosureConfig defaults
+    if (settingCoachPopulation) settingCoachPopulation.checked = true;
+    if (settingCoachCoverageMap) settingCoachCoverageMap.checked = true;
+    if (settingActorOwnTrail) settingActorOwnTrail.checked = false;
 
     showFeedback('Reset values to default. Click "Apply Settings" to activate on server.', false);
   }

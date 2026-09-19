@@ -79,6 +79,10 @@
   const settingMouseVision = document.getElementById('settingMouseVision');
   const settingMouseWeight = document.getElementById('settingMouseWeight');
 
+  const settingCoachPopulation = document.getElementById('settingCoachPopulation');
+  const settingCoachCoverageMap = document.getElementById('settingCoachCoverageMap');
+  const settingActorOwnTrail = document.getElementById('settingActorOwnTrail');
+
   let currentSimId = 'active';
   let pollTimeout = null;
   let currentState = null;
@@ -1713,6 +1717,18 @@
         if (settingMouseVision) settingMouseVision.value = data.mouse.vision_radius ?? 4;
         if (settingMouseWeight) settingMouseWeight.value = data.mouse.weight ?? 1;
       }
+
+      // Load disclosure settings
+      try {
+        const disc = await apiCall(`/api/simulations/${currentSimId}/disclosure`, 'GET');
+        if (disc) {
+          if (settingCoachPopulation) settingCoachPopulation.checked = disc.coach_sees_population ?? true;
+          if (settingCoachCoverageMap) settingCoachCoverageMap.checked = disc.coach_sees_coverage_map ?? true;
+          if (settingActorOwnTrail) settingActorOwnTrail.checked = disc.actor_sees_own_trail ?? false;
+        }
+      } catch (discErr) {
+        console.warn('Failed to load disclosure settings:', discErr);
+      }
     } catch (err) {
       console.error('Failed to load species settings:', err);
       showSettingsFeedback('Failed to load species settings.', true);
@@ -1754,8 +1770,8 @@
     if (settingCatVisionRear) settingCatVisionRear.value = 2;
     if (settingCatVisionHalfWidth) settingCatVisionHalfWidth.value = 3;
     // Mirrors SpeciesConfig.aim_assist's default -- reset means the shipped
-    // baseline, which is the unassisted condition the archive was recorded in.
-    if (settingCatAimAssist) settingCatAimAssist.checked = false;
+    // baseline, and the shipped baseline has aim assist enabled.
+    if (settingCatAimAssist) settingCatAimAssist.checked = true;
     updateAimAssistReadout();
     if (settingCatWeight) settingCatWeight.value = 10;
     updateCatVisionBoxReadout();
@@ -1763,6 +1779,11 @@
     if (settingMouseMove) settingMouseMove.value = 2;
     if (settingMouseVision) settingMouseVision.value = 4;
     if (settingMouseWeight) settingMouseWeight.value = 1;
+
+    // Matches DisclosureConfig defaults
+    if (settingCoachPopulation) settingCoachPopulation.checked = true;
+    if (settingCoachCoverageMap) settingCoachCoverageMap.checked = true;
+    if (settingActorOwnTrail) settingActorOwnTrail.checked = false;
 
     showSettingsFeedback('Reset to default values. Click "Apply Settings" to save.', false);
   }
@@ -1790,14 +1811,21 @@
       weight: parseIntDefault(settingMouseWeight?.value, 1, 1)
     };
 
+    const disclosurePayload = {
+      coach_sees_population: !!settingCoachPopulation?.checked,
+      coach_sees_coverage_map: !!settingCoachCoverageMap?.checked,
+      actor_sees_own_trail: !!settingActorOwnTrail?.checked
+    };
+
     try {
-      const [catRes, mouseRes] = await Promise.all([
+      const [catRes, mouseRes, discRes] = await Promise.all([
         apiCall(`/api/simulations/${currentSimId}/species/cat`, 'PATCH', catPayload),
-        apiCall(`/api/simulations/${currentSimId}/species/mouse`, 'PATCH', mousePayload)
+        apiCall(`/api/simulations/${currentSimId}/species/mouse`, 'PATCH', mousePayload),
+        apiCall(`/api/simulations/${currentSimId}/disclosure`, 'PATCH', disclosurePayload)
       ]);
 
-      if (!catRes || !mouseRes) {
-        showSettingsFeedback('Failed to update species parameters on server.', true);
+      if (!catRes || !mouseRes || !discRes) {
+        showSettingsFeedback('Failed to update parameters on server.', true);
         return;
       }
 

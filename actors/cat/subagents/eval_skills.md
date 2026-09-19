@@ -127,16 +127,24 @@ transcript. Without those two things you can say "lunge more" but not "you lunge
 far less than the cat that is beating you, and you lunged no more this stretch
 than last."
 
-You have a tool that closes both gaps:
+You have two tools that close these gaps:
 
-**`get_boxscore`** — the game engine's own counters, measured independently of
-the transcript, for **every cat on the board**.
+1. **`get_boxscore`** — the game engine's own counters, measured independently of
+the transcript, for **every cat on the board**, along with overall population counters
+(`mice_alive`, `mice_initial`, `captures`). Mice never respawn: every capture permanently
+depletes that sector's population.
 
-**Call it before you write your notes, on every evaluation.** It is the only
-outcome data you have. Advice written without it is advice written blind to
-whether your last round of advice worked.
+2. **`get_coverage_map`** — call `get_coverage_map` to see where on the board the cat
+has spent its ticks. Returns a 5x5 ASCII grid digest for both cats, with cell percentages
+and exact unvisited/confinement coordinate bounds.
 
-#### How to use what it returns
+**Call it before you write your notes, on every evaluation.** Call both tools before
+writing your notes: they provide the spatial and outcome data you need. When prescribing
+patrol or search directives, provide concrete, coordinate-based advice the Cat can execute
+directly from its observation (e.g., `"Patrol the western third (x < 33)"` rather than
+`"Head for the least-visited region"`).
+
+#### How to use what they return
 
 - **Cite the measurement, not the rule.** A directive that restates a principle
   the Cat has already been told is a directive it has already ignored. Put the

@@ -119,6 +119,7 @@ class Simulation:
             hazard_zones=list(self.action_handler.hazard_zones),
             can_step_back=len(self.history) > 0,
             species=self.entity_manager.species_config,
+            disclosure=self.config.disclosure,
         )
 
     def get_boxscore(self) -> dict:
@@ -136,7 +137,7 @@ class Simulation:
             if len(leaders) == 1:
                 leader = leaders[0]
 
-        return {
+        res = {
             "simulation_id": self.simulation_id,
             "status": self.status,
             "tick": self.scheduler.tick,
@@ -153,6 +154,17 @@ class Simulation:
             "leader": leader,
             "cats": cats,
         }
+
+        # Epistemic tier promotion: when coach_sees_population is True, include
+        # board-level survival/depletion counters in the box score payload.
+        if getattr(self.config, "disclosure", None) and self.config.disclosure.coach_sees_population:
+            mice_alive = self.entity_manager.count_by_type(EntityType.MOUSE)
+            mice_initial = (self.config.populations or {}).get("mice", 150)
+            res["mice_alive"] = mice_alive
+            res["mice_initial"] = mice_initial
+            res["captures"] = self.scheduler.captures
+
+        return res
 
     def get_heatmap(
         self, grid_size: int = heatmap.DEFAULT_GRID_SIZE, last_n: Optional[int] = None

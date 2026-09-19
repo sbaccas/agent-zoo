@@ -107,6 +107,7 @@ async def get_agent_observation(sim_id: str, agent_id: str):
         "attack_cooldown": spec_cfg.attack_cooldown if spec_cfg else 0,
         "lunge_cooldown": spec_cfg.lunge_cooldown if spec_cfg else 0,
         "weight": spec_cfg.weight if spec_cfg else 1,
+        "aim_assist": bool(spec_cfg.aim_assist) if spec_cfg else False,
     }
 
     return ObservationResponse(

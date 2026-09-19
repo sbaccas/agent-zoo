@@ -4,10 +4,12 @@ from fastapi.responses import PlainTextResponse
 from app.game.heatmap import DEFAULT_GRID_SIZE, MAX_GRID_SIZE, MIN_GRID_SIZE
 from app.game.simulation import Simulation
 from app.models.simulation import (
+    DisclosureConfig,
     ModifyPopulationRequest,
     SimulationConfig,
     SimulationStateResponse,
     SpeciesConfig,
+    UpdateDisclosureConfigRequest,
     UpdateSpeciesConfigRequest,
     UpdateTickRateRequest,
 )
@@ -145,6 +147,11 @@ async def get_heatmap(
     two seconds.
     """
     sim = get_simulation_or_404(sim_id)
+    if getattr(sim.config, "disclosure", None) and not sim.config.disclosure.coach_sees_coverage_map:
+        raise HTTPException(
+            status_code=403,
+            detail="Coverage map disclosure is disabled (coach_sees_coverage_map=False)",
+        )
     return sim.get_heatmap(grid_size=grid, last_n=last)
 
 
@@ -160,6 +167,11 @@ async def get_heatmap_text(
     into a prompt, rather than fetching JSON it would only have to re-render.
     """
     sim = get_simulation_or_404(sim_id)
+    if getattr(sim.config, "disclosure", None) and not sim.config.disclosure.coach_sees_coverage_map:
+        raise HTTPException(
+            status_code=403,
+            detail="Coverage map disclosure is disabled (coach_sees_coverage_map=False)",
+        )
     return sim.get_heatmap(grid_size=grid, last_n=last)["ascii"]
 
 
@@ -186,4 +198,22 @@ async def update_species_config(sim_id: str, species_key: str, req: UpdateSpecie
     # Keep config model synchronized
     sim.config.species[key] = current
     return current
+
+
+@router.get("/{sim_id}/disclosure", response_model=DisclosureConfig)
+async def get_disclosure_config(sim_id: str):
+    sim = get_simulation_or_404(sim_id)
+    return sim.config.disclosure
+
+
+@router.patch("/{sim_id}/disclosure", response_model=DisclosureConfig)
+async def update_disclosure_config(sim_id: str, req: UpdateDisclosureConfigRequest):
+    sim = get_simulation_or_404(sim_id)
+    current = sim.config.disclosure
+    updates = req.model_dump(exclude_unset=True)
+    for field, val in updates.items():
+        if val is not None:
+            setattr(current, field, val)
+    return current
+
 

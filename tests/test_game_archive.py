@@ -175,6 +175,11 @@ async def test_reset_writes_a_manifest_naming_the_final_state(archiving):
     assert manifest["final"]["captures"] == 9
     assert manifest["simulation_id"] == sim.simulation_id
     assert manifest["schema"] == archive.MANIFEST_SCHEMA_VERSION
+    assert "disclosure" in manifest["settings"]
+    assert manifest["settings"]["disclosure"]["coach_sees_population"] is True
+    assert manifest["settings"]["disclosure"]["coach_sees_coverage_map"] is True
+    assert manifest["settings"]["disclosure"]["actor_sees_own_trail"] is False
+
 
 
 @pytest.mark.asyncio

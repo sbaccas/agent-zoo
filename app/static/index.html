@@ -325,6 +325,39 @@
             </div>
           </div>
         </div>
+        <!-- Disclosure & Knowledge Tiers Settings Card -->
+        <div class="settings-card disclosure-settings">
+          <div class="settings-card-header">
+            <span class="species-badge" style="background:#e0e7ff;color:#3730a3;">🔒 KNOWLEDGE TIERS &amp; DISCLOSURE</span>
+            <span class="species-summary">A/B experimentation dials for information promotion</span>
+          </div>
+          <div class="settings-grid">
+            <div class="setting-item">
+              <label for="settingCoachPopulation">Coach Sees Population:</label>
+              <div class="setting-input-row">
+                <input type="checkbox" id="settingCoachPopulation" class="form-checkbox">
+                <span class="setting-unit">mice_alive / captures in box score</span>
+              </div>
+              <span class="setting-hint">Promotes Tier 3 ground truth prey counts to Coach</span>
+            </div>
+            <div class="setting-item">
+              <label for="settingCoachCoverageMap">Coach Sees Coverage Map:</label>
+              <div class="setting-input-row">
+                <input type="checkbox" id="settingCoachCoverageMap" class="form-checkbox">
+                <span class="setting-unit">get_coverage_map tool enabled</span>
+              </div>
+              <span class="setting-hint">Provides 5x5 ASCII grid digest of cat tick history</span>
+            </div>
+            <div class="setting-item">
+              <label for="settingActorOwnTrail">Actor Sees Own Trail:</label>
+              <div class="setting-input-row">
+                <input type="checkbox" id="settingActorOwnTrail" class="form-checkbox">
+                <span class="setting-unit">actor-side memory map (reserved)</span>
+              </div>
+              <span class="setting-hint">Reserved for second experimental arm</span>
+            </div>
+          </div>
+        </div>
 
         <div id="settingsFeedback" class="settings-feedback" style="display: none;"></div>
       </div>

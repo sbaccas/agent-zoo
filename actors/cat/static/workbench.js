@@ -1544,14 +1544,15 @@
     }
     const spent = lastRun.thoughts_token_count;
     const secs = (lastRun.latency_ms / 1000).toFixed(1);
-    if (spent === null || spent === undefined) {
-      // Not the same as zero: the response carried no usage metadata. Saying
-      // "0 thought tokens" would be inventing a measurement.
-      evalThinkingSpentBadge.textContent = `last: ${secs}s · thinking not reported`;
-      return;
+    let text = spent === null || spent === undefined
+      ? `last: ${secs}s · thinking not reported`
+      : `last: ${secs}s · ${spent.toLocaleString()} thought tokens`;
+
+    if (Array.isArray(lastRun.tool_calls) && lastRun.tool_calls.length > 0) {
+      const callsStr = lastRun.tool_calls.map(tc => tc.ok ? tc.name : `${tc.name}(err)`).join(', ');
+      text += ` · tools: ${callsStr}`;
     }
-    evalThinkingSpentBadge.textContent =
-      `last: ${secs}s · ${spent.toLocaleString()} thought tokens`;
+    evalThinkingSpentBadge.textContent = text;
   }
 
   // FastAPI reports a schema violation as a 422 whose `detail` is an array of

@@ -183,3 +183,40 @@ async def test_agent_action_facing_and_payload_consistency():
         assert obs_e["self"]["position"] == pos_after_e
 
 
+@pytest.mark.asyncio
+async def test_disclosure_api_and_heatmap_gating():
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        # GET disclosure
+        r = await client.get("/api/simulations/active/disclosure")
+        assert r.status_code == 200
+        data = r.json()
+        assert data["coach_sees_population"] is True
+        assert data["coach_sees_coverage_map"] is True
+        assert data["actor_sees_own_trail"] is False
+
+        # Heatmap is accessible when coach_sees_coverage_map is True
+        hm_res = await client.get("/api/simulations/active/heatmap")
+        assert hm_res.status_code == 200
+
+        # Toggle coach_sees_coverage_map off
+        patch_r = await client.patch("/api/simulations/active/disclosure", json={"coach_sees_coverage_map": False})
+        assert patch_r.status_code == 200
+        assert patch_r.json()["coach_sees_coverage_map"] is False
+
+        # Heatmap endpoints return 403 Forbidden
+        hm_res2 = await client.get("/api/simulations/active/heatmap")
+        assert hm_res2.status_code == 403
+        assert "disabled" in hm_res2.json()["detail"]
+
+        hm_txt = await client.get("/api/simulations/active/heatmap.txt")
+        assert hm_txt.status_code == 403
+
+        # Toggle back on
+        patch_r2 = await client.patch("/api/simulations/active/disclosure", json={"coach_sees_coverage_map": True})
+        assert patch_r2.status_code == 200
+        hm_res3 = await client.get("/api/simulations/active/heatmap")
+        assert hm_res3.status_code == 200
+
+
+

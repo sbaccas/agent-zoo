@@ -75,15 +75,14 @@ class SpeciesConfig(BaseModel):
     # when they were not. So the comparison between the two was never really
     # about tactics.
     #
-    # Deliberately defaults to False, and deliberately lives on the species
-    # config rather than in the agent, for the same reason: this is an
-    # experimental condition, it has to be switchable at runtime from the
-    # settings UI, and every prompt already recorded in the archive was built
-    # without it. Turning it on by default would silently invalidate that
-    # baseline. It is also per-species, so the mice cannot be given a faculty
-    # they have no action to use.
+    # Deliberately defaults to True on predators, and deliberately lives on the
+    # species config rather than in the agent. Comparability across runs is
+    # preserved by the archive manifest (which records the live species config,
+    # including aim_assist, in every run's manifest), not by defaulting off.
+    # It is also per-species, so the mice cannot be given a faculty they have
+    # no action to use.
     aim_assist: bool = Field(
-        default=False,
+        default=True,
         description=(
             "Publish observer-relative strike geometry (forward, offaxis, "
             "in_strike_zone) for each visible entity instead of requiring the "
@@ -126,6 +125,21 @@ class HazardZone(BaseModel):
         return any(t.x == x and t.y == y for t in self.tiles)
 
 
+class DisclosureConfig(BaseModel):
+    coach_sees_population: bool = Field(
+        default=True,
+        description="mice_alive, mice_initial, and captures included in the box score payload",
+    )
+    coach_sees_coverage_map: bool = Field(
+        default=True,
+        description="the get_coverage_map tool and heatmap endpoints return data",
+    )
+    actor_sees_own_trail: bool = Field(
+        default=False,
+        description="reserved for second arm: actor observation includes its own trail",
+    )
+
+
 class SimulationConfig(BaseModel):
     width: int = Field(default=100, ge=5, le=1000)
     height: int = Field(default=100, ge=5, le=1000)
@@ -135,42 +149,14 @@ class SimulationConfig(BaseModel):
         default_factory=lambda: {
             "cat": SpeciesConfig(
                 vision_radius=10,
-                # The viewport: 10 ahead, 2 behind, 5 either side -- a 13x11
-                # box, 143 tiles. Stated here rather than left to the field
-                # defaults because the cat is the only entity that uses the
-                # box at all, so these are the numbers that actually ship.
-                #
-                # Half-width was widened from 3 to 5 (full width 7 -> 11). The
-                # box score that motivated it showed `prey_in_sight_pct` falling
-                # to 0.51 and `tiles_per_kill` rising to 16.6: the cat was
-                # spending most of its ticks travelling rather than hunting,
-                # because a 7-wide lane walks straight past mice that are only
-                # four tiles off the centre line. Peripheral width is cheaper
-                # than depth here, since depth it can already cover by lunging
-                # and width it cannot cover without spending `move_cooldown` to
-                # turn.
-                #
-                # This costs the model something: a wider box means more
-                # entities per observation, each needing its own frame rotation
-                # unless aim assist is on. THINKING_BUDGET_DEFAULT was raised to
-                # 512 in the same change for that reason.
                 vision_rear=2,
                 vision_half_width=5,
                 action_budget=2,
                 weight=10,
-                # Depth of the strike zone in tiles. The zone is a rectangle
-                # this deep and 3 tiles wide, so 4 gives the 12 tiles directly
-                # ahead. Raised from 2 because the cat is slower than the mouse
-                # (move_cooldown 3 vs 2) and cannot win a straight chase; reach
-                # is what compensates for the speed deficit.
                 attack_range=4,
                 move_cooldown=3,
                 attack_cooldown=3,
                 lunge_cooldown=2,
-                # Lethal on the tick it lands and the tick after. Paired with
-                # attack_cooldown=3 the cat is locked for exactly as long as
-                # its own blade is dangerous, then recovers one tick after it
-                # fades.
                 attack_aoe_ticks=2,
             ),
             "mouse": SpeciesConfig(
@@ -181,6 +167,7 @@ class SimulationConfig(BaseModel):
                 move_cooldown=2,
                 attack_cooldown=0,
                 lunge_cooldown=0,
+                aim_assist=False,
             ),
         }
     )
@@ -188,6 +175,7 @@ class SimulationConfig(BaseModel):
     # 0.25 is one tick every 4 seconds, which is the pace the LLM cat needs to
     # have any chance of answering inside its own tick budget.
     tick_rate: float = Field(default=0.25, gt=0, le=100.0)
+    disclosure: DisclosureConfig = Field(default_factory=DisclosureConfig)
 
 
 class GameEvent(BaseModel):
@@ -221,6 +209,7 @@ class SimulationStateResponse(BaseModel):
     hazard_zones: List[HazardZone] = []
     can_step_back: bool = False
     species: Optional[Dict[str, Any]] = None
+    disclosure: Optional[DisclosureConfig] = None
 
 
 class UpdateTickRateRequest(BaseModel):
@@ -251,4 +240,10 @@ class UpdateSpeciesConfigRequest(BaseModel):
     # `model_dump(exclude_unset=True)`, so a field absent from this model is a
     # field the PATCH endpoint silently drops.
     aim_assist: Optional[bool] = Field(default=None)
+
+
+class UpdateDisclosureConfigRequest(BaseModel):
+    coach_sees_population: Optional[bool] = Field(default=None)
+    coach_sees_coverage_map: Optional[bool] = Field(default=None)
+    actor_sees_own_trail: Optional[bool] = Field(default=None)
 

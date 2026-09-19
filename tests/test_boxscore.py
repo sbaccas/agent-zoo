@@ -391,5 +391,26 @@ async def test_leader_is_none_while_the_cats_are_level():
     sim = _empty_sim()
     sim.entity_manager.spawn_entity(EntityType.CAT, pos=Position(x=10, y=10), facing=Direction.EAST)
     sim.entity_manager.spawn_entity(EntityType.CAT, pos=Position(x=40, y=40), facing=Direction.EAST)
-
     assert sim.get_boxscore()["leader"] is None, "a scoreless tie has no leader"
+
+
+@pytest.mark.asyncio
+async def test_boxscore_includes_population_when_disclosure_enabled():
+    sim = _empty_sim()
+    sim.config.populations["mice"] = 50
+    sim.entity_manager.spawn_entity(EntityType.MOUSE, pos=Position(x=1, y=1))
+    sim.entity_manager.spawn_entity(EntityType.MOUSE, pos=Position(x=2, y=2))
+    sim.scheduler.captures = 5
+
+    bs = sim.get_boxscore()
+    assert bs["mice_alive"] == 2
+    assert bs["mice_initial"] == 50
+    assert bs["captures"] == 5
+
+    # When toggled off
+    sim.config.disclosure.coach_sees_population = False
+    bs_hidden = sim.get_boxscore()
+    assert "mice_alive" not in bs_hidden
+    assert "mice_initial" not in bs_hidden
+    assert "captures" not in bs_hidden
+

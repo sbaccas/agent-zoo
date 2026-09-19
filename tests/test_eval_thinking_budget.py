@@ -457,6 +457,7 @@ def test_an_evaluation_records_what_it_spent():
         "thoughts_token_count",
         "latency_ms",
         "timed_out",
+        "tool_calls",
     }
 
 

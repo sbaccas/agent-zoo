@@ -163,15 +163,14 @@ def test_a_bounded_board_does_not_wrap():
 # The switch
 # --------------------------------------------------------------------------
 
-def test_aim_assist_ships_off():
-    """The archive's baseline was recorded unassisted.
+def test_aim_assist_ships_on():
+    """Aim assist is on by default on predators, off on prey.
 
-    Defaulting this on would silently make every future run incomparable with
-    every prompt already on disk, which is the one thing an A/B switch must not
-    do.
+    Comparability across runs is preserved by the archive manifest, which records
+    the live species config including aim_assist.
     """
-    assert SpeciesConfig().aim_assist is False
-    assert SimulationConfig().species["cat"].aim_assist is False
+    assert SpeciesConfig().aim_assist is True
+    assert SimulationConfig().species["cat"].aim_assist is True
     assert SimulationConfig().species["mouse"].aim_assist is False
 
 
@@ -200,35 +199,39 @@ def client_sim():
     return c, sid
 
 
-def test_the_observation_omits_the_geometry_while_the_switch_is_off(client_sim):
-    """Nothing is annotated until the operator asks for it.
-
-    Checked on the REST endpoint because that is what a TestClient can reach.
-    The live agent runs in `ws` mode and reads `_build_observation_payload`,
-    which is where the annotation is actually attached; the REST endpoint
-    returns typed `Entity` objects and is used only for bootstrap and for the
-    workbench's peek, so it deliberately carries no geometry either way.
-    """
+def test_the_observation_includes_the_geometry_while_the_switch_is_on(client_sim):
+    """Aim assist is enabled by default for predators."""
     c, sid = client_sim
     caps = c.get(f"/api/simulations/{sid}/agents/cat-1/observation").json()["capabilities"]
-    assert caps.get("aim_assist", False) is False
+    assert caps.get("aim_assist", False) is True
 
 
-def test_a_patch_turns_it_on_live(client_sim):
+def test_a_patch_turns_it_off_live(client_sim):
     """The whole point of putting it in settings: flip it mid-game."""
     c, sid = client_sim
 
-    r = c.patch(f"/api/simulations/{sid}/species/cat", json={"aim_assist": True})
-    assert r.status_code == 200
-    assert r.json()["aim_assist"] is True
-
+    # Starts on
     species = c.get(f"/api/simulations/{sid}/species").json()
     assert species["cat"]["aim_assist"] is True
     # Prey must not be swept along: mice have no attack to aim.
     assert species["mouse"]["aim_assist"] is False
 
+    # Flip it off
     r = c.patch(f"/api/simulations/{sid}/species/cat", json={"aim_assist": False})
+    assert r.status_code == 200
     assert r.json()["aim_assist"] is False
+
+    species = c.get(f"/api/simulations/{sid}/species").json()
+    assert species["cat"]["aim_assist"] is False
+    assert species["mouse"]["aim_assist"] is False
+
+    # Observation capability reflects the change
+    caps = c.get(f"/api/simulations/{sid}/agents/cat-1/observation").json()["capabilities"]
+    assert caps.get("aim_assist", True) is False
+
+    # Flip it back on
+    r = c.patch(f"/api/simulations/{sid}/species/cat", json={"aim_assist": True})
+    assert r.json()["aim_assist"] is True
 
 
 def test_toggling_it_leaves_every_other_dial_alone(client_sim):

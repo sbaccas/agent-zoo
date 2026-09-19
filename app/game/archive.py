@@ -269,6 +269,7 @@ def capture(sim: Any, reason: str) -> Optional[Dict[str, Any]]:
                 "tick_rate": sim.config.tick_rate,
                 "populations": _jsonable(dict(sim.config.populations or {})),
                 "species": _jsonable(sim.config.species),
+                "disclosure": _jsonable(sim.config.disclosure),
             },
             # Which cat was the model and which was the heuristic. Without this
             # a box score comparison can be read exactly backwards.

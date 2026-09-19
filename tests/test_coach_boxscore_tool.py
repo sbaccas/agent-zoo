@@ -563,3 +563,58 @@ def test_the_manual_explains_that_rates_are_fractions_and_nulls_are_not_zero():
     manual = _manual()
     assert "fractions" in manual
     assert "null" in manual
+
+
+# --------------------------------------------------------------------------
+# 10. Population counts in boxscore payload & get_coverage_map tool
+# --------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_boxscore_carries_population_counts_when_disclosed(allow_fetch):
+    payload = _payload(mice_alive=142, mice_initial=150, captures=8)
+    patcher, _ = _patch_get(payload=payload)
+    with patcher:
+        result = await ev.get_boxscore()
+
+    assert result["available"] is True
+    assert result["mice_alive"] == 142
+    assert result["mice_initial"] == 150
+    assert result["captures"] == 8
+
+
+@pytest.mark.asyncio
+async def test_coverage_map_tool_returns_grid_and_ascii(allow_fetch):
+    payload = {
+        "simulation_id": "sim-x",
+        "tick": 100,
+        "arena": {"width": 100, "height": 100},
+        "grid_size": 5,
+        "cell_size": 20,
+        "cats": [{"id": "cat-1", "ascii": "MAP"}],
+        "ascii": "FULL ASCII MAP",
+    }
+    patcher, _ = _patch_get(payload=payload)
+    with patcher:
+        result = await ev.get_coverage_map()
+
+    assert result["available"] is True
+    assert result["ascii"] == "FULL ASCII MAP"
+    assert result["grid_size"] == 5
+    assert result["cell_size"] == 20
+
+
+@pytest.mark.asyncio
+async def test_coverage_map_tool_handles_disabled_disclosure(allow_fetch):
+    mock = AsyncMock(return_value=_Response(status_code=403, payload={"detail": "Forbidden"}))
+    with patch("httpx.AsyncClient.get", new=mock):
+        result = await ev.get_coverage_map()
+
+    assert result["available"] is False
+    assert "disclosure is disabled" in result["reason"]
+
+
+def test_eval_agent_has_both_tools():
+    tool_names = [getattr(t, "__name__", None) or getattr(t, "name", None) for t in ev.eval_agent.tools]
+    assert "get_boxscore" in tool_names
+    assert "get_coverage_map" in tool_names
+
