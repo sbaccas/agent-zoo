@@ -49,7 +49,7 @@ flowchart TB
     end
 
     subgraph CloudLayer["Google Cloud Vertex AI"]
-        Gemini["Gemini 2.5 Flash<br/>(thinking_budget: tunable, default 256)"]
+        Gemini["Gemini 2.5 Flash<br/>(thinking_budget: tunable, default 512)"]
     end
 
     BoardUI -->|HTTP / WebSocket| FastAPIServer
@@ -100,18 +100,25 @@ Any agent connects to the simulation by implementing the `/act` endpoint:
 
 ## ⚡ Performance & Optimization Highlights
 
-- **Chain-of-Thought Budgeting**: Defaults to `thinking_budget=256` for the actor and `4096` for the coach. The two differ by design: the actor answers one board four times a second and pays for thought in latency, while the coach runs once per cycle off the tick loop with nothing waiting on it. Setting the actor to `0` returns it to the original reflex behaviour (~1.1s – 1.3s vs ~3.5s). Both adjustable at runtime — see below.
+- **Chain-of-Thought Budgeting**: Defaults to `thinking_budget=512` for the actor and `4096` for the coach. The two differ by design: the actor answers one board four times a second and pays for thought in latency, while the coach runs once per cycle off the tick loop with nothing waiting on it. Setting the actor to `0` returns it to the original reflex behaviour (~1.1s – 1.3s vs ~3.5s). Both adjustable at runtime — see below.
 - **Bounded Sliding Memory**: By refreshing the ADK session per tick and formatting the previous 3 moves (`(pos, facing, context, move, reason)`), context remains capped at ~250 tokens across hundreds of simulation ticks.
-- **Fail-Safe Heuristic Fallback**: If the Cat Agent takes longer than 3.0s or fails twice consecutively, the scheduler trips a circuit breaker and executes pure in-memory pursuit (0.008ms) until the service stabilizes.
+- **Fail-Safe Reflex Fallback**: The fallback is evaluated per tick, not as a tripped breaker that latches. Any tick where the model overruns the deliberation timeout (default 8s, tunable) or errors is played by the deterministic in-memory reflex instead, and the next tick asks the model again. Every such tick is labelled `heuristic_fallback` and carries the reason that caused it, so a run that quietly stopped using Gemini is visible in the box score rather than hidden behind a configured model name.
 
 ---
 
 ## 🧠 Thinking Budget
 
 How much private scratchpad the actor gets before it must commit to an action.
-At the default of `0` there is none: the first token the model emits is already
-part of the verdict, which is why `CatTacticalDecision` declares `thought`
-before `action` — that field order is the only scratchpad the cat has.
+The default is `512`. At `0` there is none: the first token the model emits is
+already part of the verdict, which is why `CatTacticalDecision` declares
+`thought` before `action` — at that setting the field order is the only
+scratchpad the cat has.
+
+> [!NOTE]
+> That field order was chosen *because* there was no scratchpad, and the 10/10
+> vs 1/10 result behind it was measured at budget `0`. It has not been
+> re-measured now that a real scratchpad is on by default. The order is retained
+> on the assumption that it is still neutral-to-helpful, not on evidence.
 
 | Where | How |
 | --- | --- |
