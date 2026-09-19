@@ -72,6 +72,7 @@
   const settingCatVision = document.getElementById('settingCatVision');
   const settingCatVisionRear = document.getElementById('settingCatVisionRear');
   const settingCatVisionHalfWidth = document.getElementById('settingCatVisionHalfWidth');
+  const settingCatAimAssist = document.getElementById('settingCatAimAssist');
   const settingCatWeight = document.getElementById('settingCatWeight');
 
   const settingMouseMove = document.getElementById('settingMouseMove');
@@ -1698,6 +1699,12 @@
         if (settingCatVision) settingCatVision.value = data.cat.vision_radius ?? 10;
         if (settingCatVisionRear) settingCatVisionRear.value = data.cat.vision_rear ?? 2;
         if (settingCatVisionHalfWidth) settingCatVisionHalfWidth.value = data.cat.vision_half_width ?? 3;
+        // `checked`, not `value`: assigning to `.value` on a checkbox sets the
+        // submitted string and leaves the tick state alone, so the control would
+        // render unticked regardless of server state and the next save would
+        // then switch the feature off behind the operator's back.
+        if (settingCatAimAssist) settingCatAimAssist.checked = !!data.cat.aim_assist;
+        updateAimAssistReadout();
         if (settingCatWeight) settingCatWeight.value = data.cat.weight ?? 10;
         updateCatVisionBoxReadout();
       }
@@ -1746,6 +1753,10 @@
     if (settingCatVision) settingCatVision.value = 10;
     if (settingCatVisionRear) settingCatVisionRear.value = 2;
     if (settingCatVisionHalfWidth) settingCatVisionHalfWidth.value = 3;
+    // Mirrors SpeciesConfig.aim_assist's default -- reset means the shipped
+    // baseline, which is the unassisted condition the archive was recorded in.
+    if (settingCatAimAssist) settingCatAimAssist.checked = false;
+    updateAimAssistReadout();
     if (settingCatWeight) settingCatWeight.value = 10;
     updateCatVisionBoxReadout();
 
@@ -1767,6 +1778,9 @@
       vision_radius: parseIntDefault(settingCatVision?.value, 10, 1),
       vision_rear: parseIntDefault(settingCatVisionRear?.value, 2, 0),
       vision_half_width: parseIntDefault(settingCatVisionHalfWidth?.value, 3, 0),
+      // A real boolean: the endpoint's field is Optional[bool] and pydantic
+      // would reject the "on" string a form submission produces.
+      aim_assist: !!settingCatAimAssist?.checked,
       weight: parseIntDefault(settingCatWeight?.value, 10, 1)
     };
 
@@ -1871,6 +1885,22 @@
   if (btnResetSettings) btnResetSettings.addEventListener('click', resetSettingsToDefaults);
   // Keep the derived-shape readout honest while the operator is still typing,
   // not just after a save round-trips.
+  // Says what the switch does, because the label cannot. "Aim Assist" reads
+  // like a difficulty setting; the point to convey is the opposite. It changes
+  // what the agent is told, never what the cat can do, so any kill-rate delta
+  // across this switch is evidence about the agent rather than the animal.
+  function updateAimAssistReadout() {
+    const el = document.getElementById('catAimAssistReadout');
+    if (!el) return;
+    // textContent, never innerHTML.
+    el.textContent = settingCatAimAssist?.checked
+      ? 'ON \u2014 agent is told forward/offaxis/in_strike_zone per target. Same powers, less arithmetic.'
+      : 'OFF \u2014 agent gets absolute coordinates only and must derive the strike zone itself.';
+  }
+  // 'change' rather than 'input': it is the event specified to fire on a
+  // checked-state transition.
+  if (settingCatAimAssist) settingCatAimAssist.addEventListener('change', updateAimAssistReadout);
+
   [settingCatVision, settingCatVisionRear, settingCatVisionHalfWidth].forEach((el) => {
     if (el) el.addEventListener('input', updateCatVisionBoxReadout);
   });

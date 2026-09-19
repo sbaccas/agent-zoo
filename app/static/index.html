@@ -276,6 +276,19 @@
               </div>
               <span class="setting-hint">Physics momentum for bump collisions</span>
             </div>
+            <!-- Not a capability: the cat gains no reach, speed or sight from this.
+                 It only changes whether the engine hands the agent the strike-zone
+                 test already solved, or makes it rotate coordinates into its own
+                 frame first. The scripted cat has always had it for free, which is
+                 why it is the fair-comparison switch rather than a difficulty dial. -->
+            <div class="setting-item">
+              <label for="settingCatAimAssist">Aim Assist:</label>
+              <div class="setting-input-row">
+                <input type="checkbox" id="settingCatAimAssist" class="form-checkbox">
+                <span class="setting-unit">pre-compute strike geometry</span>
+              </div>
+              <span class="setting-hint" id="catAimAssistReadout">&nbsp;</span>
+            </div>
           </div>
         </div>
 

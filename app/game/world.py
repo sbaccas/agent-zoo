@@ -285,3 +285,80 @@ class World:
                     tiles.append((tx, ty))
 
         return list(set(tiles))
+
+    def _axis_delta(self, origin: int, target: int, span: int) -> int:
+        """Signed separation along one axis, taking the short way round a torus.
+
+        On a bounded board this is plain subtraction. On a torus the naive
+        difference is wrong for any pair straddling the seam: with width 100, a
+        target at x=1 seen from x=99 is 2 tiles east, not 98 tiles west. Every
+        other method here already respects wrapping via `wrap_position`, so a
+        geometry helper that did not would disagree with the hit test it is
+        supposed to describe -- at the seam, and only at the seam, which is the
+        kind of bug that survives a long time.
+        """
+        delta = target - origin
+        if self.topology != Topology.TORUS or span <= 0:
+            return delta
+        delta %= span
+        if delta > span // 2:
+            delta -= span
+        return delta
+
+    def strike_geometry(
+        self,
+        pos: Position,
+        facing: Direction,
+        target: Position,
+        attack_range: int,
+    ) -> dict:
+        """Describes a target in the observer's own frame, and says if it is hittable.
+
+        Returns `forward`, `offaxis` and `in_strike_zone`. `forward` counts
+        tiles along the way the observer faces (negative = behind); `offaxis`
+        counts tiles perpendicular to it, positive toward the observer's right
+        under the engine's `(px, py) = (-dy, dx)` convention.
+
+        `in_strike_zone` is the same predicate `get_slash_aoe_tiles` enumerates,
+        written as the two comparisons rather than as a tile set::
+
+            1 <= forward <= attack_range   and   |offaxis| <= SLASH_HALF_WIDTH
+
+        Both are inclusive, and both are derived here from the same constant and
+        the same perpendicular convention the tile builder uses, so the two can
+        only ever agree. A test asserts that equivalence by brute force over
+        every facing and every offset, because two implementations of one rule
+        is exactly the situation where they silently drift apart.
+
+        This exists because of a measured failure, not for tidiness. The actor
+        is an LLM that receives absolute coordinates and has to perform this
+        frame rotation in its head, for up to five mice, four times a second,
+        inside a thinking budget we have observed saturating. It does the
+        arithmetic well -- a forensic pass found 123 of 135 self-reported
+        forward distances exactly correct -- and still loses kills at both ends
+        of the rule: swinging at targets it had itself computed as out of range,
+        and declining legal shots at |offaxis| == 1 because it had rounded the
+        lateral test up to "must be dead ahead". The scripted opponent converts
+        100% of its chances for no cleverer reason than that it evaluates this
+        boolean in code. Handing the actor the same boolean is what makes that
+        comparison fair; see `SpeciesConfig.aim_assist`, which gates whether it
+        is actually published into the observation.
+        """
+        dx, dy = self.get_forward_delta(facing)
+        px, py = -dy, dx  # unit vector perpendicular to facing, same as above
+
+        rel_x = self._axis_delta(pos.x, target.x, self.width)
+        rel_y = self._axis_delta(pos.y, target.y, self.height)
+
+        forward = rel_x * dx + rel_y * dy
+        offaxis = rel_x * px + rel_y * py
+
+        return {
+            "forward": forward,
+            "offaxis": offaxis,
+            "in_strike_zone": (
+                1 <= forward <= attack_range
+                and abs(offaxis) <= self.SLASH_HALF_WIDTH
+            ),
+        }
+

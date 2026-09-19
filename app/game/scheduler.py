@@ -86,16 +86,38 @@ class Scheduler:
                 rear=vision_rear,
                 half_width=vision_half_width,
             ))
+            # Read once per observation rather than per visible entity: the
+            # config is live-tunable, and re-reading it inside the loop would
+            # let a mid-loop PATCH annotate some mice and not others, producing
+            # a single observation that was internally inconsistent.
+            _spec = self.entity_manager.species_config.get(species_key)
+            aim_assist = bool(_spec.aim_assist) if _spec else False
+            aim_range = _spec.attack_range if _spec else 0
             for other in self.entity_manager.get_alive_entities():
                 if other.id != entity.id and (other.position.x, other.position.y) in fov_tiles:
-                    visible.append({
+                    seen = {
                         "id": other.id,
                         "type": other.type.value,
                         "position": {"x": other.position.x, "y": other.position.y},
                         "facing": other.facing.value,
                         "action_cooldown": other.action_cooldown,
                         "locked_action": other.locked_action,
-                    })
+                    }
+                    if aim_assist:
+                        # Merged in rather than nested under a sub-key because
+                        # the actor prompt renders this dict verbatim, and a
+                        # nested object costs the model an extra dereference to
+                        # read the one field that decides whether to swing.
+                        # Absolute `position` is deliberately still sent: the
+                        # geometry answers "can I hit it", not "where is it",
+                        # and navigation still needs the latter.
+                        seen.update(self.world.strike_geometry(
+                            entity.position,
+                            entity.facing,
+                            other.position,
+                            aim_range,
+                        ))
+                    visible.append(seen)
         else:
             for other in self.entity_manager.get_alive_entities():
                 if other.id == entity.id:
@@ -168,6 +190,14 @@ class Scheduler:
             "weight": weight,
             # How many ticks a slash stays lethal, counting the tick it lands.
             "attack_aoe_ticks": aoe_ticks,
+            # Whether `visible_entities` carries the pre-computed forward /
+            # offaxis / in_strike_zone fields this tick. Advertised rather than
+            # left implicit so the prompt can describe what is actually present
+            # instead of guessing: the actor manual has to say either "these
+            # fields are authoritative, trust them over your own arithmetic" or
+            # nothing at all, and getting that backwards in either direction is
+            # worse than the problem the feature exists to solve.
+            "aim_assist": bool(spec_cfg.aim_assist) if spec_cfg else False,
         }
 
         return {

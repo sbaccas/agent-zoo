@@ -15,6 +15,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const settingCatVision = document.getElementById('settingCatVision');
   const settingCatVisionRear = document.getElementById('settingCatVisionRear');
   const settingCatVisionHalfWidth = document.getElementById('settingCatVisionHalfWidth');
+  const settingCatAimAssist = document.getElementById('settingCatAimAssist');
   const settingCatWeight = document.getElementById('settingCatWeight');
 
   // Mouse inputs
@@ -67,7 +68,13 @@ document.addEventListener('DOMContentLoaded', () => {
         if (settingCatVisionRear) settingCatVisionRear.value = data.cat.vision_rear ?? 2;
         if (settingCatVisionHalfWidth) settingCatVisionHalfWidth.value = data.cat.vision_half_width ?? 3;
         if (settingCatWeight) settingCatWeight.value = data.cat.weight ?? 10;
+        // `checked`, not `value` -- assigning to `.value` on a checkbox sets the
+        // string submitted when ticked and leaves the tick state untouched, so
+        // the control would silently render unticked no matter what the server
+        // said, and the first save would then turn the feature off.
+        if (settingCatAimAssist) settingCatAimAssist.checked = !!data.cat.aim_assist;
         updateCatVisionBoxReadout();
+        updateAimAssistReadout();
       }
 
       if (data.mouse) {
@@ -98,6 +105,9 @@ document.addEventListener('DOMContentLoaded', () => {
       vision_rear: parseIntDefault(settingCatVisionRear?.value, 2, 0),
       vision_half_width: parseIntDefault(settingCatVisionHalfWidth?.value, 3, 0),
       weight: parseIntDefault(settingCatWeight?.value, 10, 1),
+      // Sent as a real boolean. The endpoint's field is Optional[bool] and
+      // pydantic would reject the string "on" a form submission would produce.
+      aim_assist: !!settingCatAimAssist?.checked,
     };
 
     const mousePayload = {
@@ -156,6 +166,22 @@ document.addEventListener('DOMContentLoaded', () => {
     el.textContent = msg;
   }
 
+  // Says what the switch actually does, because the label cannot. "Aim Assist"
+  // reads like a difficulty setting, and the one thing an operator must not
+  // conclude is that ticking it made the cat stronger -- it changes what the
+  // agent is told, never what it is able to do, so a kill-rate delta across
+  // this switch is a statement about the agent and not about the cat.
+  function updateAimAssistReadout() {
+    const el = document.getElementById('catAimAssistReadout');
+    if (!el) return;
+    // textContent, never innerHTML: nothing here is user-controlled today, but
+    // this element sits next to fields that echo server state and the safe
+    // idiom is the one worth making habitual.
+    el.textContent = settingCatAimAssist?.checked
+      ? 'ON \u2014 agent is told forward/offaxis/in_strike_zone per target. Same powers, less arithmetic.'
+      : 'OFF \u2014 agent gets absolute coordinates only and must derive the strike zone itself.';
+  }
+
   function resetToDefaults() {
     if (settingCatMove) settingCatMove.value = 3;
     if (settingCatAttackRange) settingCatAttackRange.value = 2;
@@ -165,7 +191,12 @@ document.addEventListener('DOMContentLoaded', () => {
     if (settingCatVisionRear) settingCatVisionRear.value = 2;
     if (settingCatVisionHalfWidth) settingCatVisionHalfWidth.value = 3;
     if (settingCatWeight) settingCatWeight.value = 10;
+    // Matches SpeciesConfig.aim_assist's default. Reset means "back to the
+    // shipped baseline", and the shipped baseline is the unassisted condition
+    // every archived prompt was recorded under.
+    if (settingCatAimAssist) settingCatAimAssist.checked = false;
     updateCatVisionBoxReadout();
+    updateAimAssistReadout();
 
     if (settingMouseMove) settingMouseMove.value = 2;
     if (settingMouseVision) settingMouseVision.value = 4;
@@ -184,6 +215,9 @@ document.addEventListener('DOMContentLoaded', () => {
   [settingCatVision, settingCatVisionRear, settingCatVisionHalfWidth].forEach((el) => {
     if (el) el.addEventListener('input', updateCatVisionBoxReadout);
   });
+  // 'change' rather than 'input': both fire for checkboxes in current browsers,
+  // but 'change' is the one specified to fire on checked-state transitions.
+  if (settingCatAimAssist) settingCatAimAssist.addEventListener('change', updateAimAssistReadout);
 
   // Initial load
   loadCurrentSpecies();

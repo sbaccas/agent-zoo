@@ -59,6 +59,37 @@ class SpeciesConfig(BaseModel):
         ge=1,
         description="Ticks the slash zone stays lethal, counting the tick it lands",
     )
+    # Publishes each visible entity's position in the observer's own frame --
+    # `forward`, `offaxis`, `in_strike_zone` -- alongside the absolute
+    # coordinates that are always sent. It grants no new information: every one
+    # of those numbers is derivable from data the observer already has. It only
+    # removes the requirement to derive them.
+    #
+    # That distinction is the whole point. The scripted cat evaluates
+    # `1 <= forward <= attack_range and |offaxis| <= 1` in code and converts
+    # 100% of its chances with zero whiffs. The model cat is handed raw
+    # coordinates and must rotate frames in its head for every mouse, every
+    # tick, against a clock; measured over one game it created *more* chances
+    # than the scripted cat (39 vs 32) and still finished behind on kills,
+    # losing 13 shots to whiffs and forfeiting 11 more it had judged illegal
+    # when they were not. So the comparison between the two was never really
+    # about tactics.
+    #
+    # Deliberately defaults to False, and deliberately lives on the species
+    # config rather than in the agent, for the same reason: this is an
+    # experimental condition, it has to be switchable at runtime from the
+    # settings UI, and every prompt already recorded in the archive was built
+    # without it. Turning it on by default would silently invalidate that
+    # baseline. It is also per-species, so the mice cannot be given a faculty
+    # they have no action to use.
+    aim_assist: bool = Field(
+        default=False,
+        description=(
+            "Publish observer-relative strike geometry (forward, offaxis, "
+            "in_strike_zone) for each visible entity instead of requiring the "
+            "agent to derive it from absolute coordinates"
+        ),
+    )
 
 
 class HazardZone(BaseModel):
@@ -200,4 +231,9 @@ class UpdateSpeciesConfigRequest(BaseModel):
     attack_cooldown: Optional[int] = Field(default=None, ge=0)
     lunge_cooldown: Optional[int] = Field(default=None, ge=0)
     attack_aoe_ticks: Optional[int] = Field(default=None, ge=1)
+    # Unlike its neighbours this is a bool, so it has no bounds to mirror. It
+    # still has to be listed explicitly: `update_species_config` iterates
+    # `model_dump(exclude_unset=True)`, so a field absent from this model is a
+    # field the PATCH endpoint silently drops.
+    aim_assist: Optional[bool] = Field(default=None)
 

@@ -909,6 +909,36 @@ def build_decision_prompt(
             "  What you return becomes your standing intent for your next opportunity."
         )
 
+    # When the operator enables aim assist the server pre-computes each visible
+    # entity's position in our own frame, so the dict dumped below carries
+    # `forward`, `offaxis` and `in_strike_zone` next to the absolute position.
+    #
+    # Those keys would appear in the dump whether or not we said anything, and
+    # saying nothing was not an option. Unexplained fields get treated as advice
+    # to be weighed against the model's own arithmetic, and the entire reason
+    # this feature exists is that the arithmetic is where we lose kills -- in
+    # both directions. Measured over one game: 13 swings taken at targets the
+    # model had itself computed as out of range, and 11 legal chances declined
+    # at |offaxis| == 1 on the belief that a shot must be dead ahead. So the
+    # text states the rule as the two inclusive comparisons, states that the
+    # zone is genuinely three tiles wide, and says plainly which source wins.
+    #
+    # Only rendered when the flag is on. A standing instruction to trust fields
+    # that are absent is worse than no instruction at all.
+    aim_line = ""
+    if caps.get("aim_assist"):
+        aim_line = (
+            f"  • aim_assist: ON. Each visible entity below carries forward, offaxis\n"
+            f"    and in_strike_zone, computed by the engine in your frame. forward is\n"
+            f"    tiles ahead of you (negative = behind); offaxis is tiles to your side,\n"
+            f"    either sign. in_strike_zone is true exactly when\n"
+            f"    1 <= forward <= {atk_range} AND |offaxis| <= 1, both inclusive -- the zone\n"
+            f"    is 3 tiles wide, so offaxis of -1 or +1 is a legal hit, not a miss.\n"
+            f"    These are the engine's own numbers. Trust them over any distance you\n"
+            f"    work out yourself, and do not re-derive them: if in_strike_zone is\n"
+            f"    true, ATTACK connects; if it is false, ATTACK cannot connect.\n"
+        )
+
     observation_context = (
         f"--- CURRENT OBSERVATION (Tick {obs.tick}, Round {obs.round}) ---\n"
         f"Agent ID: {obs.self.get('id', agent_id)}\n"
@@ -924,6 +954,7 @@ def build_decision_prompt(
         f"  • move_cooldown: {move_cd} tick(s)\n"
         f"  • attack_cooldown: {atk_cd} tick(s)\n"
         f"  • lunge_cooldown: {lunge_cd} tick(s)\n"
+        f"{aim_line}"
         f"Visible Entities in Viewport: {entities}\n"
         f"Legal Actions this tick: {legal}"
     )
