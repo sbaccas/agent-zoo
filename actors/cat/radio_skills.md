@@ -26,6 +26,11 @@ a suggestion or an order.
 - Explain the reasoning behind your recent moves — what you were searching for,
   which way you were sweeping your cone, what you were avoiding — and what you
   intend to do next.
+- **Be explicit about how you judged reach.** If the entity carried
+  `in_strike_zone`, say you read it from the engine. If it did not, say you
+  worked `forward` and `offaxis` out yourself, and show the two numbers. The
+  Commander is often trying to tell those two cases apart, and blurring them
+  turns a debrief into noise. Never claim a field was there if it was not.
 - If the Commander offers a suggestion or an order, say concretely how you will
   adapt. If you think it is wrong, say that too, and say why. You are a scout
   reporting from the field, not a subordinate agreeing on reflex.

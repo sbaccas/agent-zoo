@@ -135,9 +135,15 @@ def test_tuning_the_box_changes_what_is_actually_visible(world):
 # --------------------------------------------------------------------------
 
 def test_the_shipped_cat_box_is_stated_explicitly_in_the_species_table():
-    """Regression: these were class constants and invisible to the config."""
+    """Regression: these were class constants and invisible to the config.
+
+    Half-width is 5, not 3: the box was widened from 13x7 to 13x11 after
+    `prey_in_sight_pct` fell to 0.51 and `tiles_per_kill` rose to 16.6, i.e. the
+    cat was travelling rather than hunting because a 7-wide lane walks past mice
+    only four tiles off its centre line.
+    """
     cat = SimulationConfig().species["cat"]
-    assert (cat.vision_radius, cat.vision_rear, cat.vision_half_width) == (10, 2, 3)
+    assert (cat.vision_radius, cat.vision_rear, cat.vision_half_width) == (10, 2, 5)
 
 
 def test_the_species_defaults_match_the_world_fallbacks():
@@ -187,7 +193,7 @@ def test_a_patch_reshapes_the_live_observation(client_sim):
     c, sid = client_sim
 
     before = c.get(f"/api/simulations/{sid}/agents/cat-1/observation").json()["capabilities"]
-    assert (before["vision_radius"], before["vision_rear"], before["vision_half_width"]) == (10, 2, 3)
+    assert (before["vision_radius"], before["vision_rear"], before["vision_half_width"]) == (10, 2, 5)
 
     r = c.patch(f"/api/simulations/{sid}/species/cat",
                 json={"vision_radius": 6, "vision_rear": 5, "vision_half_width": 8})
@@ -205,7 +211,7 @@ def test_a_rejected_patch_leaves_the_box_untouched(client_sim):
     assert r.status_code == 422
 
     caps = c.get(f"/api/simulations/{sid}/agents/cat-1/observation").json()["capabilities"]
-    assert (caps["vision_radius"], caps["vision_half_width"]) == (10, 3)
+    assert (caps["vision_radius"], caps["vision_half_width"]) == (10, 5)
 
 
 def test_the_overlay_is_told_the_box(client_sim):

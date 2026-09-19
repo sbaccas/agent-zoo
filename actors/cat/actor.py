@@ -103,24 +103,40 @@ THINKING_BUDGET_MIN, THINKING_BUDGET_MAX, THINKING_CAN_BE_DISABLED = (
 # slider first -- which matters because the first ticks of a game are recorded
 # into the same transcript as the rest of it.
 #
-# Default 256. This was 0 for the whole history of the repo, and the move is
-# deliberate rather than incidental: at a budget of 128 the measured
+# Default 512. This was 0 for the whole history of the repo, then 256, and each
+# move is deliberate rather than incidental.
+#
+# The evidence for leaving 0: at a budget of 128 the measured
 # `thoughts_token_count` sat at p50=125 / p90=129 across 781 consecutive calls,
 # i.e. the model was saturating the allowance on essentially every tick. A
 # ceiling that is hit every single time is not a budget, it is a truncation, and
 # the work being truncated is a per-mouse frame rotation the observation does
-# not do for the model. 256 gives that arithmetic somewhere to land.
+# not do for the model.
+#
+# The evidence for going past 256 is that the vision box got bigger. The default
+# `vision_half_width` is now 5, making the viewport 11 tiles wide rather than 7,
+# so on a busy tick there are simply more mice to reason about -- and the per-
+# mouse cost is what this budget pays for.
+#
+# Note the interaction with **aim assist**. When it is on, the engine ships
+# `forward`, `offaxis` and `in_strike_zone` per entity and the frame rotation
+# disappears entirely, so the scratchpad stops being arithmetic scribble and
+# becomes target selection and route planning. The budget is not wasted in that
+# mode, but what it buys is different, and a future measurement should separate
+# the two rather than averaging across them.
 #
 # Two things this does NOT do, recorded here so nobody assumes otherwise:
-#   - It does not make the actor slow. 256 tokens is ~1.3s of generation against
-#     a deliberation ceiling that affords ~1,340 tokens, so the timeout is
-#     nowhere near binding at this setting.
+#   - It does not make the actor slow. 512 tokens is ~2.6s of generation against
+#     a deliberation ceiling that affords ~1,340 tokens, so the timeout is still
+#     not binding at this setting -- though the margin is now roughly 2.6x
+#     rather than 5x, and raising this further should come with a look at
+#     `suggested_deliberation_timeout`.
 #   - It does not re-validate the prompt schema. CatTacticalDecision puts
 #     `thought` before `action` *because* there was no scratchpad, and that
 #     10/10 vs 1/10 result was measured at budget 0. It has not been re-measured
 #     with a real scratchpad available, and the field order is retained on the
 #     assumption that it is still neutral-to-helpful rather than on evidence.
-THINKING_BUDGET_DEFAULT = 256
+THINKING_BUDGET_DEFAULT = 512
 
 DEFAULT_THINKING_BUDGET_ENV = "CAT_THINKING_BUDGET"
 

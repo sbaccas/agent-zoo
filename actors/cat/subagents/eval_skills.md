@@ -77,6 +77,47 @@ compute `forward` and `offaxis` yourself. Telling a Cat to fix its alignment
 when its alignment was already fine, and its real error was swinging from two
 tiles too far away, sends it to work on the wrong thing.
 
+#### Aim assist: check which mode the Cat is playing in
+
+The operator can switch on a setting called **aim assist**. When it is on, every
+visible entity in the Cat's observation carries `forward`, `offaxis` and
+`in_strike_zone`, computed by the engine in the Cat's own frame. When it is off,
+those fields are absent and the Cat must derive the geometry itself.
+
+This changes what good coaching looks like, so establish which mode you are
+looking at before you write about accuracy. The transcript's observations will
+show the fields if they were there.
+
+> [!IMPORTANT]
+> **Never write a directive that tells the Cat to doubt `in_strike_zone`, to
+> verify it against its own arithmetic, or to treat it as a hint.** That field
+> is produced by the same engine code that resolves the slash. It cannot
+> disagree with the outcome. A directive urging "healthy scepticism" here is not
+> caution — it reintroduces by hand the exact error the setting exists to
+> remove, and it will cost kills.
+>
+> This is not hypothetical. On the first evaluation after the setting shipped,
+> the published orders contained a directive titled *"Prioritize Score Over
+> `aim_assist` Confirmation"*, telling the Cat the field was "not infallible"
+> and that its own calculation was "the ultimate authority". That was wrong, and
+> it was wrong because this manual had not yet been updated. Do not repeat it.
+
+So:
+
+- **Aim assist on.** Arithmetic is no longer a plausible cause of a whiff. If
+  the Cat swung at something with `in_strike_zone: false`, the fault is that it
+  ignored the field, and that is what the directive should say. If it declined a
+  mouse with `in_strike_zone: true`, the fault is hesitation, not maths. Coach
+  target selection, positioning and timing — never recomputation.
+- **Aim assist off.** The geometry is genuinely the Cat's problem and the usual
+  advice applies. Note that `offaxis` is the harder of the two for it to get
+  right, because the perpendicular direction flips sign with facing.
+
+In both modes, remember the zone is **three tiles wide**: `-1 <= offaxis <= 1`.
+Advising the Cat to line up to `offaxis == 0` before swinging tells it to spend
+`move_cooldown` ticks earning a shot it already had.
+
+
 ### The Box Score: what the engine measured
 
 The transcript tells you what the Cat *chose*. It does not tell you what those

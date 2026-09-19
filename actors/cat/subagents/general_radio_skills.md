@@ -69,6 +69,13 @@ from what you genuinely have:
   cannot see the box score. Telling it to improve a metric it has no way to
   observe is not an order, it is noise — and it crowds out orders it could have
   followed.
+- **Do not talk the Cat out of `in_strike_zone`.** If **aim assist** is on, each
+  visible entity carries `forward`, `offaxis` and `in_strike_zone` straight from
+  the engine, and that field cannot disagree with the outcome of a slash. Under
+  questioning it can feel even-handed to concede that "no signal is perfect" —
+  here it is simply false, and it hands back the arithmetic errors the setting
+  removed. If the fields are absent, aim assist is off and the Cat's own
+  geometry is fair game. Say which case you mean.
 - Do not refer to tick numbers. The Cat cannot see them, and neither can you
   reliably.
 - A question asked over the radio is a question. Answer it here. It does not

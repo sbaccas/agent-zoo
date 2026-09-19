@@ -51,6 +51,7 @@ You play as the **Cat** (`cat-1`), an apex predator hunting elusive mice across 
 - **Visible Entities**: An observation lists all entities currently within your line of sight:
   - Mice: `{"id": "mouse-1", "type": "mouse", "position": {"x": 5, "y": 7}}`
   - Cheese: `{"id": "cheese-1", "type": "cheese", "position": {"x": 10, "y": 12}}`
+  - **Optional aim-assist fields.** If the operator has switched **aim assist** on, every entry also carries `forward`, `offaxis` and `in_strike_zone`, pre-computed by the engine in your frame. If they are there, trust them over anything you work out yourself. If they are not, aim assist is off and the geometry is yours to derive. See *Deciding whether a mouse is in it* under `attack`. Check for the fields on every observation — the setting can change mid-game without notice.
 - **Dynamic Capabilities**: Your observation provides a `capabilities` dictionary containing your current dynamic stats:
   - `attack_range`: The forward reach (in tiles) of your slash `attack`.
   - `vision_radius`: How far **ahead** your viewport reaches.
@@ -300,7 +301,46 @@ distance formula.
 
 #### Deciding whether a mouse is in it
 
-Work out two numbers from the mouse's coordinates and your own:
+**First, look at the mouse's entry in the observation.** The operator can switch
+on a setting called **aim assist**. When it is on, the engine has already done
+this calculation for you and attached the answer to every visible entity:
+
+```
+{'id': 'mouse-198', 'type': 'mouse', 'position': {'x': 36, 'y': 39},
+ 'forward': 5, 'offaxis': 0, 'in_strike_zone': False}
+```
+
+- `forward` and `offaxis` — the same two numbers described below, already
+  rotated into your frame by the engine.
+- `in_strike_zone` — `true` exactly when a slash this tick would connect.
+
+> [!IMPORTANT]
+> **If `in_strike_zone` is present, it is the authority. Trust it and do not
+> re-derive it.** It is computed by the same code that resolves your slash, so
+> it cannot disagree with the outcome. `true` means ATTACK connects; `false`
+> means ATTACK cannot connect, no matter what your own arithmetic suggests.
+>
+> **If it is absent, aim assist is off, and the arithmetic below is yours to
+> do.** Absence is not an error and not a reason to hesitate — it is simply the
+> harder mode, and it is the mode this manual was written for.
+
+Check per observation, not once per game. The setting can be changed between
+ticks and you get no announcement. The test is only ever "does this entity carry
+the field, right now" — never "did it carry the field last tick".
+
+Two cautions when it *is* present:
+
+- It is computed for your **current** facing and position. It tells you whether
+  a slash *this* tick connects. It says nothing about whether one will connect
+  after you move, and moving costs you `move_cooldown` ticks during which the
+  mouse also moves.
+- `in_strike_zone: false` on every visible mouse does not mean "do nothing". It
+  means "no slash lands from here" — which is information about where to *move*.
+
+#### Working it out yourself
+
+When the fields are absent, work out two numbers from the mouse's coordinates
+and your own:
 
 - **forward** — how many tiles ahead of you it is, along your facing
 - **offaxis** — how many tiles to either side of your centre line it is
@@ -319,6 +359,12 @@ You will hit it **only if both hold**:
 ```
 
 Both are integer comparisons. Do them before you swing, every time.
+
+> [!WARNING]
+> The `offaxis` bound is `-1 <= offaxis <= 1`, not `offaxis == 0`. The zone is
+> **three tiles wide**. A mouse one tile to your left or right is a legal,
+> connecting hit. Stepping sideways to "line it up" first is not caution — it
+> costs you `move_cooldown` ticks and usually loses the mouse.
 
 #### Seeing a mouse is not the same as being able to hit it
 

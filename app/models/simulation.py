@@ -135,12 +135,27 @@ class SimulationConfig(BaseModel):
         default_factory=lambda: {
             "cat": SpeciesConfig(
                 vision_radius=10,
-                # The viewport: 10 ahead, 2 behind, 3 either side -- a 13x7
-                # box, 91 tiles. Stated here rather than left to the field
+                # The viewport: 10 ahead, 2 behind, 5 either side -- a 13x11
+                # box, 143 tiles. Stated here rather than left to the field
                 # defaults because the cat is the only entity that uses the
                 # box at all, so these are the numbers that actually ship.
+                #
+                # Half-width was widened from 3 to 5 (full width 7 -> 11). The
+                # box score that motivated it showed `prey_in_sight_pct` falling
+                # to 0.51 and `tiles_per_kill` rising to 16.6: the cat was
+                # spending most of its ticks travelling rather than hunting,
+                # because a 7-wide lane walks straight past mice that are only
+                # four tiles off the centre line. Peripheral width is cheaper
+                # than depth here, since depth it can already cover by lunging
+                # and width it cannot cover without spending `move_cooldown` to
+                # turn.
+                #
+                # This costs the model something: a wider box means more
+                # entities per observation, each needing its own frame rotation
+                # unless aim assist is on. THINKING_BUDGET_DEFAULT was raised to
+                # 512 in the same change for that reason.
                 vision_rear=2,
-                vision_half_width=3,
+                vision_half_width=5,
                 action_budget=2,
                 weight=10,
                 # Depth of the strike zone in tiles. The zone is a rectangle
