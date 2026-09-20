@@ -9,6 +9,7 @@ A living backlog tracking architectural initiatives, gameplay mechanics, and age
 * 🌐 **Web Features**: Networking, WebSockets, client-server protocols, visualization, and workbench UI.
 * 🧠 **AI Features**: Cognitive architectures, memory systems, prompt engineering, ADK integrations, and agent-to-agent (A2A) protocols.
 * 🎮 **Game Features**: World mechanics, physics, simulation clock, environmental elements, and biological/metabolic systems.
+* 🚀 **DevOps & Cloud Features**: Cloud Run containerization, Terraform IaC, CI/CD pipelines, and multi-tenant cloud orchestration.
 
 ---
 
@@ -228,3 +229,54 @@ A living backlog tracking architectural initiatives, gameplay mechanics, and age
     - May block line of sight (visual concealment for mice to hide behind).
     - Can potentially be entered or navigated by agile mice while slowing or blocking cats.
   - **Line-of-Sight & Raycasting**: The 90° vision cone raycaster respects new obstacle bounds, enabling mice to break line of sight and escape predatory pursuit.
+
+### `GAME-04`: Cheese Refrigerators, POI Attractors & Respawning Prey Clusters
+- **Status**: 📋 Backlog (High Priority)
+- **Target**: World Entities, Prey AI & Game Server (`app/game/`, `actors/mouse/`)
+- **Description**: Introduce interactive Points of Interest (POIs) across the arena to create organic hunting grounds and micro-ecosystems.
+- **Key Capabilities**:
+  - **Refrigerator / Cheese Landmark (POI)**:
+    - Stationary interactive fixtures placed across the grid (e.g. at fixed or configurable coordinates).
+    - Distinct visual representation on canvas (refrigerator / cheese crate icon).
+    - Scent attractor radius (e.g. 8–10 tiles) drawing foraging mice.
+  - **Tethered Prey / Cheese Swarms**:
+    - Dedicated cohort of mice tethered to specific refrigerator POIs with localized foraging ranges (3–5 tile orbit).
+    - Instead of purely random wandering, they prioritize staying near or returning to the cheese when not fleeing predators.
+  - **POI Prey Respawning**:
+    - When a cheese-tethered mouse is captured/killed by a cat, the refrigerator schedules a respawn event after $N$ ticks (e.g., 15–30 ticks).
+    - Sustains permanent focal points for predatory strategy, rewarding cats that establish perimeter patrols or ambush routes.
+
+---
+
+## 🚀 DevOps & Cloud Features
+
+### `DEVOPS-01`: Cloud Infrastructure & Terraform (GCP / Cloud Run)
+- **Status**: 📋 Backlog (High Priority)
+- **Target**: Infrastructure as Code (`infra/terraform/`)
+- **Description**: Provision and manage cloud infrastructure on Google Cloud Platform using Terraform.
+- **Key Capabilities**:
+  - **Project & Provider Configuration**:
+    - Target GCP Project (`proj1-487921`), Region (`northamerica-northeast1`).
+    - Remote state backend (GCS bucket).
+  - **Artifact Registry**:
+    - Dedicated Docker registry for containerized `game-server` and `cat-agent` images.
+  - **Cloud Run Deployment**:
+    - `game-server`: WebSockets enabled (`sessionAffinity = true`), HTTP/2, CPU always allocated (for consistent simulation clock), ingress settings.
+    - `cat-agent-workbench`: Private/public ingress with token auth, bound to Vertex AI service account.
+  - **IAM & Security**:
+    - Dedicated Service Accounts with least-privilege roles (`roles/aiplatform.user` for Vertex AI Gemini calls).
+    - Service-to-service IAM bindings between Game Server and Cat Agent.
+
+### `DEVOPS-02`: CI/CD Pipelines (Automated Testing, Docker Builds & Deployment)
+- **Status**: 📋 Backlog (High Priority)
+- **Target**: GitHub Actions / Cloud Build (`.github/workflows/`)
+- **Description**: Fully automated continuous integration and continuous deployment pipelines.
+- **Key Capabilities**:
+  - **CI (Quality & Regressions)**:
+    - Automated linting and full pytest execution (`.venv/bin/pytest tests/`) on pull requests and branch pushes.
+  - **Container Build & Security Scanning**:
+    - Multi-stage Dockerfile builds optimizing layer caching and minimizing image sizes.
+    - Vulnerability and dependency vulnerability scanning.
+  - **Automated CD**:
+    - Automated deployment to Cloud Run staging/production environments upon merging to `main` or creating release tags.
+
