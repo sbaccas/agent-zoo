@@ -449,7 +449,7 @@
 
     // Synchronize N-tick history window hyperparameter
     if (sliderHistoryWindow && !isDraggingHistorySlider) {
-      const windowSize = state.history_window_size || 3;
+      const windowSize = state.history_window_size || 25;
       sliderHistoryWindow.value = windowSize;
       if (historyWindowBadge) {
         historyWindowBadge.textContent = `${windowSize} ticks`;
@@ -642,7 +642,7 @@
 
   // Render Box 4: History Table (Zero innerHTML)
   function renderHistory(history) {
-    const windowSize = (sliderHistoryWindow ? parseInt(sliderHistoryWindow.value, 10) : (cachedState && cachedState.history_window_size)) || 3;
+    const windowSize = (sliderHistoryWindow ? parseInt(sliderHistoryWindow.value, 10) : (cachedState && cachedState.history_window_size)) || 25;
     const windowCutoffIndex = Math.max(0, history ? (history.length - windowSize) : 0);
     const inWindowCount = history ? Math.min(history.length, windowSize) : 0;
     const lockedCount = history ? history.filter(isLockedTick).length : 0;

@@ -344,16 +344,21 @@ def test_history_section_is_delivered_once_ticks_exist():
 def test_history_records_the_action_posture_and_perception_reasoning():
     """Recent tactical context includes posture, action outcome, and previous thought.
 
-    Preserving the agent's prior perception and rationale allows the model to maintain
-    pursuit permanence when turning off-axis (where prey momentarily leaves the 90-degree
-    vision cone).
+    Preserving the agent's prior perception, target ID, visible entity positions,
+    and rationale allows the model to maintain pursuit permanence when turning
+    off-axis (where prey momentarily leaves the 90-degree vision cone).
     """
     history = [{
         "tick": 6,
-        "observation": {"self": {"position": {"x": 1, "y": 1}}, "score": 2},
+        "observation": {
+            "self": {"position": {"x": 1, "y": 1}},
+            "visible_entities": [{"id": "mouse-54", "position": {"x": 3, "y": 1}}],
+            "score": 2,
+        },
         "response": {
             "action": "east",
             "thought": "sidling east feels safer than committing to a lunge",
+            "target_mouse_id": "mouse-54",
             "resulting_posture": {"position": {"x": 2, "y": 1}, "facing": "east"},
         },
     }]
@@ -362,6 +367,8 @@ def test_history_records_the_action_posture_and_perception_reasoning():
     assert "EAST" in prompt
     assert "sidling east feels safer than committing to a lunge" in prompt
     assert "(1, 1) [NORTH] ➔ (2, 1) [EAST]" in prompt
+    assert "Target: mouse-54" in prompt
+    assert "mouse-54 at (3, 1)" in prompt
 
 
 def test_capture_is_optional_and_prompt_building_is_unaffected():

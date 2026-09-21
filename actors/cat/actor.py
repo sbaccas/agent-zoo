@@ -780,7 +780,7 @@ def build_decision_prompt(
     obs: Observation,
     history: Optional[List[Dict[str, Any]]] = None,
     agent_id: str = "cat-1",
-    history_window_size: int = 3,
+    history_window_size: int = 25,
     capture: Optional[Dict[str, Any]] = None,
     commander_directive: Optional[Dict[str, Any]] = None,
 ) -> str:
@@ -793,15 +793,9 @@ def build_decision_prompt(
 
     Three advisory sources feed the decision, in ascending order of authority:
     the evaluator's standing orders (long horizon, published to disk), the recent
-    history window, and the commander's live radio order. The commander block is
-    placed LAST, immediately before the model answers, because that is the
-    position a model weights most heavily -- and the reported symptom was
-    precisely that commander orders were being ignored.
-
-    When `capture` is supplied it is filled in as an out-parameter with the
-    prompt broken down by contributing source. It is an out-parameter rather
-    than part of the return value because three test modules mock this call
-    chain and assert on its arity.
+    ticks window (short horizon, evidence of recent outcomes), and the current
+    observation (instantaneous truth). See actor_skills.md under "Chain of
+    Command".
     """
     pos = obs.self.get("position", {})
     facing = obs.self.get("facing", "north")
@@ -825,7 +819,18 @@ def build_decision_prompt(
         h_score = h_obs.get("score", 0)
         h_resp = h.get("response", {})
         h_act = (h_resp.get("action") or "stay").upper()
-        vis_info = f"{len(h_vis)} visible ({[m.get('id') for m in h_vis]})" if h_vis else "0 visible"
+        if h_vis:
+            vis_items = []
+            for m in h_vis:
+                mid = m.get("id") or m.get("type", "entity")
+                mpos = m.get("position")
+                if isinstance(mpos, dict) and "x" in mpos and "y" in mpos:
+                    vis_items.append(f"{mid} at ({mpos['x']}, {mpos['y']})")
+                else:
+                    vis_items.append(str(mid))
+            vis_info = f"{len(h_vis)} visible ({', '.join(vis_items)})"
+        else:
+            vis_info = "0 visible"
         # Whether this past tick actually ran. A locked tick's action was thrown
         # away by the engine, and rendering it identically to a real move is what
         # made the trajectory look inexplicable -- the model saw itself issue the
@@ -1087,7 +1092,7 @@ async def query_adk_gemini(
     obs: Observation,
     history: Optional[List[Dict[str, Any]]] = None,
     agent_id: str = "cat-1",
-    history_window_size: int = 3,
+    history_window_size: int = 25,
     capture: Optional[Dict[str, Any]] = None,
     commander_directive: Optional[Dict[str, Any]] = None,
 ) -> Tuple[Optional[CatTacticalDecision], str, Optional[str]]:
@@ -1230,7 +1235,7 @@ async def interrogate_adk_gemini(
     obs: Optional[Observation] = None,
     history: Optional[List[Dict[str, Any]]] = None,
     agent_id: str = "cat-1",
-    history_window_size: int = 3,
+    history_window_size: int = 25,
     active_directive: Optional[Dict[str, Any]] = None,
 ) -> Tuple[str, str, Optional[str]]:
     """
