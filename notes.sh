@@ -15,3 +15,5 @@ gcloud auth print-identity-token
 
 #Set the proj 
 gcloud config set project proj1-487921
+
+PORT=8003 ./scripts/launch_workbench.sh

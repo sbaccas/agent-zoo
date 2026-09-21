@@ -362,7 +362,11 @@ async def get_boxscore() -> Dict[str, Any]:
             f"box score fetch is switched off ({BOXSCORE_FETCH_ENV}=0)"
         )
 
-    base = (os.environ.get(GAME_SERVER_URL_ENV) or DEFAULT_GAME_SERVER_URL).rstrip("/")
+    base = (
+        os.environ.get(GAME_SERVER_URL_ENV)
+        or os.environ.get("GAME_SERVER_URL")
+        or DEFAULT_GAME_SERVER_URL
+    ).rstrip("/")
     url = f"{base}/api/simulations/{BOXSCORE_SIM_ID}/boxscore"
 
     try:

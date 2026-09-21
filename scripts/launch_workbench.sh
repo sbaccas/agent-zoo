@@ -49,23 +49,28 @@ else
   fi
 fi
 
-# 4. Check if port 8001 is already running and terminate existing listeners
-PIDS_8001=$(lsof -ti tcp:8001 -sTCP:LISTEN 2>/dev/null || true)
-if [ -n "${PIDS_8001}" ]; then
+# 4. Determine host, port, and game server URL
+CAT_PORT="${PORT:-${CAT_AGENT_PORT:-8001}}"
+CAT_HOST="${HOST:-127.0.0.1}"
+GAME_URL="${GAME_SERVER_URL:-http://127.0.0.1:8000}"
+
+# Check if target port is already running and terminate existing listeners
+PIDS_PORT=$(lsof -ti "tcp:${CAT_PORT}" -sTCP:LISTEN 2>/dev/null || true)
+if [ -n "${PIDS_PORT}" ]; then
   echo ""
-  for pid in ${PIDS_8001}; do
-    echo "🔄 Stopping existing process on port 8001 (PID: ${pid})..."
+  for pid in ${PIDS_PORT}; do
+    echo "🔄 Stopping existing process on port ${CAT_PORT} (PID: ${pid})..."
     kill -9 "${pid}" 2>/dev/null || true
   done
   sleep 1
 fi
 
 echo ""
-echo "🚀 Starting Cat Agent & Workbench on port 8001..."
-echo "   • Workbench Dashboard:        http://127.0.0.1:8001"
-echo "   • Authoritative Game Server:  http://127.0.0.1:8000"
+echo "🚀 Starting Cat Agent & Workbench on port ${CAT_PORT}..."
+echo "   • Workbench Dashboard:        http://${CAT_HOST}:${CAT_PORT}"
+echo "   • Authoritative Game Server:  ${GAME_URL}"
 echo "================================================================="
 echo ""
 
-exec python -m uvicorn actors.cat.api:app --host 127.0.0.1 --port 8001 --reload --no-access-log
+exec python -m uvicorn actors.cat.api:app --host "${CAT_HOST}" --port "${CAT_PORT}" --reload --no-access-log
 

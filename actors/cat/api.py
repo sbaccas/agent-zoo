@@ -649,7 +649,22 @@ class WsClientManager:
     """Manages persistent outbound WebSocket connection to the Game Server."""
 
     def __init__(self):
-        self.server_url: str = os.environ.get("GAME_SERVER_WS_URL", "ws://127.0.0.1:8000/ws/agents")
+        default_url = (
+            os.environ.get("GAME_SERVER_WS_URL")
+            or os.environ.get("CAT_AGENT_GAME_SERVER_URL")
+            or os.environ.get("GAME_SERVER_URL")
+            or "ws://127.0.0.1:8000/ws/agents"
+        )
+        if default_url.startswith("http://"):
+            default_url = "ws://" + default_url[7:]
+        elif default_url.startswith("https://"):
+            default_url = "wss://" + default_url[8:]
+        if not default_url.startswith("ws://") and not default_url.startswith("wss://"):
+            default_url = f"ws://{default_url}"
+        if "/ws/agents" not in default_url:
+            default_url = default_url.rstrip("/") + "/ws/agents"
+
+        self.server_url: str = default_url
         self.requested_cat_id: Optional[str] = None
         self.connected: bool = False
         self.connecting: bool = False
@@ -669,6 +684,11 @@ class WsClientManager:
         # unless the overruns themselves are recorded.
         self.deliberation_log: List[Dict[str, Any]] = []
         self.max_deliberation_log: int = 200
+
+    @property
+    def http_base_url(self) -> str:
+        url = self.server_url.replace("wss://", "https://").replace("ws://", "http://")
+        return url.split("/ws")[0].rstrip("/")
 
     def get_status(self) -> Dict[str, Any]:
         recent = self.deliberation_log[-50:]
@@ -922,7 +942,7 @@ ws_client = WsClientManager()
 async def sync_live_observation(agent_id: Optional[str] = None) -> bool:
     """Fetches current observation from Game Server HTTP endpoint."""
     target_id = agent_id or state.agent_id or "cat-1"
-    game_server_url = "http://127.0.0.1:8000"
+    game_server_url = ws_client.http_base_url
     try:
         async with httpx.AsyncClient(timeout=0.5) as client:
             resp = await client.get(f"{game_server_url}/api/simulations/active/agents/{target_id}/observation")
@@ -1232,7 +1252,7 @@ def get_server_status() -> Dict[str, Any]:
 
 @app.get("/api/agent/server/cats")
 async def list_server_cats() -> Dict[str, Any]:
-    server_http = ws_client.server_url.replace("wss://", "https://").replace("ws://", "http://").split("/ws/")[0]
+    server_http = ws_client.http_base_url
     cats = []
     try:
         async with httpx.AsyncClient(timeout=2.0) as client:
@@ -1896,11 +1916,12 @@ async def favicon():
 
 
 if __name__ == "__main__":
-    port = int(sys.argv[1]) if len(sys.argv) > 1 else 8001
+    host = os.environ.get("HOST", "127.0.0.1")
+    port = int(sys.argv[1]) if len(sys.argv) > 1 else int(os.environ.get("PORT", "8001"))
     print(f"\n=======================================================", flush=True)
     print(f"🐱 Cat Agent Service & Interactive Workbench Online", flush=True)
     print(f"   • Brain: Google ADK (gemini-2.5-flash) with Skills Handbook", flush=True)
-    print(f"   • Workbench Dashboard: http://127.0.0.1:{port}", flush=True)
-    print(f"   • API Observation Endpoint: http://127.0.0.1:{port}/act", flush=True)
+    print(f"   • Workbench Dashboard: http://{host}:{port}", flush=True)
+    print(f"   • API Observation Endpoint: http://{host}:{port}/act", flush=True)
     print(f"=======================================================\n", flush=True)
-    uvicorn.run("actors.cat.api:app", host="127.0.0.1", port=port, reload=True, log_level="warning")
+    uvicorn.run("actors.cat.api:app", host=host, port=port, reload=True, log_level="warning")
