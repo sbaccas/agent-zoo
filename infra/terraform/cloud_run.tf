@@ -61,6 +61,22 @@ resource "google_cloud_run_v2_service_iam_member" "game_server_invoker" {
   member   = "domain:shanebaccas.altostrat.com"
 }
 
+resource "google_cloud_run_v2_service_iam_member" "game_server_invoker_jumpbox" {
+  project  = var.project_id
+  location = var.region
+  name     = google_cloud_run_v2_service.game_server.name
+  role     = "roles/run.invoker"
+  member   = "serviceAccount:${google_service_account.jumpbox_sa.email}"
+}
+
+resource "google_cloud_run_v2_service_iam_member" "game_server_invoker_cloud_run" {
+  project  = var.project_id
+  location = var.region
+  name     = google_cloud_run_v2_service.game_server.name
+  role     = "roles/run.invoker"
+  member   = "serviceAccount:${google_service_account.cloud_run_sa.email}"
+}
+
 # ----------------------------------------------------
 # 2. Cat Agent Cloud Run Service
 # ----------------------------------------------------
@@ -101,6 +117,10 @@ resource "google_cloud_run_v2_service" "cat_agent" {
       }
       env {
         name  = "GAME_SERVER_URL"
+        value = "http://game.catz.internal"
+      }
+      env {
+        name  = "GAME_SERVER_AUDIENCE"
         value = google_cloud_run_v2_service.game_server.uri
       }
 
@@ -120,4 +140,12 @@ resource "google_cloud_run_v2_service_iam_member" "cat_agent_invoker" {
   name     = google_cloud_run_v2_service.cat_agent.name
   role     = "roles/run.invoker"
   member   = "domain:shanebaccas.altostrat.com"
+}
+
+resource "google_cloud_run_v2_service_iam_member" "cat_agent_invoker_jumpbox" {
+  project  = var.project_id
+  location = var.region
+  name     = google_cloud_run_v2_service.cat_agent.name
+  role     = "roles/run.invoker"
+  member   = "serviceAccount:${google_service_account.jumpbox_sa.email}"
 }

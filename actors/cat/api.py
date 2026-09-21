@@ -15,6 +15,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 import httpx
+from actors.auth import get_gcp_id_token
 
 # Shared models
 from actors.models import (
@@ -874,7 +875,14 @@ class WsClientManager:
             self.connected = False
             try:
                 print(f"🐾 [WS CLIENT] Connecting to Game Server at {self.server_url}...", flush=True)
-                async with websockets.connect(self.server_url, ping_interval=20, ping_timeout=10) as ws:
+                token = get_gcp_id_token()
+                extra_headers = {"Authorization": f"Bearer {token}"} if token else None
+                async with websockets.connect(
+                    self.server_url,
+                    additional_headers=extra_headers,
+                    ping_interval=20,
+                    ping_timeout=10,
+                ) as ws:
                     self._ws = ws
                     self.connecting = False
                     self.connected = True
@@ -943,8 +951,10 @@ async def sync_live_observation(agent_id: Optional[str] = None) -> bool:
     """Fetches current observation from Game Server HTTP endpoint."""
     target_id = agent_id or state.agent_id or "cat-1"
     game_server_url = ws_client.http_base_url
+    token = get_gcp_id_token()
+    headers = {"Authorization": f"Bearer {token}"} if token else None
     try:
-        async with httpx.AsyncClient(timeout=0.5) as client:
+        async with httpx.AsyncClient(headers=headers, timeout=0.5) as client:
             resp = await client.get(f"{game_server_url}/api/simulations/active/agents/{target_id}/observation")
             if resp.status_code == 200:
                 data = resp.json()

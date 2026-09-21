@@ -25,6 +25,7 @@ import time
 from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
+from actors.auth import get_gcp_id_token
 from google.adk.agents import LlmAgent
 from google.adk.agents.readonly_context import ReadonlyContext
 from google.adk import Runner
@@ -369,8 +370,11 @@ async def get_boxscore() -> Dict[str, Any]:
     ).rstrip("/")
     url = f"{base}/api/simulations/{BOXSCORE_SIM_ID}/boxscore"
 
+    token = get_gcp_id_token()
+    headers = {"Authorization": f"Bearer {token}"} if token else None
+
     try:
-        async with httpx.AsyncClient(timeout=BOXSCORE_TIMEOUT_SECONDS) as client:
+        async with httpx.AsyncClient(headers=headers, timeout=BOXSCORE_TIMEOUT_SECONDS) as client:
             resp = await client.get(url)
             if resp.status_code != 200:
                 return _boxscore_unavailable(
@@ -438,8 +442,10 @@ async def get_coverage_map() -> Dict[str, Any]:
     base = (os.environ.get(GAME_SERVER_URL_ENV) or DEFAULT_GAME_SERVER_URL).rstrip("/")
     url = f"{base}/api/simulations/{BOXSCORE_SIM_ID}/heatmap"
 
+    token = get_gcp_id_token()
+    headers = {"Authorization": f"Bearer {token}"} if token else None
     try:
-        async with httpx.AsyncClient(timeout=BOXSCORE_TIMEOUT_SECONDS) as client:
+        async with httpx.AsyncClient(headers=headers, timeout=BOXSCORE_TIMEOUT_SECONDS) as client:
             resp = await client.get(url)
             if resp.status_code == 403:
                 return _coverage_map_unavailable("coverage map disclosure is disabled")

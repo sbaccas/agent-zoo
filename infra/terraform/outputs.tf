@@ -47,3 +47,18 @@ output "cat_agent_url" {
   description = "Cat Agent Workbench Cloud Run URL"
   value       = google_cloud_run_v2_service.cat_agent.uri
 }
+
+output "internal_gateway_ip" {
+  description = "Internal Private IP address in catz-vpc-subnet for Cloud Run endpoints"
+  value       = google_compute_address.internal_gateway_ip.address
+}
+
+output "game_server_internal_dns" {
+  description = "Internal Private DNS hostname for Game Server"
+  value       = "http://game.catz.internal"
+}
+
+output "cat_agent_internal_dns" {
+  description = "Internal Private DNS hostname for Cat Agent Workbench"
+  value       = "http://agent.catz.internal"
+}

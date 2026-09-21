@@ -64,6 +64,6 @@ resource "google_compute_firewall" "allow_internal" {
     protocol = "all"
   }
 
-  source_ranges = [var.subnet_cidr]
-  description   = "Allow internal traffic within subnet"
+  source_ranges = [var.subnet_cidr, "10.10.1.0/24"]
+  description   = "Allow internal traffic within primary subnet and regional proxy subnet"
 }
