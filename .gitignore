@@ -52,3 +52,18 @@ actors/cat/runtime/
 # Local evidence for comparing runs, not source. One game costs ~13 MB, almost
 # all of it the compressed prompt log.
 archive/
+
+# Terraform
+**/.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+*.tfvars
+*.tfvars.json
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraformrc
+terraform.rc
