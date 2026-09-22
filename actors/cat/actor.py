@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from dotenv import load_dotenv
 
 # Ensure environment is loaded
-load_dotenv()
+load_dotenv(override=True)
 if "GOOGLE_CLOUD_REGION" in os.environ and "GOOGLE_CLOUD_LOCATION" not in os.environ:
     os.environ["GOOGLE_CLOUD_LOCATION"] = os.environ["GOOGLE_CLOUD_REGION"]
 
