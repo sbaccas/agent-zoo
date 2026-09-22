@@ -51,6 +51,7 @@ class Simulation:
             width=self.config.width,
             height=self.config.height,
             topology=self.config.topology,
+            generate_map=getattr(self.config, "enable_map_features", False),
         )
         self.entity_manager = EntityManager(
             world=self.world,
@@ -120,6 +121,7 @@ class Simulation:
             can_step_back=len(self.history) > 0,
             species=self.entity_manager.species_config,
             disclosure=self.config.disclosure,
+            map_features=self.world.get_map_features(),
         )
 
     def get_boxscore(self) -> dict:

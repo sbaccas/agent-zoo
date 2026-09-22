@@ -176,6 +176,10 @@ class SimulationConfig(BaseModel):
     # have any chance of answering inside its own tick budget.
     tick_rate: float = Field(default=0.25, gt=0, le=100.0)
     disclosure: DisclosureConfig = Field(default_factory=DisclosureConfig)
+    enable_map_features: bool = Field(
+        default=False,
+        description="Generate trees, buildings, and cheese on the board",
+    )
 
 
 class GameEvent(BaseModel):
@@ -210,6 +214,7 @@ class SimulationStateResponse(BaseModel):
     can_step_back: bool = False
     species: Optional[Dict[str, Any]] = None
     disclosure: Optional[DisclosureConfig] = None
+    map_features: Optional[Dict[str, Any]] = None
 
 
 class UpdateTickRateRequest(BaseModel):

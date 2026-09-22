@@ -45,10 +45,26 @@ class EntityManager:
         entity_id = f"{type_key}-{seq}"
 
         if pos is None:
-            pos = Position(
-                x=random.randint(0, self.world.width - 1),
-                y=random.randint(0, self.world.height - 1),
-            )
+            chosen_pos = None
+            if entity_type == EntityType.MOUSE and self.world.cheese_locations and random.random() < 0.6:
+                # 60% of mice spawn within or near buildings containing cheese
+                cx, cy = random.choice(self.world.cheese_locations)
+                for _ in range(50):
+                    nx = cx + random.randint(-4, 4)
+                    ny = cy + random.randint(-4, 4)
+                    if self.world.is_traversable(nx, ny):
+                        chosen_pos = Position(x=nx, y=ny)
+                        break
+
+            if chosen_pos is None:
+                for _ in range(100):
+                    rx = random.randint(0, self.world.width - 1)
+                    ry = random.randint(0, self.world.height - 1)
+                    if self.world.is_traversable(rx, ry):
+                        chosen_pos = Position(x=rx, y=ry)
+                        break
+
+            pos = chosen_pos or Position(x=0, y=0)
 
         if facing is None:
             facing = random.choice([Direction.NORTH, Direction.SOUTH, Direction.EAST, Direction.WEST])

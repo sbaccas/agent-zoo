@@ -779,6 +779,141 @@
     }
   }
 
+  function renderMapFeatures(state, cellW, cellH) {
+    const mf = state.map_features;
+    if (!mf) return;
+
+    // 1. Buildings (Floor, Walls, Doors, Name)
+    if (Array.isArray(mf.buildings)) {
+      for (const b of mf.buildings) {
+        const bx = b.x * cellW;
+        const by = b.y * cellH;
+        const bw = b.w * cellW;
+        const bh = b.h * cellH;
+
+        // Interior floor fill
+        ctx.fillStyle = '#f8fafc';
+        ctx.fillRect(bx, by, bw, bh);
+
+        // Walls
+        if (Array.isArray(b.walls)) {
+          ctx.fillStyle = '#334155';
+          for (const w of b.walls) {
+            ctx.fillRect(w.x * cellW, w.y * cellH, cellW, cellH);
+            ctx.strokeStyle = '#1e293b';
+            ctx.lineWidth = 0.5;
+            ctx.strokeRect(w.x * cellW, w.y * cellH, cellW, cellH);
+          }
+        }
+
+        // Doors (open pathways)
+        if (Array.isArray(b.doors)) {
+          for (const d of b.doors) {
+            ctx.fillStyle = '#fef3c7';
+            ctx.fillRect(d.x * cellW, d.y * cellH, cellW, cellH);
+            ctx.strokeStyle = '#d97706';
+            ctx.lineWidth = 1;
+            ctx.setLineDash([2, 2]);
+            ctx.strokeRect(d.x * cellW + 1, d.y * cellH + 1, cellW - 2, cellH - 2);
+            ctx.setLineDash([]);
+          }
+        }
+
+        // Building Name label
+        if (b.name) {
+          ctx.save();
+          ctx.fillStyle = '#475569';
+          ctx.font = `bold ${Math.max(9, Math.floor(cellW * 0.9))}px -apple-system, BlinkMacSystemFont, sans-serif`;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          const labelX = bx + bw / 2;
+          const labelY = by + Math.max(12, cellH * 1.5);
+          ctx.fillText(b.name, labelX, labelY);
+          ctx.restore();
+        }
+      }
+    }
+
+    // 2. Trees (each tree is 2x2 tiles)
+    if (Array.isArray(mf.trees)) {
+      for (const t of mf.trees) {
+        const tw = (t.w || 2) * cellW;
+        const th = (t.h || 2) * cellH;
+        const cx = t.x * cellW + tw / 2;
+        const cy = t.y * cellH + th / 2;
+        const radius = Math.min(tw, th) * 0.46;
+
+        ctx.save();
+        // Drop shadow
+        ctx.beginPath();
+        ctx.arc(cx + 1, cy + 1, radius, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.12)';
+        ctx.fill();
+
+        // Canopy base
+        ctx.beginPath();
+        ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+        ctx.fillStyle = '#166534';
+        ctx.fill();
+        ctx.strokeStyle = '#14532d';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+
+        // Canopy highlight
+        ctx.beginPath();
+        ctx.arc(cx - radius * 0.18, cy - radius * 0.18, radius * 0.62, 0, Math.PI * 2);
+        ctx.fillStyle = '#22c55e';
+        ctx.fill();
+
+        // Center trunk
+        ctx.beginPath();
+        ctx.arc(cx, cy, Math.max(2, radius * 0.2), 0, Math.PI * 2);
+        ctx.fillStyle = '#78350f';
+        ctx.fill();
+
+        ctx.restore();
+      }
+    }
+
+    // 3. Cheese
+    if (Array.isArray(mf.cheese)) {
+      for (const ch of mf.cheese) {
+        const cx = ch.x * cellW + cellW / 2;
+        const cy = ch.y * cellH + cellH / 2;
+        const r = Math.max(4, cellW * 0.45);
+
+        ctx.save();
+        // Warm cheese glow
+        ctx.beginPath();
+        ctx.arc(cx, cy, r * 1.4, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(250, 204, 21, 0.35)';
+        ctx.fill();
+
+        // Cheese wedge triangle
+        ctx.beginPath();
+        ctx.moveTo(cx - r * 0.8, cy + r * 0.7);
+        ctx.lineTo(cx + r * 0.8, cy + r * 0.7);
+        ctx.lineTo(cx, cy - r * 0.85);
+        ctx.closePath();
+        ctx.fillStyle = '#eab308';
+        ctx.fill();
+        ctx.strokeStyle = '#ca8a04';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+
+        // Cheese holes
+        ctx.fillStyle = '#a16207';
+        ctx.beginPath();
+        ctx.arc(cx - r * 0.25, cy + r * 0.2, Math.max(1, r * 0.16), 0, Math.PI * 2);
+        ctx.arc(cx + r * 0.28, cy + r * 0.28, Math.max(1, r * 0.13), 0, Math.PI * 2);
+        ctx.arc(cx, cy - r * 0.2, Math.max(1, r * 0.14), 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.restore();
+      }
+    }
+  }
+
   function renderBoard(state, timestamp = performance.now()) {
     const width = state.width || 100;
     const height = state.height || 100;
@@ -805,6 +940,9 @@
       ctx.lineTo(canvas.width, y * cellH);
       ctx.stroke();
     }
+
+    // 2.5 Render Map Features (Buildings, Walls, Doors, Trees, Cheese)
+    renderMapFeatures(state, cellW, cellH);
 
     // 3. Render AoE Strike-Zone Preview for selected cat
     const entities = state.entities || [];

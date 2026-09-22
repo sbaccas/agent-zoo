@@ -6,13 +6,139 @@ from app.models.simulation import Topology
 
 
 class World:
-    def __init__(self, width: int = 100, height: int = 100, topology: Topology = Topology.BOUNDED):
+    def __init__(
+        self,
+        width: int = 100,
+        height: int = 100,
+        topology: Topology = Topology.BOUNDED,
+        generate_map: bool = False,
+    ):
         self.width = width
         self.height = height
         self.topology = topology
+        self.obstacle_grid = bytearray(self.width * self.height)
+        self.trees: List[dict] = []
+        self.buildings: List[dict] = []
+        self.cheese_locations: List[Tuple[int, int]] = []
+        if generate_map:
+            self.generate_default_map()
 
     def is_in_bounds(self, x: int, y: int) -> bool:
         return 0 <= x < self.width and 0 <= y < self.height
+
+    def is_traversable(self, x: int, y: int) -> bool:
+        """O(1) check: returns True if (x, y) is within bounds and not blocked by an obstacle."""
+        if self.topology == Topology.TORUS:
+            x, y = self.wrap_position(x, y)
+        elif not self.is_in_bounds(x, y):
+            return False
+        return self.obstacle_grid[y * self.width + x] == 0
+
+    def add_tree(self, x: int, y: int):
+        """Adds a 2x2 tree obstacle (4 tiles)."""
+        if x + 1 < self.width and y + 1 < self.height:
+            self.trees.append({"x": x, "y": y, "w": 2, "h": 2})
+            for ty in range(y, y + 2):
+                for tx in range(x, x + 2):
+                    self.obstacle_grid[ty * self.width + tx] = 1
+
+    def add_building(
+        self,
+        name: str,
+        x: int,
+        y: int,
+        w: int,
+        h: int,
+        doors: List[Tuple[int, int]],
+        cheese: List[Tuple[int, int]],
+    ):
+        """Adds a hollow building with walls, door openings, and interior cheese."""
+        walls = []
+        door_set = set(doors)
+        # Top and bottom walls
+        for tx in range(x, x + w):
+            for ty in (y, y + h - 1):
+                if (tx, ty) not in door_set and self.is_in_bounds(tx, ty):
+                    self.obstacle_grid[ty * self.width + tx] = 2
+                    walls.append({"x": tx, "y": ty})
+        # Left and right walls
+        for ty in range(y + 1, y + h - 1):
+            for tx in (x, x + w - 1):
+                if (tx, ty) not in door_set and self.is_in_bounds(tx, ty):
+                    self.obstacle_grid[ty * self.width + tx] = 2
+                    walls.append({"x": tx, "y": ty})
+
+        for cx, cy in cheese:
+            if self.is_in_bounds(cx, cy):
+                self.cheese_locations.append((cx, cy))
+
+        self.buildings.append({
+            "name": name,
+            "x": x,
+            "y": y,
+            "w": w,
+            "h": h,
+            "doors": [{"x": dx, "y": dy} for dx, dy in doors],
+            "walls": walls,
+            "cheese": [{"x": cx, "y": cy} for cx, cy in cheese],
+        })
+
+    def generate_default_map(self):
+        """Populates the world with 2x2 trees, hollow buildings with doors, and cheese."""
+        if self.width < 40 or self.height < 40:
+            return
+
+        # 1. Buildings with doors and cheese inside
+        # Pantry 1 (North-West)
+        self.add_building(
+            name="Barn Pantry",
+            x=15,
+            y=15,
+            w=8,
+            h=8,
+            doors=[(18, 22), (19, 22)],
+            cheese=[(18, 18)],
+        )
+
+        # Warehouse (North-East)
+        self.add_building(
+            name="North Warehouse",
+            x=72,
+            y=20,
+            w=10,
+            h=8,
+            doors=[(72, 23), (72, 24)],
+            cheese=[(76, 23), (77, 24)],
+        )
+
+        # Old Mill (South)
+        self.add_building(
+            name="Old Mill",
+            x=45,
+            y=65,
+            w=10,
+            h=10,
+            doors=[(49, 65), (50, 65), (49, 74)],
+            cheese=[(49, 69)],
+        )
+
+        # 2. Trees (2x2 obstacles each = 4 squares)
+        tree_locations = [
+            (10, 30), (14, 33), (26, 10), (30, 14),
+            (50, 28), (55, 32), (68, 35), (73, 38),
+            (18, 62), (23, 65), (32, 80), (37, 83),
+            (68, 72), (74, 75), (82, 58), (86, 62),
+        ]
+        for tx, ty in tree_locations:
+            if tx + 1 < self.width and ty + 1 < self.height:
+                self.add_tree(tx, ty)
+
+    def get_map_features(self) -> dict:
+        return {
+            "trees": self.trees,
+            "buildings": self.buildings,
+            "cheese": [{"x": c[0], "y": c[1]} for c in self.cheese_locations],
+        }
 
     def wrap_position(self, x: int, y: int) -> Tuple[int, int]:
         if self.topology == Topology.TORUS:
@@ -51,21 +177,25 @@ class World:
             if not facing:
                 return Position(x=pos.x, y=pos.y)
             dx, dy = self.get_forward_delta(facing)
+            step1_x = pos.x + dx
+            step1_y = pos.y + dy
+            step2_x = pos.x + dx * 2
+            step2_y = pos.y + dy * 2
+
             if self.topology == Topology.TORUS:
-                wx, wy = self.wrap_position(pos.x + dx * 2, pos.y + dy * 2)
-                return Position(x=wx, y=wy)
+                s1_wx, s1_wy = self.wrap_position(step1_x, step1_y)
+                if not self.is_traversable(s1_wx, s1_wy):
+                    return Position(x=pos.x, y=pos.y)
+                s2_wx, s2_wy = self.wrap_position(step2_x, step2_y)
+                if self.is_traversable(s2_wx, s2_wy):
+                    return Position(x=s2_wx, y=s2_wy)
+                return Position(x=s1_wx, y=s1_wy)
             else:
-                target_x = pos.x + dx * 2
-                target_y = pos.y + dy * 2
-                if self.is_in_bounds(target_x, target_y):
-                    return Position(x=target_x, y=target_y)
-                # If target is out of bounds, check 1 step forward (bonk into the wall)
-                step1_x = pos.x + dx
-                step1_y = pos.y + dy
-                if self.is_in_bounds(step1_x, step1_y):
-                    return Position(x=step1_x, y=step1_y)
-                # Already at the wall
-                return Position(x=pos.x, y=pos.y)
+                if not self.is_traversable(step1_x, step1_y):
+                    return Position(x=pos.x, y=pos.y)
+                if self.is_traversable(step2_x, step2_y):
+                    return Position(x=step2_x, y=step2_y)
+                return Position(x=step1_x, y=step1_y)
 
         dx, dy = 0, 0
         if action == ActionType.NORTH:
@@ -80,12 +210,13 @@ class World:
         target_x = pos.x + dx
         target_y = pos.y + dy
 
+        if not self.is_traversable(target_x, target_y):
+            return Position(x=pos.x, y=pos.y)
+
         if self.topology == Topology.TORUS:
             wx, wy = self.wrap_position(target_x, target_y)
             return Position(x=wx, y=wy)
         else:
-            if not self.is_in_bounds(target_x, target_y):
-                return Position(x=pos.x, y=pos.y)
             return Position(x=target_x, y=target_y)
 
     def get_legal_actions(
@@ -104,7 +235,7 @@ class World:
         for action, dx, dy in moves:
             nx = pos.x + dx
             ny = pos.y + dy
-            if self.topology == Topology.TORUS or self.is_in_bounds(nx, ny):
+            if self.is_traversable(nx, ny):
                 legal.append(action)
 
         if allow_attack:
@@ -113,7 +244,7 @@ class World:
                 fdx, fdy = self.get_forward_delta(facing)
                 step1_x = pos.x + fdx
                 step1_y = pos.y + fdy
-                if self.topology == Topology.TORUS or self.is_in_bounds(step1_x, step1_y):
+                if self.is_traversable(step1_x, step1_y):
                     legal.append(ActionType.LUNGE)
             else:
                 legal.append(ActionType.LUNGE)

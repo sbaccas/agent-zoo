@@ -188,3 +188,85 @@ def test_cat_lunge_wall_bonk_clamped():
     p_blocked = world.get_next_position(pos_at_wall, ActionType.LUNGE, facing=Direction.EAST)
     assert p_blocked.x == 9
     assert p_blocked.y == 5
+
+
+def test_tree_2x2_obstacle_collision():
+    world = World(width=20, height=20, topology=Topology.BOUNDED)
+    world.add_tree(5, 5)  # 2x2 tree at (5,5), (6,5), (5,6), (6,6)
+
+    # All 4 tiles of tree must be blocked
+    for tx in (5, 6):
+        for ty in (5, 6):
+            assert not world.is_traversable(tx, ty)
+            assert world.obstacle_grid[ty * world.width + tx] == 1
+
+    # Adjacent tile (4, 5) cannot move EAST into the tree
+    legal = world.get_legal_actions(Position(x=4, y=5))
+    assert ActionType.EAST not in legal
+    assert ActionType.WEST in legal
+
+    # Attempting to move into tree is blocked and retains position
+    res = world.get_next_position(Position(x=4, y=5), ActionType.EAST)
+    assert res.x == 4 and res.y == 5
+
+
+def test_building_walls_doors_and_cheese():
+    world = World(width=30, height=30, topology=Topology.BOUNDED)
+    world.add_building(
+        name="Test Cottage",
+        x=10,
+        y=10,
+        w=6,
+        h=6,
+        doors=[(12, 10)],
+        cheese=[(12, 12)],
+    )
+
+    # Wall tile is blocked
+    assert not world.is_traversable(10, 10)
+    assert not world.is_traversable(11, 10)
+
+    # Door tile is traversable
+    assert world.is_traversable(12, 10)
+
+    # Interior cheese tile is traversable
+    assert world.is_traversable(12, 12)
+    assert (12, 12) in world.cheese_locations
+
+
+def test_lunge_stops_before_obstacle():
+    world = World(width=20, height=20, topology=Topology.BOUNDED)
+    world.add_tree(5, 5)
+
+    # Cat at (3, 5) facing EAST:
+    # 1 step forward is (4, 5) (open), 2 steps forward is (5, 5) (tree).
+    # Lunge should stop at (4, 5) before hitting the tree!
+    cat_pos = Position(x=3, y=5)
+    res = world.get_next_position(cat_pos, ActionType.LUNGE, facing=Direction.EAST)
+    assert res.x == 4 and res.y == 5
+
+
+def test_default_map_features_and_spawning():
+    from app.game.entities import EntityManager
+    from app.models.entity import EntityType
+    world = World(width=100, height=100, generate_map=True)
+
+    assert len(world.trees) > 0
+    assert len(world.buildings) == 3
+    assert len(world.cheese_locations) > 0
+
+    # Every cheese location must be traversable (inside open room)
+    for cx, cy in world.cheese_locations:
+        assert world.is_traversable(cx, cy)
+
+    # Spawning entities should never spawn on blocked obstacle tiles
+    entity_manager = EntityManager(world, {})
+    mice = entity_manager.spawn_population(EntityType.MOUSE, 40)
+    cats = entity_manager.spawn_population(EntityType.CAT, 5)
+
+    for m in mice:
+        assert world.is_traversable(m.position.x, m.position.y), f"Mouse spawned on blocked tile: {m.position}"
+
+    for c in cats:
+        assert world.is_traversable(c.position.x, c.position.y), f"Cat spawned on blocked tile: {c.position}"
+
