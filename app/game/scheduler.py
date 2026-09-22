@@ -1,7 +1,7 @@
 import logging
 import math
 import random
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 import httpx
 from actors.cat.api import act as cat_agent_act, Observation as CatObservation
 from actors.mouse.heuristic import act as mouse_agent_act, Observation as MouseObservation
@@ -30,6 +30,8 @@ class Scheduler:
         self.scores: Dict[str, int] = {}
         self.events: List[GameEvent] = []
         self.consecutive_http_errors: dict = {}
+        self.deaths: List[Dict[str, Any]] = []
+        self.notified_deaths: set = set()
         # Box-score recorder. Most counters are filled in by the action handler;
         # the loop owns only the ones it alone can see, namely locked ticks and
         # capture credit.
@@ -100,6 +102,8 @@ class Scheduler:
                         "type": other.type.value,
                         "position": {"x": other.position.x, "y": other.position.y},
                         "facing": other.facing.value,
+                        "hp": other.hp,
+                        "max_hp": other.max_hp,
                         "action_cooldown": other.action_cooldown,
                         "locked_action": other.locked_action,
                     }
@@ -129,6 +133,8 @@ class Scheduler:
                         "type": other.type.value,
                         "position": {"x": other.position.x, "y": other.position.y},
                         "facing": other.facing.value,
+                        "hp": other.hp,
+                        "max_hp": other.max_hp,
                         "action_cooldown": other.action_cooldown,
                         "locked_action": other.locked_action,
                     })
@@ -164,7 +170,11 @@ class Scheduler:
             })
 
         allow_attack = (entity.type == EntityType.CAT)
-        legal_actions = [a.value for a in self.world.get_legal_actions(entity.position, allow_attack=allow_attack, facing=entity.facing)]
+        if entity.alive:
+            legal_actions = [a.value for a in self.world.get_legal_actions(entity.position, allow_attack=allow_attack, facing=entity.facing)]
+        else:
+            legal_actions = []
+            can_act = False
 
         spec_cfg = self.entity_manager.species_config.get(species_key)
         attack_range = spec_cfg.attack_range if spec_cfg else (2 if entity.type == EntityType.CAT else 0)
@@ -198,6 +208,9 @@ class Scheduler:
             # nothing at all, and getting that backwards in either direction is
             # worse than the problem the feature exists to solve.
             "aim_assist": bool(spec_cfg.aim_assist) if spec_cfg else False,
+            "hp": entity.hp,
+            "max_hp": entity.max_hp,
+            "attack_power": spec_cfg.attack_power if spec_cfg else (34 if entity.type == EntityType.CAT else 0),
         }
 
         return {
@@ -208,16 +221,19 @@ class Scheduler:
                 "type": entity.type.value,
                 "position": {"x": entity.position.x, "y": entity.position.y},
                 "facing": entity.facing.value,
+                "hp": entity.hp,
+                "max_hp": entity.max_hp,
+                "alive": entity.alive,
                 "action_cooldown": entity.action_cooldown,
                 "locked_action": entity.locked_action,
-                "ready_to_act": (entity.action_cooldown == 0),
+                "ready_to_act": (entity.action_cooldown == 0 and entity.alive),
                 # Authoritative answer to "will anything I return this tick be
                 # applied?". `action_cooldown` cannot express this on its own: the
                 # lock branch below decrements before building the payload, so the
                 # final locked tick reports a cooldown of 0 while still being
                 # skipped. Agents that inferred lock state from the counter
                 # misread that tick as playable.
-                "can_act": can_act,
+                "can_act": can_act and entity.alive,
             },
             "capabilities": capabilities,
             "visible_entities": visible,
@@ -230,6 +246,8 @@ class Scheduler:
             # hit/miss by diffing its own `score` against the previous tick.
             "score": self.scores.get(entity.id, 0),
             "scoreboard": self.get_scoreboard(),
+            "deaths": [dict(d) for d in self.deaths],
+            "recent_deaths": [dict(d) for d in self.deaths[-5:]],
         }
 
     def _register_capture(self, owner_id: str, victim: Entity, source: str, zone_id: Optional[str] = None) -> None:
@@ -244,32 +262,80 @@ class Scheduler:
         slash as landed; passing it twice would count the same blade's hit
         against the box score on both paths.
         """
+        is_cat = (victim.type == EntityType.CAT)
+        death_record = {
+            "id": victim.id,
+            "type": victim.type.value,
+            "tick": self.tick,
+            "round": self.round,
+            "killed_by": owner_id,
+            "source": source,
+            "position": {"x": victim.position.x, "y": victim.position.y},
+        }
+        self.deaths.append(death_record)
+
         self.captures += 1
         self.scores[owner_id] = self.scores.get(owner_id, 0) + 1
         if self.stats is not None:
             self.stats.record_kill(owner_id, zone_id)
         owner = self.entity_manager.entities.get(owner_id)
         o_pos = f"({owner.position.x}, {owner.position.y})" if owner else "?"
+        if is_cat:
+            msg = (
+                f"💀 [TICK {self.tick} | R{self.round}] DEATH: {victim.id} was eliminated by {owner_id} at {o_pos} "
+                f"via {source}! ({victim.id} is out of the game!)"
+            )
+            event_type = "cat_knockout"
+        else:
+            msg = (
+                f"💥 [TICK {self.tick} | R{self.round}] CAPTURE: {owner_id} at {o_pos} "
+                f"caught {victim.id} at ({victim.position.x}, {victim.position.y}) "
+                f"via {source}! (Total captures: {self.captures})"
+            )
+            event_type = "capture"
+
+        logger.info(msg)
+        print(msg, flush=True)
+        self.events.append(GameEvent(
+            tick=self.tick,
+            round=self.round,
+            event_type=event_type,
+            actor_id=owner_id,
+            target_id=victim.id,
+            position=victim.position,
+            message=msg,
+            details={"source": source, "victim_type": victim.type.value, "zone_id": zone_id},
+        ))
+
+    def _register_damage(self, owner_id: str, victim: Entity, source: str, zone_id: Optional[str] = None) -> None:
+        """Record a hit that damages but does not eliminate an entity."""
+        owner = self.entity_manager.entities.get(owner_id)
+        o_pos = f"({owner.position.x}, {owner.position.y})" if owner else "?"
         msg = (
-            f"💥 [TICK {self.tick} | R{self.round}] CAPTURE: {owner_id} at {o_pos} "
-            f"caught {victim.id} at ({victim.position.x}, {victim.position.y}) "
-            f"via {source}! (Total captures: {self.captures})"
+            f"🩸 [TICK {self.tick} | R{self.round}] HIT: {owner_id} at {o_pos} "
+            f"slashed {victim.id} at ({victim.position.x}, {victim.position.y}) "
+            f"via {source}! ({victim.id} HP: {victim.hp}/{victim.max_hp})"
         )
         logger.info(msg)
         print(msg, flush=True)
         self.events.append(GameEvent(
             tick=self.tick,
             round=self.round,
-            event_type="capture",
+            event_type="damage",
             actor_id=owner_id,
             target_id=victim.id,
             position=victim.position,
             message=msg,
-            details={"source": source},
+            details={
+                "source": source,
+                "victim_hp": victim.hp,
+                "victim_max_hp": victim.max_hp,
+                "zone_id": zone_id,
+            },
         ))
 
     def _resolve_hazard_zones(self) -> None:
-        """Kill anything standing in a live zone, then retire expired zones.
+        """Kill or damage anything standing in a live zone, then retire expired zones.
 
         Runs after every entity has moved, which is the whole point: resolving
         before movement would let prey step into a lethal tile and out again
@@ -279,12 +345,26 @@ class Scheduler:
             if not zone.is_lethal_on(self.tick):
                 continue
             owner = self.entity_manager.entities.get(zone.owner_id)
-            target_type = EntityType.MOUSE if (owner and owner.type == EntityType.CAT) else EntityType.CAT
+            owner_spec = self.entity_manager.species_config.get(owner.type.value) if owner else None
+            atk_power = owner_spec.attack_power if owner_spec and owner_spec.attack_power > 0 else 34
             for tile in zone.tiles:
                 for victim in self.entity_manager.get_entities_at(tile.x, tile.y):
-                    if victim.type == target_type and victim.alive:
-                        victim.alive = False
-                        self._register_capture(zone.owner_id, victim, f"{zone.kind} zone", zone_id=zone.id)
+                    if victim.id != zone.owner_id and victim.alive:
+                        if self.action_handler.has_zone_hit(zone.id, self.tick, victim.id):
+                            continue
+                        self.action_handler.record_zone_hit(zone.id, self.tick, victim.id)
+                        if victim.type == EntityType.MOUSE:
+                            victim.hp = 0
+                            victim.alive = False
+                        else:
+                            victim.hp = max(0, victim.hp - atk_power)
+                            if victim.hp <= 0:
+                                victim.hp = 0
+                                victim.alive = False
+                        if not victim.alive:
+                            self._register_capture(zone.owner_id, victim, f"{zone.kind} zone", zone_id=zone.id)
+                        else:
+                            self._register_damage(zone.owner_id, victim, f"{zone.kind} zone", zone_id=zone.id)
 
         expired = [z for z in self.action_handler.hazard_zones if z.lethal_until_tick < self.tick]
         for zone in expired:
@@ -404,7 +484,10 @@ class Scheduler:
                     for victim_id in res.affected_entities:
                         victim = self.entity_manager.entities.get(victim_id)
                         if victim:
-                            self._register_capture(cat.id, victim, "slash impact")
+                            if not victim.alive:
+                                self._register_capture(cat.id, victim, "slash impact")
+                            else:
+                                self._register_damage(cat.id, victim, "slash impact")
 
         # 2. Mice turn
         for mouse in mice:
@@ -515,18 +598,27 @@ class Scheduler:
 
         `can_act` describes the *next* tick, not this one, because that is the
         tick the agent's reply will execute on. A cooldown of zero here means the
-        next turn is playable; any positive value means it will be skipped. The
-        previous arrangement reported the current tick's playability to an agent
-        whose answer could only ever land on the following one, so the first line
-        of the prompt described a tick the cat was not deciding for.
+        next turn is playable; any positive value means it will be skipped.
+        Dead entities get a single final death notification with can_act=False,
+        after which no further observations or actions are processed.
         """
-        for entity in self.entity_manager.get_alive_entities():
+        for entity in list(self.entity_manager.entities.values()):
             if entity.id == skip_entity_id:
                 continue
             if not ws_agent_manager.has_agent(entity.id):
                 continue
             if self.entity_manager.get_agent_mode(entity.id) == "manual":
                 continue
+
+            if not entity.alive:
+                if entity.id not in self.notified_deaths:
+                    self.notified_deaths.add(entity.id)
+                    obs = self._build_observation_payload(entity, can_act=False)
+                    await ws_agent_manager.send_observation(
+                        entity.id, obs, budget_sec=self.tick_budget_sec
+                    )
+                continue
+
             obs = self._build_observation_payload(
                 entity, can_act=(entity.action_cooldown == 0)
             )

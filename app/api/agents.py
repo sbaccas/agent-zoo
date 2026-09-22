@@ -54,8 +54,6 @@ async def get_agent_observation(sim_id: str, agent_id: str):
         raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found")
 
     entity = sim.entity_manager.entities[agent_id]
-    if not entity.alive:
-        raise HTTPException(status_code=410, detail=f"Agent '{agent_id}' is dead")
 
     species_key = entity.type.value
     vision_radius = 4
@@ -94,7 +92,10 @@ async def get_agent_observation(sim_id: str, agent_id: str):
                 visible.append(other)
 
     allow_attack = (entity.type == EntityType.CAT)
-    legal_actions = sim.world.get_legal_actions(entity.position, allow_attack=allow_attack, facing=entity.facing)
+    if entity.alive:
+        legal_actions = sim.world.get_legal_actions(entity.position, allow_attack=allow_attack, facing=entity.facing)
+    else:
+        legal_actions = []
 
     spec_cfg = sim.entity_manager.species_config.get(species_key)
     attack_range = spec_cfg.attack_range if spec_cfg else (2 if entity.type == EntityType.CAT else 0)
@@ -108,6 +109,9 @@ async def get_agent_observation(sim_id: str, agent_id: str):
         "lunge_cooldown": spec_cfg.lunge_cooldown if spec_cfg else 0,
         "weight": spec_cfg.weight if spec_cfg else 1,
         "aim_assist": bool(spec_cfg.aim_assist) if spec_cfg else False,
+        "hp": entity.hp,
+        "max_hp": entity.max_hp,
+        "attack_power": spec_cfg.attack_power if spec_cfg else (34 if entity.type == EntityType.CAT else 0),
     }
 
     return ObservationResponse(
@@ -120,6 +124,8 @@ async def get_agent_observation(sim_id: str, agent_id: str):
         capabilities=capabilities,
         score=sim.scheduler.scores.get(agent_id, 0),
         scoreboard=sim.scheduler.get_scoreboard(),
+        deaths=[dict(d) for d in sim.scheduler.deaths],
+        recent_deaths=[dict(d) for d in sim.scheduler.deaths[-5:]],
     )
 
 

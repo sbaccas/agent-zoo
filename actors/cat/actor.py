@@ -916,11 +916,18 @@ def build_decision_prompt(
     # given on the tick before it. Every answer is therefore a standing intent
     # applied at the next opportunity, and the text says so rather than promising
     # immediate execution it cannot guarantee.
+    self_hp = obs.self.get("hp", 100)
+    self_max_hp = obs.self.get("max_hp", 100)
+    self_atk_power = caps.get("attack_power", 34)
+    self_alive = obs.self.get("alive", True)
+
     self_cd = int(obs.self.get("action_cooldown", 0) or 0)
     self_locked_action = obs.self.get("locked_action")
     _can_act = obs.self.get("can_act")
     self_locked = (self_cd > 0) if _can_act is None else (not _can_act)
-    if self_locked:
+    if not self_alive or self_hp <= 0:
+        lock_text = "ELIMINATED / DEAD. You have been knocked out and cannot act."
+    elif self_locked:
         recovering = f" from '{self_locked_action}'" if self_locked_action else ""
         remaining = (
             f" You are free again in {self_cd} tick(s)."
@@ -971,15 +978,26 @@ def build_decision_prompt(
             f"    true, ATTACK connects; if it is false, ATTACK cannot connect.\n"
         )
 
+    deaths_line = ""
+    if obs.recent_deaths:
+        death_strs = [
+            f"{d.get('id')} (killed by {d.get('killed_by')} via {d.get('source')} at tick {d.get('tick')})"
+            for d in obs.recent_deaths
+        ]
+        deaths_line = f"Recent Deaths Announced: {', '.join(death_strs)}\n"
+
     observation_context = (
         f"--- CURRENT OBSERVATION (Tick {obs.tick}, Round {obs.round}) ---\n"
         f"Agent ID: {obs.self.get('id', agent_id)}\n"
         f"Action State: {lock_text}\n"
         f"Current Position: (x={pos.get('x', 0)}, y={pos.get('y', 0)})\n"
         f"Current Facing: {facing}\n"
+        f"Health: {self_hp}/{self_max_hp} HP\n"
         f"Your Score: {obs.score}\n"
         f"Rival Cats: {rival_text}\n"
         f"Capabilities this tick:\n"
+        f"  • health: {self_hp}/{self_max_hp} HP\n"
+        f"  • attack_power: {self_atk_power}/100 damage per slash\n"
         f"  • attack_range: {atk_range} tiles deep, strike zone 3 tiles wide\n"
         f"  • vision_radius: {vision_rad} tiles ahead, plus {vision_rear} behind and "
         f"{vision_half} either side (a box around you, {2 * vision_half + 1} tiles wide)\n"
@@ -988,6 +1006,7 @@ def build_decision_prompt(
         f"  • lunge_cooldown: {lunge_cd} tick(s)\n"
         f"{aim_line}"
         f"Visible Entities in Viewport: {entities}\n"
+        f"{deaths_line}"
         f"Legal Actions this tick: {legal}"
     )
 
@@ -1244,8 +1263,13 @@ async def interrogate_adk_gemini(
     Returns:
       (reply_text, engine_source, error_message)
     """
-    pos = obs.self.get("position", {}) if obs else {}
-    facing = obs.self.get("facing", "north") if obs else "north"
+    self_info = obs.self if obs else {}
+    pos = self_info.get("position", {}) if obs else {}
+    facing = self_info.get("facing", "north") if obs else "north"
+    self_hp = self_info.get("hp", 100) if obs else 100
+    self_max_hp = self_info.get("max_hp", 100) if obs else 100
+    self_alive = self_info.get("alive", True) if obs else True
+    is_dead = (not self_alive) or (self_hp <= 0)
     tick = obs.tick if obs else 0
     round_num = obs.round if obs else 0
     # `or {}` / `or []` matter here, not just the `if obs` guard: these fields are
@@ -1255,8 +1279,24 @@ async def interrogate_adk_gemini(
     entities = (obs.visible_entities or []) if obs else []
     caps = (obs.capabilities or {}) if obs else {}
     legal = (obs.legal_actions or []) if obs else []
+    recent_deaths = (obs.recent_deaths or []) if obs else []
 
-    if "PYTEST_CURRENT_TEST" in os.environ and not os.environ.get("ENABLE_LIVE_LLM_TESTS"):
+    if is_dead:
+        if "PYTEST_CURRENT_TEST" in os.environ and not os.environ.get("ENABLE_LIVE_LLM_TESTS"):
+            return (
+                f"Commander, I have been knocked out and eliminated from the game (0/{self_max_hp} HP). "
+                f"My final position was ({pos.get('x',0)}, {pos.get('y',0)}). I am no longer able to move or act.",
+                "adk_gemini",
+                None,
+            )
+        if not has_gemini_credentials():
+            return (
+                f"Commander, my signal is fading — I have been knocked out of action (0/{self_max_hp} HP, ELIMINATED). "
+                f"My final coordinates were ({pos.get('x',0)}, {pos.get('y',0)}). I cannot execute any further movements or tactical orders.",
+                "heuristic_fallback",
+                None,
+            )
+    elif "PYTEST_CURRENT_TEST" in os.environ and not os.environ.get("ENABLE_LIVE_LLM_TESTS"):
         return (
             f"Commander! At Tick #{tick} (x={pos.get('x',0)}, y={pos.get('y',0)}) facing {facing}. "
             f"Regarding '{user_prompt}': I am scanning with my {caps.get('vision_radius', 4)}-tile vision cone. "
@@ -1264,8 +1304,7 @@ async def interrogate_adk_gemini(
             "adk_gemini",
             None,
         )
-
-    if not has_gemini_credentials():
+    elif not has_gemini_credentials():
         return (
             f"Commander, my Gemini neural link is offline (running local heuristic reflexes). "
             f"At Tick #{tick}, I am at position ({pos.get('x',0)}, {pos.get('y',0)}) facing {facing}. "
@@ -1326,10 +1365,19 @@ async def interrogate_adk_gemini(
                 d_strat = active_directive.get("strategy") or "ROAMING"
                 directive_context = f"Current Tactical Phase: {d_strat}\nActive Directive: {d_thought}\n\n"
 
+            life_status = "ELIMINATED / DEAD (Knocked out of the game. You have 0 HP and cannot move or act.)" if is_dead else f"ACTIVE ({self_hp}/{self_max_hp} HP)"
+
+            deaths_info = ""
+            if recent_deaths:
+                d_list = [f"{d.get('id')} by {d.get('killed_by')} via {d.get('source')} at tick {d.get('tick')}" for d in recent_deaths]
+                deaths_info = f"Recent Casualties Announced: {', '.join(d_list)}\n"
+
             prompt = (
                 f"{history_context}"
                 f"--- CURRENT OBSERVATION (Tick {tick}, Round {round_num}) ---\n"
                 f"Agent ID: {agent_id}\n"
+                f"Status: {life_status}\n"
+                f"Health: {self_hp}/{self_max_hp} HP\n"
                 f"Current Position: (x={pos.get('x', 0)}, y={pos.get('y', 0)})\n"
                 f"Current Facing: {facing}\n"
                 f"vision_radius: {caps.get('vision_radius', 4)} tiles ahead, plus "
@@ -1337,6 +1385,7 @@ async def interrogate_adk_gemini(
                 f"attack_range: {caps.get('attack_range', 2)} tiles\n"
                 f"Visible Entities in Viewport: {entities}\n"
                 f"Legal Actions available: {legal}\n"
+                f"{deaths_info}"
                 f"{directive_context}"
                 f"{COMMANDER_BLOCK_HEADER}\n"
                 f'COMMANDER: "{user_prompt}"\n'

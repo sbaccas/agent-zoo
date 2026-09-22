@@ -59,6 +59,16 @@ class SpeciesConfig(BaseModel):
         ge=1,
         description="Ticks the slash zone stays lethal, counting the tick it lands",
     )
+    hp: int = Field(
+        default=100,
+        ge=1,
+        description="Max hit points / health (ratio out of 100)",
+    )
+    attack_power: int = Field(
+        default=34,
+        ge=0,
+        description="Attack damage per slash out of 100 (~33/100; 3 slashes to defeat 100 HP)",
+    )
     # Publishes each visible entity's position in the observer's own frame --
     # `forward`, `offaxis`, `in_strike_zone` -- alongside the absolute
     # coordinates that are always sent. It grants no new information: every one
@@ -158,6 +168,8 @@ class SimulationConfig(BaseModel):
                 attack_cooldown=3,
                 lunge_cooldown=2,
                 attack_aoe_ticks=2,
+                hp=100,
+                attack_power=34,
             ),
             "mouse": SpeciesConfig(
                 vision_radius=4,
@@ -168,6 +180,8 @@ class SimulationConfig(BaseModel):
                 attack_cooldown=0,
                 lunge_cooldown=0,
                 aim_assist=False,
+                hp=100,
+                attack_power=0,
             ),
         }
     )
@@ -240,6 +254,8 @@ class UpdateSpeciesConfigRequest(BaseModel):
     attack_cooldown: Optional[int] = Field(default=None, ge=0)
     lunge_cooldown: Optional[int] = Field(default=None, ge=0)
     attack_aoe_ticks: Optional[int] = Field(default=None, ge=1)
+    hp: Optional[int] = Field(default=None, ge=1)
+    attack_power: Optional[int] = Field(default=None, ge=0)
     # Unlike its neighbours this is a bool, so it has no bounds to mirror. It
     # still has to be listed explicitly: `update_species_config` iterates
     # `model_dump(exclude_unset=True)`, so a field absent from this model is a

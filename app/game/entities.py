@@ -70,8 +70,11 @@ class EntityManager:
             facing = random.choice([Direction.NORTH, Direction.SOUTH, Direction.EAST, Direction.WEST])
 
         weight = 1
+        hp = 100
         if type_key in self.species_config:
-            weight = self.species_config[type_key].weight
+            spec = self.species_config[type_key]
+            weight = spec.weight
+            hp = getattr(spec, "hp", 100)
 
         entity = Entity(
             id=entity_id,
@@ -80,6 +83,8 @@ class EntityManager:
             facing=facing,
             alive=True,
             weight=weight,
+            hp=hp,
+            max_hp=hp,
         )
         self.entities[entity.id] = entity
         return entity

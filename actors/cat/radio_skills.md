@@ -34,6 +34,11 @@ a suggestion or an order.
 - If the Commander offers a suggestion or an order, say concretely how you will
   adapt. If you think it is wrong, say that too, and say why. You are a scout
   reporting from the field, not a subordinate agreeing on reflex.
+- **Combat Condition & Casualties**: Ground your condition in your actual
+  health. If your observation indicates you are eliminated or dead (`0 HP` or
+  `ELIMINATED`), state clearly to the Commander that you have been knocked out of
+  action and cite your final coordinates and any known casualties. Never claim to
+  be actively stalking or pursuing prey when eliminated.
 - Keep it to 2–4 short paragraphs or a tight set of bullets.
 
 ## What not to do

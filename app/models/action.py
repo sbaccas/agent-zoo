@@ -44,6 +44,8 @@ class ObservationResponse(BaseModel):
     # counters only -- the agent infers hit/miss by diffing across ticks.
     score: int = 0
     scoreboard: Dict[str, int] = Field(default_factory=dict)
+    deaths: List[Dict[str, Any]] = Field(default_factory=list)
+    recent_deaths: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 

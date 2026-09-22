@@ -32,3 +32,5 @@ class Entity(BaseModel):
     weight: int = 1
     action_cooldown: int = 0
     locked_action: Optional[str] = None
+    hp: int = 100
+    max_hp: int = 100

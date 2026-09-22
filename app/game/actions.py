@@ -17,10 +17,20 @@ class ActionHandler:
         # zone creation.
         self.hazard_zones: List[HazardZone] = []
         self._zone_seq = 0
+        self.zone_tick_hits = {}
         # Optional box-score recorder. Attached here for the same reason the
         # zone registry is: this is the one function every control path calls,
         # so counting here cannot miss the manual or HTTP cats.
         self.stats = stats
+
+    def record_zone_hit(self, zone_id: str, tick: int, victim_id: str) -> None:
+        key = (zone_id, tick)
+        if key not in self.zone_tick_hits:
+            self.zone_tick_hits[key] = set()
+        self.zone_tick_hits[key].add(victim_id)
+
+    def has_zone_hit(self, zone_id: str, tick: int, victim_id: str) -> bool:
+        return victim_id in self.zone_tick_hits.get((zone_id, tick), set())
 
     def apply_action(self, entity: Entity, action: ActionType, current_tick: int) -> ActionResult:
         """Resolve an action and, for cats, record it against the box score."""
@@ -114,23 +124,6 @@ class ActionHandler:
             aoe_tiles = self.world.get_slash_aoe_tiles(entity.position, entity.facing, range_tiles=range_tiles)
             hit_entities: List[str] = []
 
-            # Anything standing in the rectangle when the blade lands dies
-            # immediately. The zone registered below then keeps killing for the
-            # rest of its lifetime, so this pass is not redundant: it catches
-            # prey that would otherwise flee during its own turn later in this
-            # same tick.
-            target_type = EntityType.MOUSE if entity.type == EntityType.CAT else EntityType.CAT
-            for tx, ty in aoe_tiles:
-                occupants = self.entity_manager.get_entities_at(tx, ty)
-                for victim in occupants:
-                    if victim.type == target_type and victim.alive:
-                        victim.alive = False
-                        hit_entities.append(victim.id)
-
-            cooldown_dur = spec_cfg.attack_cooldown if spec_cfg else 3
-            entity.action_cooldown = max(0, cooldown_dur - 1)
-            entity.locked_action = action.value if entity.action_cooldown > 0 else None
-
             aoe_ticks = spec_cfg.attack_aoe_ticks if spec_cfg else 2
             self._zone_seq += 1
             zone = HazardZone(
@@ -143,6 +136,29 @@ class ActionHandler:
                 lethal_until_tick=current_tick + max(1, aoe_ticks) - 1,
             )
             self.hazard_zones.append(zone)
+
+            # Anything standing in the rectangle when the blade lands takes damage.
+            # Cats can attack mice AND other cats (victim.id != entity.id).
+            # Attack power defaults to 34/100 (3 slashes eliminate a rival cat; mice die in 1 hit).
+            atk_power = spec_cfg.attack_power if spec_cfg and spec_cfg.attack_power > 0 else 34
+            for tx, ty in aoe_tiles:
+                occupants = self.entity_manager.get_entities_at(tx, ty)
+                for victim in occupants:
+                    if victim.id != entity.id and victim.alive:
+                        if victim.type == EntityType.MOUSE:
+                            victim.hp = 0
+                            victim.alive = False
+                        else:
+                            victim.hp = max(0, victim.hp - atk_power)
+                            if victim.hp <= 0:
+                                victim.hp = 0
+                                victim.alive = False
+                        hit_entities.append(victim.id)
+                        self.record_zone_hit(zone.id, current_tick, victim.id)
+
+            cooldown_dur = spec_cfg.attack_cooldown if spec_cfg else 3
+            entity.action_cooldown = max(0, cooldown_dur - 1)
+            entity.locked_action = action.value if entity.action_cooldown > 0 else None
 
             return ActionResult(
                 accepted=True,

@@ -376,6 +376,12 @@ body {
   border: 1px solid #fbcfe8;
 }
 
+.badge-dead {
+  background-color: #fee2e2;
+  color: #991b1b;
+  border: 1px solid #f87171;
+}
+
 .chips-row {
   display: flex;
   flex-wrap: wrap;
@@ -490,6 +496,12 @@ body {
 }
 
 .action-pill-lg.attack {
+  background-color: #fee2e2;
+  color: #991b1b;
+  border-color: #f87171;
+}
+
+.action-pill-lg.dead {
   background-color: #fee2e2;
   color: #991b1b;
   border-color: #f87171;
@@ -682,6 +694,12 @@ body {
   background-color: #fff7ed;
   border-color: #fdba74;
   color: #c2410c;
+}
+
+.override-status-box.dead {
+  background-color: #fef2f2;
+  border-color: #fca5a5;
+  color: #991b1b;
 }
 
 /* Box 3 Outgoing Action */

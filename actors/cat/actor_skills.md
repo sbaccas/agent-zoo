@@ -211,7 +211,21 @@ numbers rather than fixed laws:
     or the mouse moved out of the cone. Do not keep repeating it.
 - A long run of `attack` actions with a flat score means you are wasting attack
   cooldowns on empty air. Close distance or fix your facing before swinging again.
-- You may also see rival cats' scores. They are competing with you for the same mice.
+### Health Points (HP) & Combat System
+- **HP is a ratio out of 100**:
+  - Cat health is tracked as `hp` / `max_hp` (default **100 / 100**).
+  - Your own health is published in `obs.self.hp` and `obs.self.max_hp`.
+  - Every visible entity in `obs.visible_entities` also publishes its current `hp` and `max_hp`.
+- **Cat Attack Power (33/100 per slash)**:
+  - Cats can attack other cats as well as mice.
+  - A cat slash inflicts **33-34 damage out of 100** (`capabilities.attack_power = 34`).
+  - **3 cat slashes and you're out**:
+    - **Hit 1**: 100 → 66 HP (alive, combat capable)
+    - **Hit 2**: 66 → 32 HP (alive, critical condition)
+    - **Hit 3**: 32 → 0 HP (**knocked out / eliminated**; `alive: false`)
+  - A cat reduced to 0 HP is eliminated from the simulation, locked permanently, and awards a takedown point to the attacker.
+- **Prey (Mice)**:
+  - Mice are fragile and eliminated in a single cat slash.
 
 ---
 
@@ -265,8 +279,11 @@ On each simulation tick, you receive an observation payload that includes `legal
   has raised the lunge cost, this advantage shrinks or disappears entirely.
 
 ### Skill: `attack` (Predatory Slash)
-- **Effect**: Strikes every target in your **strike zone** and kills them. Your
-  position and facing are unchanged.
+- **Effect**: Strikes every target (mice and rival cats) in your **strike zone**.
+  - **Mice** are eliminated in 1 hit.
+  - **Rival cats** take **33-34 damage out of 100 HP** (~33/100 attack power).
+    A rival cat sustains **3 slashes** before being knocked out permanently.
+  - Your position and facing are unchanged.
 - **This is the only action that kills, and the only action that raises your
   score.**
 - **Conditions**: `attack` is in `legal_actions` on *every* tick you are not

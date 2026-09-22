@@ -216,6 +216,14 @@
   const processedSlashEvents = new Set();
   const dyingEntities = new Map(); // victimId -> { id, type, position, facing, startTime, duration }
   const deadEntitiesSet = new Set(); // Permanently dead mice in current simulation run
+  const catHpAnim = new Map(); // catId -> { currentHp, targetHp }
+
+  function hasActiveHpAnimations() {
+    for (const anim of catHpAnim.values()) {
+      if (Math.abs(anim.currentHp - anim.targetHp) > 0.5) return true;
+    }
+    return false;
+  }
 
   function startAnimationLoop() {
     if (!animFrameId) {
@@ -239,7 +247,7 @@
       renderBoard(currentState, now);
     }
 
-    if (activeAnimations.length > 0 || dyingEntities.size > 0) {
+    if (activeAnimations.length > 0 || dyingEntities.size > 0 || hasActiveHpAnimations()) {
       animFrameId = requestAnimationFrame(animationLoop);
     }
   }
@@ -1187,6 +1195,68 @@
       ctx.textBaseline = 'middle';
       ctx.fillText(isCat ? 'C' : 'M', 0, 1);
 
+      // Render HP indicator for Cats (ratio out of 100, 3 slashes to eliminate)
+      if (isCat && (e.max_hp > 1 || e.hp !== undefined)) {
+        const hp = (e.hp !== undefined) ? e.hp : 100;
+        const maxHp = e.max_hp || 100;
+
+        let anim = catHpAnim.get(e.id);
+        if (!anim) {
+          anim = { currentHp: hp, targetHp: hp };
+          catHpAnim.set(e.id, anim);
+        }
+        anim.targetHp = hp;
+        if (Math.abs(anim.currentHp - anim.targetHp) > 0.5) {
+          anim.currentHp += (anim.targetHp - anim.currentHp) * 0.2;
+          startAnimationLoop();
+        } else {
+          anim.currentHp = anim.targetHp;
+        }
+
+        const displayRatio = Math.max(0, Math.min(1, anim.currentHp / maxHp));
+        const actualRatio = Math.max(0, Math.min(1, hp / maxHp));
+
+        // Scaled cleanly to fit comfortably above the 'C' within its own cell
+        const barW = Math.max(6, Math.min(Math.round(cellW * 0.85), Math.round(bgRadius * 1.25)));
+        const barH = Math.max(1.5, Math.min(2.5, Math.round(cellH * 0.18)));
+        const barX = -barW / 2;
+        const barY = -bgRadius - barH - 1;
+
+        // Dark background trough
+        ctx.fillStyle = 'rgba(15, 23, 42, 0.75)';
+        ctx.fillRect(barX, barY, barW, barH);
+
+        // Trailing damage fill (shows drained HP smoothly catching up)
+        if (displayRatio > actualRatio) {
+          ctx.fillStyle = 'rgba(239, 68, 68, 0.7)';
+          ctx.fillRect(barX + barW * actualRatio, barY, barW * (displayRatio - actualRatio), barH);
+        }
+
+        // Main health fill: Green (3 hits left) > Amber (2 hits left) > Red (1 hit left)
+        const fillRatio = Math.min(displayRatio, actualRatio);
+        ctx.fillStyle = fillRatio >= 0.85 ? '#22c55e' : (fillRatio >= 0.45 ? '#eab308' : '#ef4444');
+        ctx.fillRect(barX, barY, barW * fillRatio, barH);
+
+        // Crisp thin border
+        ctx.strokeStyle = 'rgba(0, 0, 0, 0.6)';
+        ctx.lineWidth = 0.5;
+        ctx.strokeRect(barX, barY, barW, barH);
+
+        // Segment divider lines for 33/100 slash marks (drawn when bar is wide enough)
+        if (barW >= 9) {
+          ctx.strokeStyle = 'rgba(0, 0, 0, 0.45)';
+          ctx.lineWidth = 0.5;
+          ctx.beginPath();
+          const d1 = Math.round(barX + barW * 0.33);
+          const d2 = Math.round(barX + barW * 0.66);
+          ctx.moveTo(d1, barY);
+          ctx.lineTo(d1, barY + barH);
+          ctx.moveTo(d2, barY);
+          ctx.lineTo(d2, barY + barH);
+          ctx.stroke();
+        }
+      }
+
       // Focus ring for selected agent
       if (e.id === selectedAgentId) {
         ctx.save();
@@ -1404,6 +1474,7 @@
     if (state.tick === 0) {
       deadEntitiesSet.clear();
       dyingEntities.clear();
+      catHpAnim.clear();
       activeAnimations = [];
       processedSlashEvents.clear();
     }
@@ -1562,11 +1633,12 @@
 
     const self = obs.self;
     const isLocked = Boolean(self.action_cooldown && self.action_cooldown > 0);
+    const hpStr = (self.hp !== undefined) ? ` | ❤️ HP: ${self.hp}/${self.max_hp || 3}` : '';
     hudAgentId.textContent = `${self.id} (${self.type.toUpperCase()}) @ (${self.position.x}, ${self.position.y})`;
     if (isLocked) {
-      hudAgentFacing.textContent = `Facing: ⬆ ${self.facing.toUpperCase()} | ⏳ LOCKED (${self.action_cooldown}t: ${self.locked_action || 'moving'})`;
+      hudAgentFacing.textContent = `Facing: ⬆ ${self.facing.toUpperCase()}${hpStr} | ⏳ LOCKED (${self.action_cooldown}t: ${self.locked_action || 'moving'})`;
     } else {
-      hudAgentFacing.textContent = `Facing: ⬆ ${self.facing.toUpperCase()} | ⚡ READY`;
+      hudAgentFacing.textContent = `Facing: ⬆ ${self.facing.toUpperCase()}${hpStr} | ⚡ READY`;
     }
 
     // Vision list
@@ -1586,8 +1658,9 @@
         const dx = ent.position.x - self.position.x;
         const dy = ent.position.y - self.position.y;
         const dist = Math.sqrt(dx * dx + dy * dy).toFixed(1);
+        const hpTag = (ent.hp !== undefined) ? ` [HP: ${ent.hp}/${ent.max_hp || 3}]` : '';
 
-        item.textContent = `${isCat ? '🐱 CAT' : '🐭 MOUSE'}: ${ent.id} @ (${ent.position.x}, ${ent.position.y}) [Dist: ${dist}]`;
+        item.textContent = `${isCat ? '🐱 CAT' : '🐭 MOUSE'}: ${ent.id} @ (${ent.position.x}, ${ent.position.y}) [Dist: ${dist}]${hpTag}`;
         hudVisionList.appendChild(item);
       }
     }
@@ -2180,6 +2253,7 @@
   btnReset.addEventListener('click', () => {
     deadEntitiesSet.clear();
     dyingEntities.clear();
+    catHpAnim.clear();
     activeAnimations = [];
     processedSlashEvents.clear();
     triggerAction(`/api/simulations/${currentSimId}/reset`);

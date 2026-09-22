@@ -55,6 +55,7 @@
   const btnReturnLive = document.getElementById('btnReturnLive');
 
   // DOM Elements - Box 1: Observation
+  const chipHp = document.getElementById('chipHp');
   const chipPos = document.getElementById('chipPos');
   const chipFacing = document.getElementById('chipFacing');
   const chipRound = document.getElementById('chipRound');
@@ -258,6 +259,10 @@
   // Render Box 1: Observation
   function renderObservation(obs, isHistorical = false) {
     if (!obs) {
+      if (chipHp) {
+        chipHp.textContent = '--';
+        chipHp.style.color = '';
+      }
       chipPos.textContent = '--';
       chipFacing.textContent = '--';
       if (chipRound) chipRound.textContent = '--';
@@ -280,6 +285,24 @@
     chipFacing.textContent = (selfInfo.facing || 'north').toUpperCase();
     if (chipRound) chipRound.textContent = obs.round !== undefined ? `#${obs.round}` : '--';
 
+    const isDead = (selfInfo.alive === false) || (selfInfo.hp !== undefined && selfInfo.hp <= 0);
+
+    if (chipHp) {
+      if (selfInfo.hp !== undefined) {
+        const maxHp = selfInfo.max_hp || 100;
+        if (isDead) {
+          chipHp.textContent = `💀 0/${maxHp} (DEAD)`;
+          chipHp.style.color = '#ef4444';
+        } else {
+          chipHp.textContent = `❤️ ${selfInfo.hp}/${maxHp}`;
+          chipHp.style.color = selfInfo.hp < 45 ? '#ef4444' : (selfInfo.hp < 85 ? '#eab308' : '#10b981');
+        }
+      } else {
+        chipHp.textContent = '--';
+        chipHp.style.color = '';
+      }
+    }
+
     const caps = obs.capabilities || {};
     if (chipReach) {
       const atkR = caps.attack_range !== undefined ? caps.attack_range : 2;
@@ -295,13 +318,18 @@
     }
 
     if (chipCooldown) {
-      const cd = selfInfo.action_cooldown;
-      if (cd && cd > 0) {
-        chipCooldown.textContent = `⏳ Locked (${cd}t: ${selfInfo.locked_action || 'acting'})`;
-        chipCooldown.style.color = '#ea580c';
+      if (isDead) {
+        chipCooldown.textContent = '💀 Knocked Out';
+        chipCooldown.style.color = '#ef4444';
       } else {
-        chipCooldown.textContent = '⚡ Ready';
-        chipCooldown.style.color = '#10b981';
+        const cd = selfInfo.action_cooldown;
+        if (cd && cd > 0) {
+          chipCooldown.textContent = `⏳ Locked (${cd}t: ${selfInfo.locked_action || 'acting'})`;
+          chipCooldown.style.color = '#ea580c';
+        } else {
+          chipCooldown.textContent = '⚡ Ready';
+          chipCooldown.style.color = '#10b981';
+        }
       }
     }
 
@@ -386,8 +414,25 @@
       }
     }
 
+    const selfInfo = (state.latest_observation && state.latest_observation.self) || {};
+    const isDead = (selfInfo.alive === false) || (selfInfo.hp !== undefined && selfInfo.hp <= 0);
+
     const latestAuto = state.latest_autonomous;
-    if (latestAuto) {
+    if (isDead) {
+      autonomousThought.textContent = '💀 Cat eliminated / knocked out (0 HP). No further actions permitted.';
+      autoActionPill.textContent = 'DEAD';
+      autoActionPill.className = 'action-pill-lg dead';
+      badgeBrainState.textContent = 'ELIMINATED';
+      badgeBrainState.className = 'badge-state badge-dead';
+      if (tacticalStrategy) tacticalStrategy.textContent = 'ELIMINATED';
+      if (tacticalTarget) tacticalTarget.textContent = 'None';
+      if (tacticalEngine) {
+        tacticalEngine.textContent = 'Knocked Out (0 HP)';
+        tacticalEngine.title = 'Cat is knocked out / dead';
+        tacticalEngine.style.color = '#ef4444';
+        tacticalEngine.style.fontWeight = '700';
+      }
+    } else if (latestAuto) {
       autonomousThought.textContent = latestAuto.thought || 'Autonomous decision ready';
       autoActionPill.textContent = (latestAuto.action || '--').toUpperCase();
 
@@ -482,25 +527,44 @@
     }
 
     // Pending override feedback
-    const pending = state.pending_override;
-    dpadButtons.forEach((btn) => {
-      const btnAction = btn.getAttribute('data-action');
-      if (pending && btnAction === pending) {
-        btn.classList.add('active-override');
-      } else {
+    if (isDead) {
+      dpadButtons.forEach((btn) => {
+        btn.disabled = true;
         btn.classList.remove('active-override');
-      }
-    });
-
-    if (pending) {
-      overrideStatusBox.classList.add('active');
-      const modeText = mode === 'once' ? 'Next Tick Only' : 'Sticky';
-      overrideStatusText.textContent = `⚡ Override Queued: [${pending.toUpperCase()}] (${modeText})`;
-      btnClearOverride.style.display = 'inline-flex';
-    } else {
+      });
+      if (btnModeOnce) btnModeOnce.disabled = true;
+      if (btnModeSticky) btnModeSticky.disabled = true;
       overrideStatusBox.classList.remove('active');
-      overrideStatusText.textContent = 'Autonomous AI in control';
+      overrideStatusBox.classList.add('dead');
+      overrideStatusText.textContent = '💀 Cat Knocked Out (Dead) — Overrides Disabled';
       btnClearOverride.style.display = 'none';
+    } else {
+      dpadButtons.forEach((btn) => {
+        btn.disabled = false;
+      });
+      if (btnModeOnce) btnModeOnce.disabled = false;
+      if (btnModeSticky) btnModeSticky.disabled = false;
+      overrideStatusBox.classList.remove('dead');
+      const pending = state.pending_override;
+      dpadButtons.forEach((btn) => {
+        const btnAction = btn.getAttribute('data-action');
+        if (pending && btnAction === pending) {
+          btn.classList.add('active-override');
+        } else {
+          btn.classList.remove('active-override');
+        }
+      });
+
+      if (pending) {
+        overrideStatusBox.classList.add('active');
+        const modeText = mode === 'once' ? 'Next Tick Only' : 'Sticky';
+        overrideStatusText.textContent = `⚡ Override Queued: [${pending.toUpperCase()}] (${modeText})`;
+        btnClearOverride.style.display = 'inline-flex';
+      } else {
+        overrideStatusBox.classList.remove('active');
+        overrideStatusText.textContent = 'Autonomous AI in control';
+        btnClearOverride.style.display = 'none';
+      }
     }
   }
 
@@ -1921,14 +1985,39 @@
     renderHistory(state.history || []);
 
     // Update Box 4 Commander Radio
+    const radioSelfInfo = (state.latest_observation && state.latest_observation.self) || {};
+    const isCatDead = (radioSelfInfo.alive === false) || (radioSelfInfo.hp !== undefined && radioSelfInfo.hp <= 0);
+
     if (radioStatusBadge) {
-      const hasAuth = Boolean(state.has_auth && state.auth_valid);
-      if (hasAuth) {
-        radioStatusBadge.textContent = '✨ Neural Link Active';
-        radioStatusBadge.className = 'engine-badge adk';
-      } else {
-        radioStatusBadge.textContent = '🤖 Reflex Only';
+      if (isCatDead) {
+        radioStatusBadge.textContent = '💀 Cat Knocked Out (Dead)';
         radioStatusBadge.className = 'engine-badge fallback';
+      } else {
+        const hasAuth = Boolean(state.has_auth && state.auth_valid);
+        if (hasAuth) {
+          radioStatusBadge.textContent = '✨ Neural Link Active';
+          radioStatusBadge.className = 'engine-badge adk';
+        } else {
+          radioStatusBadge.textContent = '🤖 Reflex Only';
+          radioStatusBadge.className = 'engine-badge fallback';
+        }
+      }
+    }
+
+    if (inputUserPrompt) {
+      if (isCatDead) {
+        inputUserPrompt.placeholder = 'Cat is knocked out / dead. (e.g. "Report your final status, what happened?")';
+      } else {
+        inputUserPrompt.placeholder = 'Interrogate agent directly (e.g., "What are your immediate goals?")';
+      }
+    }
+
+    if (checkSteerDirective) {
+      if (isCatDead) {
+        checkSteerDirective.checked = false;
+        checkSteerDirective.disabled = true;
+      } else {
+        checkSteerDirective.disabled = false;
       }
     }
 
@@ -1981,6 +2070,10 @@
 
   // Send Manual Override
   async function setOverride(action) {
+    const selfInfo = (cachedState && cachedState.latest_observation && cachedState.latest_observation.self) || {};
+    if (selfInfo.alive === false || (selfInfo.hp !== undefined && selfInfo.hp <= 0)) {
+      return;
+    }
     const res = await api('/api/agent/override', 'POST', {
       action: action,
       mode: currentOverrideMode,

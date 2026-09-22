@@ -442,6 +442,35 @@ async def act_async(obs: Observation, decoupled: bool = False) -> ActionResponse
     obs_dict = obs.model_dump()
     legal = obs.legal_actions or ["stay", "north", "south", "east", "west"]
 
+    self_info = obs.self or {}
+    self_alive = self_info.get("alive", True)
+    self_hp = self_info.get("hp", 100)
+    if not self_alive or self_hp <= 0:
+        state.latest_observation = obs_dict
+        state.active_tick = obs.tick
+        state.is_deliberating = False
+        if state.deliberation_task and not state.deliberation_task.done():
+            state.deliberation_task.cancel()
+        state.active_directive = {
+            "strategy": "ELIMINATED",
+            "target_mouse_id": "",
+            "thought": "Knocked out and eliminated from the game.",
+            "action": "stay",
+            "tick": obs.tick,
+        }
+        state.latest_autonomous = {
+            "action": "stay",
+            "thought": "Knocked out and eliminated from the game.",
+            "meta": {
+                "engine": "knockout",
+                "strategy": "ELIMINATED",
+                "target_id": None,
+                "phase": "ELIMINATED",
+            }
+        }
+        state.last_engine_source = "knockout"
+        return ActionResponse(action="stay", thought="ELIMINATED: Knocked out of the game.")
+
     active_dir = state.active_directive or {}
     locked_target = active_dir.get("target_mouse_id") or None
     active_strat = active_dir.get("strategy") or "ROAMING"
@@ -1007,6 +1036,10 @@ async def sync_live_observation(agent_id: Optional[str] = None) -> bool:
                     return True
 
                 self_info = data.get("self", {})
+                self_alive = self_info.get("alive", True)
+                self_hp = self_info.get("hp", 0 if not self_alive else 100)
+                is_dead = (not self_alive) or (self_hp <= 0)
+
                 live_obs = {
                     "tick": upcoming_tick,
                     "round": data.get("round", 0),
@@ -1015,9 +1048,13 @@ async def sync_live_observation(agent_id: Optional[str] = None) -> bool:
                         "type": self_info.get("type", "cat"),
                         "position": self_info.get("position", {"x": 0, "y": 0}),
                         "facing": self_info.get("facing", "north"),
+                        "hp": self_hp,
+                        "max_hp": self_info.get("max_hp", 100),
+                        "alive": self_alive,
                         "action_cooldown": self_info.get("action_cooldown", 0),
                         "locked_action": self_info.get("locked_action"),
-                        "ready_to_act": self_info.get("ready_to_act", True),
+                        "ready_to_act": self_info.get("ready_to_act", True) and not is_dead,
+                        "can_act": False if is_dead else self_info.get("can_act", True),
                     },
                     "capabilities": data.get("capabilities") or {
                         "vision_radius": 4,
@@ -1026,19 +1063,45 @@ async def sync_live_observation(agent_id: Optional[str] = None) -> bool:
                         "attack_cooldown": 3,
                         "lunge_cooldown": 2,
                         "weight": 10,
+                        "hp": self_hp,
+                        "max_hp": self_info.get("max_hp", 100),
+                        "attack_power": 34,
                     },
                     "visible_entities": data.get("visible_entities", []),
-                    "legal_actions": data.get("legal_actions", ["stay", "north", "south", "east", "west", "attack", "lunge"]),
+                    "legal_actions": [] if is_dead else data.get("legal_actions", ["stay", "north", "south", "east", "west", "attack", "lunge"]),
                     # Outcome feedback. This builder whitelists fields, so these must
                     # be forwarded explicitly or the polled path silently drops the
                     # score while the WebSocket path keeps it.
                     "score": data.get("score", 0),
                     "scoreboard": data.get("scoreboard", {}),
+                    "deaths": data.get("deaths", []),
+                    "recent_deaths": data.get("recent_deaths", []),
                 }
 
                 state.agent_id = target_id
                 state.latest_observation = live_obs
                 state.active_tick = upcoming_tick
+
+                if is_dead:
+                    state.active_directive = {
+                        "strategy": "ELIMINATED",
+                        "target_mouse_id": "",
+                        "thought": "Knocked out and eliminated from the game.",
+                        "action": "stay",
+                        "tick": upcoming_tick,
+                    }
+                    state.latest_autonomous = {
+                        "action": "stay",
+                        "thought": "Knocked out and eliminated from the game.",
+                        "meta": {
+                            "engine": "knockout",
+                            "strategy": "ELIMINATED",
+                            "target_id": None,
+                            "phase": "ELIMINATED",
+                        }
+                    }
+                    state.last_evaluated_tick = upcoming_tick
+                    return True
 
                 if state.latest_autonomous is None:
                     live_obs_obj = Observation(**live_obs)
@@ -1050,6 +1113,31 @@ async def sync_live_observation(agent_id: Optional[str] = None) -> bool:
                         "meta": auto_meta,
                     }
                     state.last_evaluated_tick = upcoming_tick
+                return True
+            elif resp.status_code == 410:
+                if state.latest_observation and "self" in state.latest_observation:
+                    state.latest_observation["self"]["alive"] = False
+                    state.latest_observation["self"]["hp"] = 0
+                    state.latest_observation["self"]["ready_to_act"] = False
+                    state.latest_observation["self"]["can_act"] = False
+                    state.latest_observation["legal_actions"] = []
+                state.active_directive = {
+                    "strategy": "ELIMINATED",
+                    "target_mouse_id": "",
+                    "thought": "Knocked out and eliminated from the game.",
+                    "action": "stay",
+                    "tick": state.active_tick,
+                }
+                state.latest_autonomous = {
+                    "action": "stay",
+                    "thought": "Knocked out and eliminated from the game.",
+                    "meta": {
+                        "engine": "knockout",
+                        "strategy": "ELIMINATED",
+                        "target_id": None,
+                        "phase": "ELIMINATED",
+                    }
+                }
                 return True
     except Exception:
         pass
@@ -1717,8 +1805,11 @@ async def interrogate_agent(req: InterrogateRequest) -> InterrogateResponse:
         active_directive=state.commander_directive or state.active_directive,
     )
 
+    self_info = obs.self if obs else {}
+    is_dead = (self_info.get("alive") is False) or (self_info.get("hp", 100) <= 0)
+
     adopted = None
-    if req.steer_directive:
+    if req.steer_directive and not is_dead:
         # Its OWN slot, not `active_directive`. The model's background
         # deliberation overwrites `active_directive` wholesale, which is exactly
         # how commander orders used to get erased within a tick or two.
