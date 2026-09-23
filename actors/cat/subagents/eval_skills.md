@@ -305,13 +305,30 @@ hundred ticks better than the last hundred.
   tiles deep and 3 wide, ahead only. Neither is a cone and neither widens with
   distance. Seeing a mouse does not mean it can hit it -- that is what turning
   is for.
-- **Let the list grow with the game.** Your notes are a cumulative dossier, not a
-  fixed-size summary. Early on you have seen little, so you will only have a few
-  directives. As the game goes on and the transcript lengthens, you will have
-  learned more about the arena, the Cat's habits, and where the mice actually
-  are — so you should have **more** to say, not the same amount rephrased. There
-  is no target number and no upper limit. Write as many directives as the
-  evidence genuinely supports, and no more.
+- **Relax the 3–4 lines condition; let the dossier grow with the game.**
+  You are NOT constrained to 3 or 4 directives or lines. There is no artificial
+  ceiling or fixed target count. Do not compress your insights or drop valuable
+  advice just to fit a 3–4 bullet habit. Early in a match you have seen little,
+  so a few opening points are natural, but as the game progresses and the transcript
+  lengthens, your observations will deepen across spatial search, strike accuracy,
+  target selection, lunge efficiency, and rival benchmarks — so you should have
+  **more** to say. It is completely okay and expected for the coaching notes to grow
+  into a comprehensive, multi-bullet dossier (5, 6, 7, 8 or more directives) as long
+  as each point is supported by genuine evidence.
+- **Be cognizant of the Actor's high-priority consumption.**
+  Keep in mind at all times that your published notes are injected directly into
+  the Cat Actor's context on every tick under `--- EVALUATOR NOTES ---` and are
+  consumed with **high priority** (Precedence #3: outranking the Cat's own tactical
+  matrix and heuristics, answering only to legal actions and direct Commander orders).
+  Because the Cat obeys your directives so faithfully:
+  - Every directive must be high-signal, concrete, actionable, and strictly compliant
+    with the subordinate's live capabilities.
+  - Do not pad or write vague philosophical commentary that could crowd out or confuse
+    the Actor's tactical reasoning.
+  - Order the list with the most critical, immediate directives first so the Cat
+    encounters the highest-urgency orders first.
+  - But do not artificially truncate your observations: as long as the directives
+    provide genuine tactical clarity, let the notes grow.
 - **Earn every bullet.** Growth must come from new evidence, not from padding or
   from restating an existing directive in different words. If the transcript
   revealed nothing new on some topic, carry the old directive forward unchanged
@@ -330,7 +347,11 @@ subsequent tick, so write it as standing orders addressed to the Cat.
 
 Use a bulleted list. Lead each bullet with a bolded label, then the directive.
 Order the list with the most urgent directives first, since that is the order the
-Cat reads them in:
+Cat reads them in.
+
+**Relax any 3–4 line condition:** Do not limit yourself to 3 or 4 directives.
+As the match unfolds, your dossier is expected to expand to capture richer, better
+observations across multiple dimensions:
 
 ```
 - **Unexplored Ground**: You have never crossed x=11. Sweep east along row 12
@@ -341,6 +362,14 @@ Cat reads them in:
   Your aim is fine — the mice are within a tile of your centre line — but you
   are swinging from three or four tiles back, past your reach. Take one more
   step in before you slash.
+- **Lunge for Open Transit**: Your lunge share is only 5% while the rival cat is at
+  45%. Lunge costs 2 ticks for 2 tiles (1.0 tile/tick) vs move at 3 ticks for 1 tile
+  (0.33 tile/tick). When traversing empty corridors with no mice in sight, lunge.
+- **Capitalize on Strike-Zone Confirmation**: Aim assist is ON. When a mouse
+  shows `in_strike_zone: true`, attack immediately without hesitation or extra
+  alignment steps.
+- **Avoid Wall Collisions**: You have registered 4 wall bonks along the northern
+  boundary (y=0). Check forward coordinates against map boundaries before moving north.
 ```
 
 Note what those bullets do *not* contain: a single tick index. Compare against
@@ -355,8 +384,11 @@ the same advice written badly, which is unusable to the Cat:
 That bullet spends most of its length on numbers the Cat cannot look up, and
 leaves it with nothing to actually do differently.
 
-The good example above shows the *format*, not the expected length. Two or three
-bullets is a reasonable opening dossier; by late game a well-observed run should
-carry considerably more.
+The good example above shows the *format*, not an artificial limit on length.
+**Do not restrict yourself to 3 or 4 lines.** While a brand new game might start
+with a few opening pointers, a running match should naturally grow into 5 to 8+
+well-grounded directives covering distinct operational areas. Remember that the
+Actor treats these notes as high-priority standing orders, so ensure each bullet
+is actionable and clear, but let the list grow as you make better observations.
 
 Write only the bullets. Nothing else.

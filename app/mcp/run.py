@@ -48,10 +48,17 @@ def main():
             port=args.port,
             reload=True,
             log_level="info",
+            timeout_graceful_shutdown=2,
         )
     else:
         app = create_mcp_app()
-        uvicorn.run(app, host=args.host, port=args.port, log_level="info")
+        uvicorn.run(
+            app,
+            host=args.host,
+            port=args.port,
+            log_level="info",
+            timeout_graceful_shutdown=2,
+        )
 
 
 if __name__ == "__main__":

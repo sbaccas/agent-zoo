@@ -269,7 +269,7 @@ def create_mcp_server(name: str = "cat-and-mouse-mcp", version: str = "0.1.0") -
 
     @server.tool(
         name="write_coach_note",
-        description="Records a private entry to the Coach's tactical notebook (coach_memory.jsonl). Use this to log hypotheses, spatial observations, and notes to your future self across cycles. (Note: These are distinct from the actor's published standing orders in coaching_notes.md).",
+        description="Records a private entry to the Coach's tactical notebook (coach_memory.jsonl). Call this during evaluation to log key hypotheses, spatial deductions, mouse clustering, and observations for your future self across cycles. (Note: These are distinct from the actor's published standing orders in coaching_notes.md).",
     )
     async def write_coach_note(
         note: str,
@@ -600,8 +600,10 @@ def create_mcp_app(server: Optional[MCPServer] = None):
             q = telemetry.subscribe()
             try:
                 while True:
+                    if await request.is_disconnected():
+                        break
                     try:
-                        evt = await asyncio.wait_for(q.get(), timeout=12.0)
+                        evt = await asyncio.wait_for(q.get(), timeout=2.0)
                         yield f"event: message\ndata: {json.dumps(evt)}\n\n"
                     except asyncio.TimeoutError:
                         yield f"event: ping\ndata: {json.dumps({'time': time.time()})}\n\n"

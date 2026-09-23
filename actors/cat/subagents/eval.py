@@ -502,9 +502,9 @@ async def write_coach_note(
 ) -> Dict[str, Any]:
     """Records a private entry to the Coach's tactical notebook (coach_memory.jsonl).
 
-    Use this for long-horizon hypotheses, spatial deductions, or observations for your
-    future self across cycles. Note: this is separate from the actor's published standing
-    orders in coaching_notes.md.
+    Call this during evaluation to log key hypotheses, spatial deductions, mouse clustering,
+    or observations for your future self across cycles. Note: this is separate from the actor's
+    published standing orders in coaching_notes.md.
     """
     mcp_url = os.environ.get("CAT_MCP_SERVER_URL") or os.environ.get("MCP_SERVER_URL") or "http://127.0.0.1:9050"
     if mcp_url:
@@ -1014,19 +1014,43 @@ def build_eval_prompt(
             "instead, and explain the conflict.\n\n"
         )
 
+    memories = store.read_coach_memories(limit=5)
+    notebook_block = ""
+    if memories:
+        notes_lines = []
+        for m in memories:
+            tags = f" [tags: {', '.join(m['tags'])}]" if m.get("tags") else ""
+            cat = f"[{m.get('category', 'tactical')}]"
+            notes_lines.append(f"  • {cat}{tags} {m.get('note', '')}")
+        notebook_block = (
+            "--- YOUR PRIVATE STRATEGIC NOTEBOOK (from earlier rounds) ---\n"
+            + "\n".join(notes_lines)
+            + "\n(Use write_coach_note to log new deductions or hypotheses for future rounds)\n\n"
+        )
+    else:
+        notebook_block = (
+            "--- YOUR PRIVATE STRATEGIC NOTEBOOK ---\n"
+            "(Notebook is currently empty. Use write_coach_note during evaluation to record private tactical deductions, hypotheses, and sector patterns across rounds.)\n\n"
+        )
+
     # No tick indices reach the model -- not on the lines, not in this
     # header. See format_transcript() for why.
     return (
         f"{actor_manual_block}"
         f"{format_capabilities(records)}"
         f"{previous_block}"
+        f"{notebook_block}"
         f"--- CAT TRANSCRIPT ({len(records)} consecutive ticks, "
         f"oldest first) ---\n"
         f"{format_transcript(records)}\n\n"
         f"{directive_block}"
-        "Write your standing orders for the Cat now, as markdown bullets. "
-        "Every directive must be legal and correct under your subordinate's "
-        "manual above. Do not refer to tick numbers; the Cat cannot see them."
+        "As part of your evaluation workflow, use write_coach_note to log any persistent "
+        "tactical hypotheses or discoveries to your private notebook, then write your standing "
+        "orders for the Cat as markdown bullets. "
+        "Relax any 3–4 line condition: it is okay and expected for your dossier to grow "
+        "as you make better observations, keeping in mind that the Cat Actor consumes these "
+        "notes with high priority. Every directive must be legal and correct under your "
+        "subordinate's manual above. Do not refer to tick numbers; the Cat cannot see them."
     )
 
 
