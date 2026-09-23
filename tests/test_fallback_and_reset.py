@@ -181,6 +181,16 @@ def test_simulation_id_change_resets():
     assert store.transcript_tick_count() < 30
 
 
+def test_reset_reflexion_state_wipes_coach_memories():
+    """Coach tactical memories are scoped to a single game and must not leak into the next."""
+    store.append_coach_memory("Sector 4 ambush setup", category="tactical")
+    assert len(store.read_coach_memories()) == 1
+
+    reset_reflexion_state(0)
+
+    assert len(store.read_coach_memories()) == 0
+
+
 # --------------------------------------------------------------------------
 # 3. Reset rebases the evaluation clock
 # --------------------------------------------------------------------------

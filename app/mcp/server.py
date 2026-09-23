@@ -402,6 +402,50 @@ def create_mcp_server(name: str = "cat-and-mouse-mcp", version: str = "0.1.0") -
         )
         return res
 
+    @server.tool(
+        name="pull_transcript",
+        description="Pulls recent or windowed Cat agent transcript records (positions, facing, visibility, moves, reasoning) on demand.",
+    )
+    async def pull_transcript(
+        last_n: Optional[int] = 50,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Fetches windowed transcript records formatted without absolute tick indices."""
+        start = time.perf_counter()
+        records = store.read_transcript_records()
+        total_ticks = len(records)
+
+        # Slice records according to parameters
+        if offset is not None or limit is not None:
+            off = offset if offset is not None else 0
+            lim = limit if limit is not None else 50
+            sliced = records[off : off + lim]
+        elif last_n is not None:
+            sliced = records[-last_n:] if last_n > 0 else []
+        else:
+            sliced = records[-50:]
+
+        rendered = store.format_transcript(sliced)
+        dur = round((time.perf_counter() - start) * 1000, 2)
+        res = {
+            "available": True,
+            "total_ticks": total_ticks,
+            "returned_ticks": len(sliced),
+            "transcript": rendered,
+        }
+        get_telemetry().record_event(
+            event_type="tool_call",
+            level="success",
+            tool="pull_transcript",
+            arguments={"last_n": last_n, "limit": limit, "offset": offset},
+            duration_ms=dur,
+            status="ok",
+            summary=f"pull_transcript ({dur}ms) -> {len(sliced)}/{total_ticks} ticks",
+            details={"arguments": {"last_n": last_n, "limit": limit, "offset": offset}, "result": res},
+        )
+        return res
+
 
     # --------------------------------------------------------------------------
     # Resources

@@ -420,6 +420,7 @@ def reset_reflexion_state(current_tick: Optional[int] = None) -> None:
     """
     store.reset_transcript()
     store.reset_coaching_notes()
+    store.reset_coach_memories()
     # The prompt log is scoped to a single game for the same reason as the
     # transcript, and it grows far faster, so it must not survive a reset.
     store.reset_prompts()

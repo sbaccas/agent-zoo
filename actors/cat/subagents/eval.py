@@ -549,6 +549,49 @@ async def read_coach_notes(
     return {"available": True, "count": len(memories), "memories": memories}
 
 
+async def pull_transcript(
+    last_n: Optional[int] = 50,
+    limit: Optional[int] = None,
+    offset: Optional[int] = None,
+) -> Dict[str, Any]:
+    """Pulls recent or windowed Cat agent transcript records (positions, facing, visibility, moves, reasoning) on demand.
+
+    Deliberately omits absolute tick numbers to prevent the Coach from citing raw tick indices back to the Actor.
+    """
+    mcp_url = os.environ.get("CAT_MCP_SERVER_URL") or os.environ.get("MCP_SERVER_URL") or "http://127.0.0.1:9050"
+    if mcp_url:
+        try:
+            from app.mcp.client import MCPClient
+            client = MCPClient(base_url=mcp_url)
+            res = await client.call_tool(
+                "pull_transcript",
+                {"last_n": last_n, "limit": limit, "offset": offset},
+            )
+            if res.get("available") is not False and "transcript" in res:
+                return res
+        except Exception:
+            pass
+
+    records = store.read_transcript_records()
+    total_ticks = len(records)
+    if offset is not None or limit is not None:
+        off = offset if offset is not None else 0
+        lim = limit if limit is not None else 50
+        sliced = records[off : off + lim]
+    elif last_n is not None:
+        sliced = records[-last_n:] if last_n > 0 else []
+    else:
+        sliced = records[-50:]
+
+    rendered = format_transcript(sliced)
+    return {
+        "available": True,
+        "total_ticks": total_ticks,
+        "returned_ticks": len(sliced),
+        "transcript": rendered,
+    }
+
+
 # The budget the coach starts on, and it is deliberately ~16x the actor's.
 #
 # The two agents are the same model doing opposite jobs, and the shape of the
@@ -585,7 +628,7 @@ eval_agent = LlmAgent(
     name="cat_evaluator",
     model=EVAL_MODEL,
     instruction=_eval_instruction_provider,
-    tools=[get_boxscore, get_coverage_map, get_event_reel, write_coach_note, read_coach_notes],
+    tools=[get_boxscore, get_coverage_map, get_event_reel, pull_transcript, write_coach_note, read_coach_notes],
     generate_content_config=types.GenerateContentConfig(
         thinking_config=types.ThinkingConfig(thinking_budget=_initial_eval_budget)
     ),
@@ -620,7 +663,7 @@ general_agent = LlmAgent(
     name="cat_coach",
     model=EVAL_MODEL,
     instruction=_general_instruction_provider,
-    tools=[get_boxscore, get_event_reel, read_coach_notes],
+    tools=[get_boxscore, get_event_reel, pull_transcript, read_coach_notes],
     generate_content_config=types.GenerateContentConfig(
         thinking_config=types.ThinkingConfig(thinking_budget=0)
     ),
@@ -1035,14 +1078,22 @@ def build_eval_prompt(
 
     # No tick indices reach the model -- not on the lines, not in this
     # header. See format_transcript() for why.
+    # The full transcript is not dumped into the default prompt context to avoid
+    # blowing up the token budget. The model queries recent or windowed slices
+    # on demand via pull_transcript.
+    transcript_block = (
+        f"--- CAT TRANSCRIPT STATUS ({len(records)} consecutive ticks recorded) ---\n"
+        "The raw transcript is no longer dumped into your prompt context. "
+        "Use the pull_transcript tool on demand to inspect recent movement, combat, "
+        "chosen actions, and reasoning (e.g. pull_transcript(last_n=50)).\n\n"
+    )
+
     return (
         f"{actor_manual_block}"
         f"{format_capabilities(records)}"
         f"{previous_block}"
         f"{notebook_block}"
-        f"--- CAT TRANSCRIPT ({len(records)} consecutive ticks, "
-        f"oldest first) ---\n"
-        f"{format_transcript(records)}\n\n"
+        f"{transcript_block}"
         f"{directive_block}"
         "As part of your evaluation workflow, use write_coach_note to log any persistent "
         "tactical hypotheses or discoveries to your private notebook, then write your standing "

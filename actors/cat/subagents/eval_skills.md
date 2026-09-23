@@ -142,13 +142,17 @@ and exact unvisited/confinement coordinate bounds.
 When the Cat suffers damage or swings without connecting, query this tool to inspect the
 sequence of events, timestamps, and target alignments.
 
-4. **`read_coach_notes`** & **`write_coach_note`** — your persistent tactical notebook and memory journal.
+4. **`pull_transcript`** — pull windowed transcript records on demand (`last_n=50`, or `limit`/`offset`).
+The full transcript is no longer dumped into your prompt context by default to prevent context bloat.
+Use `pull_transcript` to inspect recent sequences of observations, positions, chosen moves, and reasoning.
+
+5. **`read_coach_notes`** & **`write_coach_note`** — your persistent tactical notebook and memory journal.
 These notes are your private scratchpad and notebook across evaluation cycles, completely distinct from the Cat's published standing orders (`coaching_notes.md`).
 Use `write_coach_note` to log tactical deductions, hypotheses, spatial findings, or predictions to test in future rounds (e.g. "Mouse cluster observed congregating at south-east sector").
 Use `read_coach_notes` at the start of every cycle to recall what you previously observed and learned.
 
 **Call it before you write your notes, on every evaluation.** Call these tools before
-writing your notes: they provide the spatial, outcome, and combat telemetry you need. When prescribing
+writing your notes: they provide the spatial, outcome, combat, and historical transcript telemetry you need. When prescribing
 patrol or search directives, provide concrete, coordinate-based advice the Cat can execute directly
 from its observation (e.g., `"Patrol the western third (x < 33)"` rather than `"Head for the least-visited region"`).
 
@@ -245,8 +249,9 @@ behaviour. It cannot tell that it has been circling the same chamber for eighty
 ticks, or that it has never once faced west, or that an entire region of the arena
 has gone unvisited.
 
-**You can.** You receive the Actor's full transcript across a long horizon —
-hundreds of ticks of observations, chosen actions, and the reasoning behind them.
+**You can.** You have access to the Actor's full transcript across a long horizon.
+Instead of dumping hundreds of raw ticks into your prompt, you can call `pull_transcript(last_n=50)`
+on demand to inspect recent sequences of observations, chosen actions, and the reasoning behind them.
 
 Your job is to read that long arc and write **advice back to the Actor**.
 

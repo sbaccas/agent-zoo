@@ -38,6 +38,7 @@ async def test_mcp_server_registers_expected_tools():
         "get_boxscore",
         "get_coverage_map",
         "get_event_reel",
+        "pull_transcript",
         "write_coach_note",
         "read_coach_notes",
     ]
@@ -230,6 +231,12 @@ async def test_mcp_server_client_over_sse():
         assert r_res.get("count") >= 1
         assert any(m["note"] == "SSE transport note" for m in r_res["memories"])
 
+        # 3b. Pull transcript
+        t_res = await client.call_tool("pull_transcript", {"last_n": 10})
+        assert t_res.get("available") is True
+        assert "transcript" in t_res
+        assert "total_ticks" in t_res
+
         # 4. List resources
         resources = await client.list_resources()
         uris = [r["uri"] for r in resources]
@@ -250,6 +257,7 @@ def test_eval_agent_has_mcp_tools():
     assert "get_boxscore" in tool_names
     assert "get_coverage_map" in tool_names
     assert "get_event_reel" in tool_names
+    assert "pull_transcript" in tool_names
     assert "write_coach_note" in tool_names
     assert "read_coach_notes" in tool_names
 
@@ -259,6 +267,7 @@ def test_general_agent_has_mcp_tools():
     tool_names = [getattr(t, "__name__", None) or getattr(t, "name", None) for t in ev.general_agent.tools]
     assert "get_boxscore" in tool_names
     assert "get_event_reel" in tool_names
+    assert "pull_transcript" in tool_names
     assert "read_coach_notes" in tool_names
 
 
@@ -268,7 +277,7 @@ async def test_adk_canonical_declarations_for_new_tools():
     tools = await ev.eval_agent.canonical_tools()
     by_name = {t.name: t for t in tools}
 
-    for expected_name in ["get_event_reel", "write_coach_note", "read_coach_notes"]:
+    for expected_name in ["get_event_reel", "pull_transcript", "write_coach_note", "read_coach_notes"]:
         assert expected_name in by_name
         decl = by_name[expected_name]
         assert decl.description.strip(), f"{expected_name} is missing description"
@@ -278,7 +287,7 @@ def test_new_tools_do_not_contain_banned_tactical_words():
     """Tool docstrings comply with the data-only rule."""
     from tests.test_coach_boxscore_tool import BANNED
 
-    for tool_fn in [ev.get_event_reel, ev.write_coach_note, ev.read_coach_notes]:
+    for tool_fn in [ev.get_event_reel, ev.pull_transcript, ev.write_coach_note, ev.read_coach_notes]:
         doc = (tool_fn.__doc__ or "").lower()
         for banned in BANNED:
             assert banned not in doc, f"Tool {tool_fn.__name__} docstring contains banned instruction '{banned}'"

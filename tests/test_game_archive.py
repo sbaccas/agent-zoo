@@ -199,6 +199,7 @@ async def test_directory_name_sorts_chronologically_and_shows_the_length(archivi
 async def test_runtime_files_are_copied_out_of_the_actor_directory(archiving):
     (archiving["runtime"] / "transcript.jsonl").write_text('{"tick":1}\n')
     (archiving["runtime"] / "coaching_notes.md").write_text("# orders\nlunge more\n")
+    (archiving["runtime"] / "coach_memory.jsonl").write_text('{"note":"sector cluster"}\n')
     sim = _played(_sim())
 
     await sim.reset()
@@ -206,6 +207,7 @@ async def test_runtime_files_are_copied_out_of_the_actor_directory(archiving):
     dest = _only_archive(archiving["archive"])
     assert (dest / "transcript.jsonl").read_text() == '{"tick":1}\n'
     assert "lunge more" in (dest / "coaching_notes.md").read_text()
+    assert (dest / "coach_memory.jsonl").read_text() == '{"note":"sector cluster"}\n'
 
 
 @pytest.mark.asyncio

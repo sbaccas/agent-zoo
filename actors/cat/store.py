@@ -152,6 +152,49 @@ def transcript_tick_count() -> int:
     return len(read_transcript_records())
 
 
+def format_transcript(records: List[Dict[str, Any]]) -> str:
+    """Renders transcript records as readable lines for the model.
+
+    Deliberately emits NO absolute tick index.
+
+    The Actor only ever sees a ~25-tick sliding window, so a directive citing
+    "tick 26" refers to something it cannot look up; those citations are pure
+    noise in its context. Telling the evaluator not to cite ticks helped but did
+    not eliminate it -- the model kept reaching for the numbers because every
+    line it read was labelled with one. Not showing it an index is deterministic
+    where an instruction is merely probable.
+
+    Ordering is preserved by line order, so runs, oscillations and durations
+    remain fully analysable ("roughly 40 attacks", "for the last third").
+    """
+    lines = []
+    for r in records:
+        visible = r.get("visible") or []
+        if visible:
+            seen = ", ".join(
+                f"{v.get('id')}@({v.get('x')},{v.get('y')})" for v in visible
+            )
+        else:
+            seen = "nothing"
+        action = (r.get("action") or "stay").upper()
+        thought = r.get("thought") or ""
+        # A "cooldown" row is a tick the cat was locked: it observed the board but
+        # the engine discarded whatever it returned. Rendering these the same as
+        # real moves made long runs of rejected commands look like the cat
+        # stubbornly repeating itself, and the coach then scolded it for a choice
+        # it never got to make.
+        if r.get("tick_type") == "cooldown" or r.get("executed") is False:
+            did = f"LOCKED (recovering from {r.get('locked_action') or 'previous action'}; no action possible)"
+        else:
+            did = f"did {action}"
+        lines.append(
+            f"at ({r.get('x')},{r.get('y')}) facing "
+            f"{r.get('facing')} | score {r.get('score', 0)} | saw {seen} | {did}"
+            + (f' | reasoning: "{thought}"' if thought else "")
+        )
+    return "\n".join(lines)
+
+
 def append_prompt(record: Dict[str, Any]) -> None:
     """Records the full model input behind one Gemini decision.
 
