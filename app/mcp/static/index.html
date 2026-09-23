@@ -976,7 +976,7 @@
     <div class="panel">
       <div class="sidebar-tabs">
         <button class="sidebar-tab-btn active" data-tab="tabTester">🛠️ Test Tool</button>
-        <button class="sidebar-tab-btn" data-tab="tabCoachNotes">📓 Coach Notebook</button>
+        <button class="sidebar-tab-btn" data-tab="tabCoachNotes">📓 Coach Private Notes</button>
         <button class="sidebar-tab-btn" data-tab="tabCatalog">📚 Catalog</button>
 
         <button class="sidebar-tab-btn" data-tab="tabInfo">ℹ️ Server Info</button>
@@ -994,6 +994,7 @@
             <option value="read_coach_notes">read_coach_notes (Query Memories)</option>
             <option value="update_coach_note">update_coach_note (Edit Memory Note)</option>
             <option value="delete_coach_note">delete_coach_note (Delete Memory Note)</option>
+            <option value="pull_transcript">pull_transcript (Pull Transcript Records)</option>
           </select>
         </div>
 
@@ -1011,15 +1012,15 @@
         </div>
       </div>
 
-      <!-- Tab 2: Coach Notebook (Memories) -->
+      <!-- Tab 2: Coach Private Notes (Memories) -->
       <div class="sidebar-content" id="tabCoachNotes" style="display: none;">
         <div class="notes-toolbar">
           <div class="form-label" style="display:flex; justify-content:space-between; align-items:center;">
-            <span>📓 Coach Tactical Notebook</span>
+            <span>📓 Coach Private Notes</span>
             <span style="font-size:0.7rem; color:var(--text-dim);" id="coachMemCount">(0 entries)</span>
           </div>
           <div style="font-size:0.7rem; color:var(--text-dim); margin-bottom:8px;">
-            Private notebook entries logged by the Coach via <code>write_coach_note</code> / <code>read_coach_notes</code>. Not injected directly into actor context.
+            Private notes logged by the Coach via <code>write_coach_note</code> / <code>read_coach_notes</code> with linked tick snapshots. Not injected directly into actor context.
           </div>
 
           <!-- Add Note Form -->
@@ -1075,7 +1076,7 @@
 
       <!-- Tab 3: Catalog -->
       <div class="sidebar-content" id="tabCatalog" style="display: none;">
-        <div class="form-label">Available MCP Tools (7)</div>
+        <div class="form-label">Available MCP Tools (8)</div>
         
         <div class="catalog-item">
           <div class="catalog-title">
@@ -1106,7 +1107,7 @@
             <span>write_coach_note</span>
             <span class="catalog-badge" onclick="selectAndSwitchTool('write_coach_note')">Test ↗</span>
           </div>
-          <div class="catalog-desc">Logs a private entry into the Coach's tactical notebook (coach_memory.jsonl) across cycles.</div>
+          <div class="catalog-desc">Logs a private entry into the Coach Private Notes (coach_memory.jsonl) with optional linked ticks.</div>
         </div>
 
         <div class="catalog-item">
@@ -1114,16 +1115,15 @@
             <span>read_coach_notes</span>
             <span class="catalog-badge" onclick="selectAndSwitchTool('read_coach_notes')">Test ↗</span>
           </div>
-          <div class="catalog-desc">Searches and recalls historical entries from the Coach's tactical notebook.</div>
+          <div class="catalog-desc">Searches and recalls historical entries from Coach Private Notes.</div>
         </div>
-
 
         <div class="catalog-item">
           <div class="catalog-title">
             <span>update_coach_note</span>
             <span class="catalog-badge" onclick="selectAndSwitchTool('update_coach_note')">Test ↗</span>
           </div>
-          <div class="catalog-desc">Updates an existing coach memory note's text, category, or tags by memory ID.</div>
+          <div class="catalog-desc">Updates an existing coach memory note's text, category, tags, or linked ticks.</div>
         </div>
 
         <div class="catalog-item">
@@ -1132,6 +1132,14 @@
             <span class="catalog-badge" onclick="selectAndSwitchTool('delete_coach_note')">Test ↗</span>
           </div>
           <div class="catalog-desc">Deletes a coach tactical memory note from disk by memory ID.</div>
+        </div>
+
+        <div class="catalog-item">
+          <div class="catalog-title">
+            <span>pull_transcript</span>
+            <span class="catalog-badge" onclick="selectAndSwitchTool('pull_transcript')">Test ↗</span>
+          </div>
+          <div class="catalog-desc">Pulls windowed or recent Cat agent transcript records (positions, facing, visibility, moves, rationale).</div>
         </div>
 
         <div class="form-label" style="margin-top: 10px;">Registered Resources (4)</div>
@@ -1280,6 +1288,11 @@
       ],
       delete_coach_note: [
         { name: 'memory_id', label: 'Memory ID', type: 'text', default: '' }
+      ],
+      pull_transcript: [
+        { name: 'last_n', label: 'Last N Ticks', type: 'number', default: '50' },
+        { name: 'limit', label: 'Limit (optional)', type: 'number', default: '' },
+        { name: 'offset', label: 'Offset (optional)', type: 'number', default: '' }
       ]
     };
 
