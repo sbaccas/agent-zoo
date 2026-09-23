@@ -70,10 +70,13 @@ RUNTIME_ARTEFACTS = (
     ("prompts.jsonl", True),
     # The coaching notes as they stood when the game ended.
     ("coaching_notes.md", False),
+    # Coach tactical memories and hypotheses log written via MCP / evaluator.
+    ("coach_memory.jsonl", False),
     # Written by the actor process, if it writes one: the live model settings
     # behind this run. Absent is recorded as absent, never as empty.
     ("run_config.json", False),
 )
+
 
 
 def _truthy(value: Optional[str], default: bool) -> bool:
@@ -442,6 +445,7 @@ def list_archives() -> List[Dict[str, Any]]:
             "agents": (manifest_data or {}).get("agents", {}),
             "has_boxscore": (entry / "boxscore.json").exists(),
             "has_notes": (entry / "coaching_notes.md").exists(),
+            "has_coach_memory": (entry / "coach_memory.jsonl").exists(),
             "has_run_config": (entry / "run_config.json").exists(),
             "total_size_bytes": total_bytes,
             "files_count": file_count,
@@ -491,6 +495,18 @@ def get_archive_detail(archive_id: str) -> Optional[Dict[str, Any]]:
         except Exception:
             pass
 
+    coach_memory_file = dest / "coach_memory.jsonl"
+    coach_memories = None
+    if coach_memory_file.exists():
+        try:
+            coach_memories = []
+            for line in coach_memory_file.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if line:
+                    coach_memories.append(json.loads(line))
+        except Exception:
+            pass
+
     files = []
     total_bytes = 0
     for f in sorted(dest.rglob("*")):
@@ -518,6 +534,7 @@ def get_archive_detail(archive_id: str) -> Optional[Dict[str, Any]]:
         "boxscore": boxscore,
         "run_config": run_config,
         "coaching_notes": coaching_notes,
+        "coach_memories": coach_memories,
         "files": files,
         "total_size_bytes": total_bytes,
         "is_latest": archive_id == latest_name,

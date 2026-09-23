@@ -363,68 +363,24 @@ async def get_boxscore() -> Dict[str, Any]:
             f"box score fetch is switched off ({BOXSCORE_FETCH_ENV}=0)"
         )
 
-    base = (
-        os.environ.get(GAME_SERVER_URL_ENV)
-        or os.environ.get("GAME_SERVER_URL")
-        or DEFAULT_GAME_SERVER_URL
-    ).rstrip("/")
-    url = f"{base}/api/simulations/{BOXSCORE_SIM_ID}/boxscore"
-
-    token = get_gcp_id_token()
-    headers = {"Authorization": f"Bearer {token}"} if token else None
+    mcp_url = (
+        os.environ.get("CAT_MCP_SERVER_URL")
+        or os.environ.get("MCP_SERVER_URL")
+        or "http://127.0.0.1:9050"
+    )
 
     try:
-        async with httpx.AsyncClient(headers=headers, timeout=BOXSCORE_TIMEOUT_SECONDS) as client:
-            resp = await client.get(url)
-            if resp.status_code != 200:
-                return _boxscore_unavailable(
-                    f"game server returned HTTP {resp.status_code}"
-                )
-            payload = resp.json()
+        from app.mcp.client import MCPClient
+        client = MCPClient(base_url=mcp_url)
+        res = await client.call_tool("get_boxscore", {"sim_id": BOXSCORE_SIM_ID})
+        if isinstance(res, dict) and (res.get("available") is not False or "cats" in res):
+            return res
+        if isinstance(res, dict) and res.get("available") is False:
+            return res
+        return _boxscore_unavailable("MCP server returned unexpected response")
     except Exception as exc:
-        # Includes connect errors and timeouts. The coach still has the
-        # transcript, so a missing box score degrades the notes rather than
-        # failing the evaluation.
-        logger.warning("Box score fetch failed: %s: %s", type(exc).__name__, exc)
-        return _boxscore_unavailable(f"{type(exc).__name__}: {exc}")
-
-    if not isinstance(payload, dict):
-        return _boxscore_unavailable("game server returned an unexpected payload")
-
-    cats = payload.get("cats")
-    if not isinstance(cats, list) or not cats:
-        return _boxscore_unavailable("game server reported no cats")
-
-    tick = payload.get("tick")
-    since = payload.get("tracking_since_tick")
-    # Emitted because `tick` alone does not say how much of the game was
-    # measured: a tracker attached mid-game reports partial counters.
-    measured = tick - since if isinstance(tick, int) and isinstance(since, int) else None
-
-    result = {
-        "available": True,
-        "simulation_id": payload.get("simulation_id"),
-        "status": payload.get("status"),
-        "tick": tick,
-        "round": payload.get("round"),
-        "tracking_since_tick": since,
-        "ticks_measured": measured,
-        "arena": payload.get("arena"),
-        "leader": payload.get("leader"),
-        # Every cat, verbatim. The comparison against the rival is the whole
-        # point: filtering to cat-1 here would leave the coach with a number and
-        # nothing to measure it against.
-        "cats": cats,
-    }
-
-    if "mice_alive" in payload:
-        result["mice_alive"] = payload["mice_alive"]
-    if "mice_initial" in payload:
-        result["mice_initial"] = payload["mice_initial"]
-    if "captures" in payload:
-        result["captures"] = payload["captures"]
-
-    return result
+        logger.warning("MCP boxscore fetch failed: %s: %s", type(exc).__name__, exc)
+        return _boxscore_unavailable(f"MCP server unavailable at {mcp_url}: {type(exc).__name__}: {exc}")
 
 
 def _coverage_map_unavailable(reason: str) -> Dict[str, Any]:
@@ -433,42 +389,164 @@ def _coverage_map_unavailable(reason: str) -> Dict[str, Any]:
 
 
 async def get_coverage_map() -> Dict[str, Any]:
-    """Call get_coverage_map to see where on the board the cat has spent its ticks."""
+    """Inspects the spatial grid heatmap showing where cats have spent their ticks across the arena via MCP.
+
+    The coach accesses this exclusively through the Model Context Protocol (MCP) server.
+    """
     if not _boxscore_fetch_enabled():
         return _coverage_map_unavailable(
             f"coverage map fetch is switched off ({BOXSCORE_FETCH_ENV}=0)"
         )
 
-    base = (os.environ.get(GAME_SERVER_URL_ENV) or DEFAULT_GAME_SERVER_URL).rstrip("/")
-    url = f"{base}/api/simulations/{BOXSCORE_SIM_ID}/heatmap"
+    mcp_url = (
+        os.environ.get("CAT_MCP_SERVER_URL")
+        or os.environ.get("MCP_SERVER_URL")
+        or "http://127.0.0.1:9050"
+    )
 
+    try:
+        from app.mcp.client import MCPClient
+        client = MCPClient(base_url=mcp_url)
+        res = await client.call_tool("get_coverage_map", {"sim_id": BOXSCORE_SIM_ID})
+        if isinstance(res, dict) and (res.get("available") is not False or "ascii" in res):
+            return res
+        if isinstance(res, dict) and res.get("available") is False:
+            return res
+        return _coverage_map_unavailable("MCP server returned unexpected response")
+    except Exception as exc:
+        logger.warning("MCP coverage map fetch failed: %s: %s", type(exc).__name__, exc)
+        return _coverage_map_unavailable(f"MCP server unavailable at {mcp_url}: {type(exc).__name__}: {exc}")
+
+
+def _events_unavailable(reason: str) -> Dict[str, Any]:
+    """The shape returned when game events could not be obtained."""
+    return {"available": False, "reason": reason}
+
+
+async def get_event_reel(
+    limit: Optional[int] = 20,
+    since_tick: Optional[int] = None,
+    actor_id: Optional[str] = None,
+    event_type: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Reads granular combat events, whiffs, attacks, and deaths for the game in progress.
+
+    Returns a dict with:
+      available: true
+      simulation_id, tick, round
+      events: list of events, each with tick, event_type, actor_id, target_id, details
+      deaths: list of death records
+      entity_events: dictionary mapping entity ids to their specific event lists
+    """
+    mcp_url = os.environ.get("CAT_MCP_SERVER_URL") or os.environ.get("MCP_SERVER_URL") or "http://127.0.0.1:9050"
+    if mcp_url:
+        try:
+            from app.mcp.client import MCPClient
+            client = MCPClient(base_url=mcp_url)
+            res = await client.call_tool(
+                "get_event_reel",
+                {
+                    "limit": limit,
+                    "since_tick": since_tick,
+                    "actor_id": actor_id,
+                    "event_type": event_type,
+                    "sim_id": BOXSCORE_SIM_ID,
+                },
+            )
+            if res.get("available") is not False:
+                return res
+        except Exception:
+            pass
+
+    base = (os.environ.get(GAME_SERVER_URL_ENV) or DEFAULT_GAME_SERVER_URL).rstrip("/")
+    url = f"{base}/api/simulations/{BOXSCORE_SIM_ID}/events"
     token = get_gcp_id_token()
     headers = {"Authorization": f"Bearer {token}"} if token else None
+    params = {
+        "limit": limit,
+        "since_tick": since_tick,
+        "actor_id": actor_id,
+        "event_type": event_type,
+    }
+    query_params = {k: v for k, v in params.items() if v is not None}
     try:
         async with httpx.AsyncClient(headers=headers, timeout=BOXSCORE_TIMEOUT_SECONDS) as client:
-            resp = await client.get(url)
+            resp = await client.get(url, params=query_params)
             if resp.status_code == 403:
-                return _coverage_map_unavailable("coverage map disclosure is disabled")
+                return _events_unavailable("events disclosure is disabled")
             if resp.status_code != 200:
-                return _coverage_map_unavailable(
-                    f"game server returned HTTP {resp.status_code}"
-                )
+                return _events_unavailable(f"game server returned HTTP {resp.status_code}")
             payload = resp.json()
     except Exception as exc:
-        logger.warning("Coverage map fetch failed: %s: %s", type(exc).__name__, exc)
-        return _coverage_map_unavailable(f"{type(exc).__name__}: {exc}")
+        logger.warning("Event reel fetch failed: %s: %s", type(exc).__name__, exc)
+        return _events_unavailable(f"{type(exc).__name__}: {exc}")
 
     if not isinstance(payload, dict):
-        return _coverage_map_unavailable("game server returned an unexpected payload")
+        return _events_unavailable("game server returned an unexpected payload")
 
     return {
         "available": True,
-        "ascii": payload.get("ascii"),
-        "arena": payload.get("arena"),
-        "grid_size": payload.get("grid_size"),
-        "cell_size": payload.get("cell_size"),
-        "cats": payload.get("cats"),
+        "simulation_id": payload.get("simulation_id"),
+        "tick": payload.get("tick"),
+        "round": payload.get("round"),
+        "events": payload.get("events", []),
+        "deaths": payload.get("deaths", []),
+        "entity_events": payload.get("entity_events", {}),
     }
+
+
+async def write_coach_note(
+    note: str,
+    category: str = "tactical",
+    tags: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    """Records a private entry to the Coach's tactical notebook (coach_memory.jsonl).
+
+    Use this for long-horizon hypotheses, spatial deductions, or observations for your
+    future self across cycles. Note: this is separate from the actor's published standing
+    orders in coaching_notes.md.
+    """
+    mcp_url = os.environ.get("CAT_MCP_SERVER_URL") or os.environ.get("MCP_SERVER_URL") or "http://127.0.0.1:9050"
+    if mcp_url:
+        try:
+            from app.mcp.client import MCPClient
+            client = MCPClient(base_url=mcp_url)
+            res = await client.call_tool(
+                "write_coach_note",
+                {"note": note, "category": category, "tags": tags},
+            )
+            if res.get("status") == "saved":
+                return res
+        except Exception:
+            pass
+
+    record = store.append_coach_memory(note=note, category=category, tags=tags)
+    return {"status": "saved", "memory": record}
+
+
+async def read_coach_notes(
+    limit: Optional[int] = 10,
+    category: Optional[str] = None,
+    search: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Searches and retrieves historical entries from the Coach's tactical notebook across evaluation cycles."""
+
+    mcp_url = os.environ.get("CAT_MCP_SERVER_URL") or os.environ.get("MCP_SERVER_URL") or "http://127.0.0.1:9050"
+    if mcp_url:
+        try:
+            from app.mcp.client import MCPClient
+            client = MCPClient(base_url=mcp_url)
+            res = await client.call_tool(
+                "read_coach_notes",
+                {"limit": limit, "category": category, "search": search},
+            )
+            if res.get("available") is not False and "memories" in res:
+                return res
+        except Exception:
+            pass
+
+    memories = store.read_coach_memories(limit=limit, category=category, search=search)
+    return {"available": True, "count": len(memories), "memories": memories}
 
 
 # The budget the coach starts on, and it is deliberately ~16x the actor's.
@@ -507,7 +585,7 @@ eval_agent = LlmAgent(
     name="cat_evaluator",
     model=EVAL_MODEL,
     instruction=_eval_instruction_provider,
-    tools=[get_boxscore, get_coverage_map],
+    tools=[get_boxscore, get_coverage_map, get_event_reel, write_coach_note, read_coach_notes],
     generate_content_config=types.GenerateContentConfig(
         thinking_config=types.ThinkingConfig(thinking_budget=_initial_eval_budget)
     ),
@@ -542,7 +620,7 @@ general_agent = LlmAgent(
     name="cat_coach",
     model=EVAL_MODEL,
     instruction=_general_instruction_provider,
-    tools=[get_boxscore],
+    tools=[get_boxscore, get_event_reel, read_coach_notes],
     generate_content_config=types.GenerateContentConfig(
         thinking_config=types.ThinkingConfig(thinking_budget=0)
     ),

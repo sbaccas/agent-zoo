@@ -1,0 +1,1901 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cat &amp; Mouse MCP Server — Real-Time Telemetry &amp; Log Stream</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🔌</text></svg>">
+  <style>
+    /* Default: Clean, crisp LIGHT MODE matching Game Workbench */
+    :root {
+      --bg: #f8fafc;
+      --header-bg: rgba(255, 255, 255, 0.95);
+      --header-border: #e2e8f0;
+      --card-bg: #ffffff;
+      --card-border: #e2e8f0;
+      --card-hover: #f8fafc;
+      --panel-header-bg: #f8fafc;
+      --metrics-bar-bg: #ffffff;
+      --feed-bg: #f1f5f9;
+      --log-card-bg: #ffffff;
+      --log-card-border: #e2e8f0;
+      --log-card-hover: #f8fafc;
+      --payload-bg: #f8fafc;
+      --payload-border: #cbd5e1;
+      --payload-text: #1e293b;
+      --input-bg: #ffffff;
+      --input-border: #cbd5e1;
+      --input-text: #0f172a;
+      --input-focus: #0284c7;
+      --filter-group-bg: #e2e8f0;
+      --filter-btn-text: #475569;
+      --filter-btn-active-bg: #ffffff;
+      --filter-btn-active-text: #0f172a;
+      --btn-secondary-bg: #ffffff;
+      --btn-secondary-border: #cbd5e1;
+      --btn-secondary-text: #334155;
+      --btn-secondary-hover: #f1f5f9;
+      --catalog-item-bg: #f8fafc;
+      --tab-active-bg: #ffffff;
+      --tab-inactive-text: #64748b;
+      --text: #0f172a;
+      --text-muted: #64748b;
+      --text-dim: #94a3b8;
+      --accent: #0284c7;
+      --accent-glow: rgba(2, 132, 199, 0.15);
+      --success: #059669;
+      --warning: #d97706;
+      --danger: #dc2626;
+      --purple: #7c3aed;
+      --teal: #0d9488;
+      --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
+      --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.08);
+      --scrollbar-thumb: #cbd5e1;
+      --scrollbar-thumb-hover: #94a3b8;
+      --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+
+    /* Optional Dark Theme */
+    [data-theme="dark"] {
+      --bg: #090d14;
+      --header-bg: rgba(18, 24, 36, 0.95);
+      --header-border: #1e293b;
+      --card-bg: #121824;
+      --card-border: #1e293b;
+      --card-hover: #172132;
+      --panel-header-bg: #151d2c;
+      --metrics-bar-bg: #0d121c;
+      --feed-bg: #0b0f17;
+      --log-card-bg: #111723;
+      --log-card-border: #1c2637;
+      --log-card-hover: #141c2b;
+      --payload-bg: #070a0f;
+      --payload-border: #1a2333;
+      --payload-text: #cbd5e1;
+      --input-bg: #090d14;
+      --input-border: #1e293b;
+      --input-text: #ffffff;
+      --input-focus: #38bdf8;
+      --filter-group-bg: #090d14;
+      --filter-btn-text: #94a3b8;
+      --filter-btn-active-bg: #1e293b;
+      --filter-btn-active-text: #ffffff;
+      --btn-secondary-bg: #182234;
+      --btn-secondary-border: #1e293b;
+      --btn-secondary-text: #94a3b8;
+      --btn-secondary-hover: #212e45;
+      --catalog-item-bg: #0c111a;
+      --tab-active-bg: #121824;
+      --tab-inactive-text: #94a3b8;
+      --text: #f1f5f9;
+      --text-muted: #94a3b8;
+      --text-dim: #64748b;
+      --accent: #38bdf8;
+      --accent-glow: rgba(56, 189, 248, 0.15);
+      --success: #10b981;
+      --warning: #f59e0b;
+      --danger: #ef4444;
+      --purple: #a855f7;
+      --teal: #14b8a6;
+      --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.3);
+      --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.4);
+      --scrollbar-thumb: #222f42;
+      --scrollbar-thumb-hover: #334460;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background-color: var(--bg);
+      color: var(--text);
+      font-family: var(--font-sans);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow-x: hidden;
+      transition: background-color 0.2s ease, color 0.2s ease;
+    }
+
+    /* Header */
+    header {
+      background-color: var(--header-bg);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--header-border);
+      padding: 12px 24px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      box-shadow: var(--shadow-sm);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .brand-icon {
+      font-size: 26px;
+      line-height: 1;
+      filter: drop-shadow(0 0 6px rgba(2, 132, 199, 0.3));
+    }
+
+    .brand-title {
+      font-size: 1.15rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      color: var(--text);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .brand-title .badge {
+      font-size: 0.7rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      padding: 2px 7px;
+      border-radius: 9999px;
+      background: rgba(2, 132, 199, 0.1);
+      color: var(--accent);
+      border: 1px solid rgba(2, 132, 199, 0.25);
+    }
+
+    .brand-subtitle {
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      margin-top: 2px;
+    }
+
+    .header-links {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 0.78rem;
+      font-weight: 600;
+      padding: 5px 11px;
+      border-radius: 9999px;
+      background: rgba(5, 150, 105, 0.1);
+      color: var(--success);
+      border: 1px solid rgba(5, 150, 105, 0.25);
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background-color: var(--success);
+      box-shadow: 0 0 8px var(--success);
+      animation: pulse 2s infinite ease-in-out;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.4; transform: scale(0.85); }
+    }
+
+    .ext-btn {
+      text-decoration: none;
+      font-size: 0.78rem;
+      font-weight: 500;
+      color: var(--btn-secondary-text);
+      background: var(--btn-secondary-bg);
+      border: 1px solid var(--btn-secondary-border);
+      padding: 6px 12px;
+      border-radius: 6px;
+      transition: all 0.15s ease;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      box-shadow: var(--shadow-sm);
+    }
+
+    .ext-btn:hover {
+      background: var(--btn-secondary-hover);
+      color: var(--text);
+    }
+
+    .theme-toggle-btn {
+      background: var(--btn-secondary-bg);
+      border: 1px solid var(--btn-secondary-border);
+      color: var(--btn-secondary-text);
+      padding: 6px 10px;
+      border-radius: 6px;
+      font-size: 0.82rem;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      font-weight: 600;
+      transition: all 0.15s ease;
+      box-shadow: var(--shadow-sm);
+    }
+
+    .theme-toggle-btn:hover {
+      background: var(--btn-secondary-hover);
+      color: var(--text);
+    }
+
+    /* Metrics Strip */
+    .metrics-bar {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 12px;
+      padding: 14px 24px;
+      background: var(--metrics-bar-bg);
+      border-bottom: 1px solid var(--card-border);
+      box-shadow: var(--shadow-sm);
+    }
+
+    .metric-card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 8px;
+      padding: 12px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      position: relative;
+      overflow: hidden;
+      box-shadow: var(--shadow-sm);
+    }
+
+    .metric-card::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      height: 3px;
+      width: 100%;
+      background: var(--card-border);
+    }
+
+    .metric-card.accent::before { background: var(--accent); }
+    .metric-card.success::before { background: var(--success); }
+    .metric-card.purple::before { background: var(--purple); }
+    .metric-card.warning::before { background: var(--warning); }
+
+    .metric-label {
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      font-weight: 600;
+      color: var(--text-muted);
+      letter-spacing: 0.04em;
+    }
+
+    .metric-value {
+      font-size: 1.4rem;
+      font-weight: 700;
+      font-family: var(--font-mono);
+      color: var(--text);
+      display: flex;
+      align-items: baseline;
+      gap: 6px;
+    }
+
+    .metric-sub {
+      font-size: 0.72rem;
+      color: var(--text-dim);
+    }
+
+    /* Main Grid */
+    .dashboard-grid {
+      display: grid;
+      grid-template-columns: 1fr 420px;
+      gap: 20px;
+      padding: 18px 24px;
+      flex: 1;
+      height: calc(100vh - 165px);
+      min-height: 520px;
+    }
+
+    @media (max-width: 1100px) {
+      .dashboard-grid {
+        grid-template-columns: 1fr;
+        height: auto;
+      }
+    }
+
+    /* Stream Panel */
+    .panel {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 8px;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      box-shadow: var(--shadow-sm);
+    }
+
+    .panel-header {
+      padding: 10px 16px;
+      background: var(--panel-header-bg);
+      border-bottom: 1px solid var(--card-border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .panel-title {
+      font-size: 0.9rem;
+      font-weight: 700;
+      color: var(--text);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .panel-tools {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    /* Filters & Inputs */
+    .filter-btn-group {
+      display: inline-flex;
+      background: var(--filter-group-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 6px;
+      padding: 2px;
+    }
+
+    .filter-btn {
+      background: transparent;
+      border: none;
+      color: var(--filter-btn-text);
+      font-size: 0.75rem;
+      font-weight: 600;
+      padding: 4px 10px;
+      border-radius: 4px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+
+    .filter-btn.active {
+      background: var(--filter-btn-active-bg);
+      color: var(--filter-btn-active-text);
+      box-shadow: var(--shadow-sm);
+    }
+
+    .filter-btn:hover:not(.active) {
+      color: var(--text);
+    }
+
+    .search-input {
+      background: var(--input-bg);
+      border: 1px solid var(--input-border);
+      color: var(--input-text);
+      padding: 5px 10px;
+      border-radius: 6px;
+      font-size: 0.78rem;
+      outline: none;
+      width: 160px;
+      transition: border 0.15s ease, box-shadow 0.15s ease;
+    }
+
+    .search-input:focus {
+      border-color: var(--input-focus);
+      box-shadow: 0 0 0 2px var(--accent-glow);
+    }
+
+    .btn-icon {
+      background: var(--btn-secondary-bg);
+      border: 1px solid var(--btn-secondary-border);
+      color: var(--btn-secondary-text);
+      padding: 5px 9px;
+      border-radius: 6px;
+      font-size: 0.78rem;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      transition: all 0.15s ease;
+      box-shadow: var(--shadow-sm);
+    }
+
+    .btn-icon:hover {
+      background: var(--btn-secondary-hover);
+      color: var(--text);
+    }
+
+    .autoscroll-toggle {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      cursor: pointer;
+      user-select: none;
+    }
+
+    /* Live Stream List */
+    .stream-feed {
+      flex: 1;
+      overflow-y: auto;
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      scroll-behavior: smooth;
+      background: var(--feed-bg);
+      font-family: var(--font-mono);
+    }
+
+    .empty-stream {
+      padding: 60px 20px;
+      text-align: center;
+      color: var(--text-dim);
+      font-size: 0.85rem;
+      font-family: var(--font-sans);
+    }
+
+    /* Stream Card */
+    .log-card {
+      background: var(--log-card-bg);
+      border: 1px solid var(--log-card-border);
+      border-radius: 6px;
+      padding: 10px 12px;
+      font-size: 0.78rem;
+      transition: all 0.12s ease;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      box-shadow: var(--shadow-sm);
+    }
+
+    .log-card:hover {
+      border-color: #cbd5e1;
+      background: var(--log-card-hover);
+    }
+
+    .log-card.new-pulse {
+      animation: flashBorder 1.2s ease-out;
+    }
+
+    @keyframes flashBorder {
+      0% { border-color: var(--accent); box-shadow: 0 0 10px var(--accent-glow); }
+      100% { border-color: var(--log-card-border); box-shadow: var(--shadow-sm); }
+    }
+
+    .log-meta-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .log-left {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .log-time {
+      color: var(--text-dim);
+      font-size: 0.72rem;
+    }
+
+    .badge-tag {
+      font-size: 0.68rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      padding: 2px 6px;
+      border-radius: 4px;
+      letter-spacing: 0.03em;
+    }
+
+    .tag-tool_call {
+      background: rgba(2, 132, 199, 0.12);
+      color: var(--accent);
+      border: 1px solid rgba(2, 132, 199, 0.3);
+    }
+
+    .tag-connection {
+      background: rgba(124, 58, 237, 0.12);
+      color: var(--purple);
+      border: 1px solid rgba(124, 58, 237, 0.3);
+    }
+
+    .tag-request {
+      background: rgba(13, 148, 136, 0.12);
+      color: var(--teal);
+      border: 1px solid rgba(13, 148, 136, 0.3);
+    }
+
+    .tag-resource_read {
+      background: rgba(217, 119, 6, 0.12);
+      color: var(--warning);
+      border: 1px solid rgba(217, 119, 6, 0.3);
+    }
+
+    .tag-error {
+      background: rgba(220, 38, 38, 0.12);
+      color: var(--danger);
+      border: 1px solid rgba(220, 38, 38, 0.3);
+    }
+
+    .log-caller {
+      color: var(--text-muted);
+      font-size: 0.72rem;
+    }
+
+    .log-duration {
+      font-size: 0.7rem;
+      font-weight: 600;
+      color: var(--success);
+      background: rgba(5, 150, 105, 0.1);
+      padding: 1px 5px;
+      border-radius: 3px;
+    }
+
+    .log-summary {
+      color: var(--text);
+      font-family: var(--font-sans);
+      font-size: 0.82rem;
+      word-break: break-word;
+    }
+
+    /* Expandable Details */
+    .log-details-toggle {
+      font-size: 0.7rem;
+      color: var(--accent);
+      background: none;
+      border: none;
+      cursor: pointer;
+      text-align: left;
+      margin-top: 2px;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-weight: 600;
+    }
+
+    .log-details-toggle:hover {
+      text-decoration: underline;
+    }
+
+    .log-payload {
+      background: var(--payload-bg);
+      border: 1px solid var(--payload-border);
+      border-radius: 4px;
+      padding: 8px 10px;
+      margin-top: 4px;
+      font-size: 0.72rem;
+      color: var(--payload-text);
+      overflow-x: auto;
+      max-height: 240px;
+      white-space: pre-wrap;
+    }
+
+    /* Right Sidebar Tabs */
+    .sidebar-tabs {
+      display: flex;
+      border-bottom: 1px solid var(--card-border);
+      background: var(--panel-header-bg);
+    }
+
+    .sidebar-tab-btn {
+      flex: 1;
+      background: transparent;
+      border: none;
+      color: var(--tab-inactive-text);
+      padding: 10px 14px;
+      font-size: 0.8rem;
+      font-weight: 600;
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      transition: all 0.15s ease;
+    }
+
+    .sidebar-tab-btn.active {
+      color: var(--accent);
+      border-bottom-color: var(--accent);
+      background: var(--tab-active-bg);
+    }
+
+    .sidebar-content {
+      padding: 16px;
+      overflow-y: auto;
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      background: var(--card-bg);
+    }
+
+    /* Tester Form */
+    .form-group {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .form-label {
+      font-size: 0.75rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    .form-select, .form-input, .form-textarea {
+      background: var(--input-bg);
+      border: 1px solid var(--input-border);
+      border-radius: 6px;
+      color: var(--input-text);
+      padding: 8px 10px;
+      font-size: 0.82rem;
+      font-family: var(--font-mono);
+      outline: none;
+      transition: border 0.15s ease, box-shadow 0.15s ease;
+    }
+
+    .form-select:focus, .form-input:focus, .form-textarea:focus {
+      border-color: var(--input-focus);
+      box-shadow: 0 0 0 2px var(--accent-glow);
+    }
+
+    .form-textarea {
+      min-height: 70px;
+      resize: vertical;
+    }
+
+    .btn-primary {
+      background: #0284c7;
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      padding: 10px 14px;
+      font-size: 0.84rem;
+      font-weight: 600;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      transition: all 0.15s ease;
+      box-shadow: var(--shadow-sm);
+    }
+
+    .btn-primary:hover {
+      background: #0369a1;
+      box-shadow: 0 0 10px rgba(2, 132, 199, 0.3);
+    }
+
+    .btn-primary:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .test-result-box {
+      background: var(--payload-bg);
+      border: 1px solid var(--payload-border);
+      border-radius: 6px;
+      padding: 10px;
+      font-size: 0.75rem;
+      font-family: var(--font-mono);
+      max-height: 220px;
+      overflow-y: auto;
+      color: var(--payload-text);
+      white-space: pre-wrap;
+    }
+
+    /* Catalog Cards */
+    .catalog-item {
+      background: var(--catalog-item-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 6px;
+      padding: 10px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+      box-shadow: var(--shadow-sm);
+    }
+
+    .catalog-title {
+      font-size: 0.82rem;
+      font-weight: 700;
+      color: var(--text);
+      font-family: var(--font-mono);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .catalog-desc {
+      font-size: 0.74rem;
+      color: var(--text-muted);
+      line-height: 1.35;
+    }
+
+    .catalog-badge {
+      font-size: 0.65rem;
+      padding: 2px 6px;
+      border-radius: 4px;
+      background: rgba(2, 132, 199, 0.1);
+      color: var(--accent);
+      cursor: pointer;
+      font-weight: 600;
+    }
+
+    .catalog-badge:hover {
+      background: var(--accent);
+      color: #fff;
+    }
+
+    /* Coach Notes Manager */
+    .notes-toolbar {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .notes-filter-row {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+    }
+    .notes-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-top: 4px;
+    }
+    .note-card {
+      background: var(--catalog-item-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 6px;
+      padding: 10px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      transition: all 0.15s ease;
+    }
+    .note-card:hover {
+      border-color: var(--input-focus);
+    }
+    .note-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+    }
+    .note-meta {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 0.72rem;
+      color: var(--text-dim);
+    }
+    .note-actions {
+      display: flex;
+      gap: 4px;
+    }
+    .btn-action-sm {
+      background: var(--btn-secondary-bg);
+      border: 1px solid var(--btn-secondary-border);
+      color: var(--btn-secondary-text);
+      font-size: 0.7rem;
+      padding: 2px 7px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-weight: 500;
+      transition: all 0.1s ease;
+    }
+    .btn-action-sm:hover {
+      background: var(--btn-secondary-hover);
+      color: var(--text);
+    }
+    .btn-action-sm.danger:hover {
+      background: var(--danger);
+      color: #fff;
+      border-color: var(--danger);
+    }
+    .note-content-text {
+      font-size: 0.8rem;
+      color: var(--text);
+      line-height: 1.4;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .note-tags-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      margin-top: 2px;
+    }
+    .note-tag-pill {
+      font-size: 0.65rem;
+      font-family: var(--font-mono);
+      background: rgba(2, 132, 199, 0.08);
+      color: var(--accent);
+      border: 1px solid rgba(2, 132, 199, 0.2);
+      border-radius: 4px;
+      padding: 1px 5px;
+    }
+    .note-edit-box {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      margin-top: 6px;
+      padding-top: 6px;
+      border-top: 1px dashed var(--card-border);
+    }
+    .note-edit-buttons {
+      display: flex;
+      gap: 6px;
+      justify-content: flex-end;
+    }
+    .standing-orders-box {
+      background: var(--payload-bg);
+      border: 1px solid var(--payload-border);
+      border-radius: 6px;
+      padding: 10px;
+      margin-top: 6px;
+    }
+
+    /* Scrollbar */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: var(--scrollbar-thumb-hover); }
+  </style>
+</head>
+<body>
+
+  <!-- Top Header -->
+  <header>
+    <div class="brand">
+      <div class="brand-icon">🔌</div>
+      <div>
+        <div class="brand-title">
+          Cat &amp; Mouse MCP Server
+          <span class="badge">Model Context Protocol</span>
+        </div>
+        <div class="brand-subtitle">Real-Time Telemetry &bull; Port 9050 &bull; SSE / HTTP Transport</div>
+      </div>
+    </div>
+    <div class="header-links">
+      <div class="status-badge" id="streamStatusBadge">
+        <span class="status-dot"></span>
+        <span id="streamStatusText">Connecting…</span>
+      </div>
+      <button class="theme-toggle-btn" id="btnThemeToggle" title="Toggle Light / Dark mode">
+        <span id="themeIcon">🌙</span> <span id="themeLabel">Dark</span>
+      </button>
+      <a href="http://127.0.0.1:8001" target="_blank" class="ext-btn">
+        <span>🐱 Cat Workbench</span>
+      </a>
+      <a href="http://127.0.0.1:8000" target="_blank" class="ext-btn">
+        <span>🎮 Game Server</span>
+      </a>
+    </div>
+  </header>
+
+  <!-- Metrics Strip -->
+  <div class="metrics-bar">
+    <div class="metric-card accent">
+      <div class="metric-label">Active SSE Clients</div>
+      <div class="metric-value" id="valActiveClients">0</div>
+      <div class="metric-sub" id="subActiveClients">Connected agents</div>
+    </div>
+    <div class="metric-card success">
+      <div class="metric-label">Tool Calls Executed</div>
+      <div class="metric-value" id="valToolCalls">0</div>
+      <div class="metric-sub" id="subToolCalls">Total invocations</div>
+    </div>
+    <div class="metric-card purple">
+      <div class="metric-label">Total Requests</div>
+      <div class="metric-value" id="valRequests">0</div>
+      <div class="metric-sub" id="subRequests">SSE &amp; Messages</div>
+    </div>
+    <div class="metric-card warning">
+      <div class="metric-label">Avg Tool Latency</div>
+      <div class="metric-value" id="valLatency">0.0 <span style="font-size: 0.8rem; font-weight: normal; color: var(--text-dim);">ms</span></div>
+      <div class="metric-sub">Last 50 calls</div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-label">Game Engine Target</div>
+      <div class="metric-value" style="font-size: 1.05rem;" id="valGameServer">Active</div>
+      <div class="metric-sub" id="subGameServer">http://127.0.0.1:8000</div>
+    </div>
+  </div>
+
+  <!-- Dashboard Grid -->
+  <div class="dashboard-grid">
+
+    <!-- Left: Live Log Feed -->
+    <div class="panel">
+      <div class="panel-header">
+        <div class="panel-title">
+          <span>⚡ Real-Time Log &amp; Request Stream</span>
+          <span style="font-size: 0.72rem; color: var(--text-dim);" id="streamCount">(0 events)</span>
+        </div>
+        <div class="panel-tools">
+          <div class="filter-btn-group">
+            <button class="filter-btn active" data-filter="all">All</button>
+            <button class="filter-btn" data-filter="tool_call">Tools</button>
+            <button class="filter-btn" data-filter="connection">SSE</button>
+            <button class="filter-btn" data-filter="request">HTTP</button>
+            <button class="filter-btn" data-filter="error">Errors</button>
+          </div>
+          <input type="text" class="search-input" id="searchFilter" placeholder="Filter stream…">
+          <label class="autoscroll-toggle">
+            <input type="checkbox" id="autoScrollCheck" checked>
+            <span>Pin to Top</span>
+          </label>
+          <button class="btn-icon" id="clearBtn" title="Clear current stream">🗑️ Clear</button>
+        </div>
+      </div>
+
+      <div class="stream-feed" id="streamFeed">
+        <div class="empty-stream" id="emptyState">
+          Waiting for incoming MCP requests or tool calls…<br>
+          <span style="font-size: 0.75rem; color: var(--text-dim); margin-top: 6px; display: inline-block;">
+            Tip: Use the "Test Tool" panel on the right or run an agent to trigger live events.
+          </span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Right: Interactive Controls & Catalog -->
+    <div class="panel">
+      <div class="sidebar-tabs">
+        <button class="sidebar-tab-btn active" data-tab="tabTester">🛠️ Test Tool</button>
+        <button class="sidebar-tab-btn" data-tab="tabCoachNotes">📓 Coach Notebook</button>
+        <button class="sidebar-tab-btn" data-tab="tabCatalog">📚 Catalog</button>
+
+        <button class="sidebar-tab-btn" data-tab="tabInfo">ℹ️ Server Info</button>
+      </div>
+
+      <!-- Tab 1: Tester -->
+      <div class="sidebar-content" id="tabTester">
+        <div class="form-group">
+          <label class="form-label" for="toolSelect">Select MCP Tool</label>
+          <select id="toolSelect" class="form-select">
+            <option value="get_boxscore">get_boxscore (Simulation KPIs)</option>
+            <option value="get_coverage_map">get_coverage_map (Spatial Heatmap)</option>
+            <option value="get_event_reel">get_event_reel (Combat Events)</option>
+            <option value="write_coach_note">write_coach_note (Save Coach Memory)</option>
+            <option value="read_coach_notes">read_coach_notes (Query Memories)</option>
+            <option value="update_coach_note">update_coach_note (Edit Memory Note)</option>
+            <option value="delete_coach_note">delete_coach_note (Delete Memory Note)</option>
+          </select>
+        </div>
+
+        <div id="dynamicToolParams">
+          <!-- Populated by JS based on selected tool -->
+        </div>
+
+        <button class="btn-primary" id="btnRunTool">
+          <span>🚀 Execute Tool</span>
+        </button>
+
+        <div class="form-group">
+          <label class="form-label">Tool Result</label>
+          <pre class="test-result-box" id="toolResultBox">// Results will appear here...</pre>
+        </div>
+      </div>
+
+      <!-- Tab 2: Coach Notebook (Memories) -->
+      <div class="sidebar-content" id="tabCoachNotes" style="display: none;">
+        <div class="notes-toolbar">
+          <div class="form-label" style="display:flex; justify-content:space-between; align-items:center;">
+            <span>📓 Coach Tactical Notebook</span>
+            <span style="font-size:0.7rem; color:var(--text-dim);" id="coachMemCount">(0 entries)</span>
+          </div>
+          <div style="font-size:0.7rem; color:var(--text-dim); margin-bottom:8px;">
+            Private notebook entries logged by the Coach via <code>write_coach_note</code> / <code>read_coach_notes</code>. Not injected directly into actor context.
+          </div>
+
+          <!-- Add Note Form -->
+          <div style="background:var(--catalog-item-bg); border:1px solid var(--card-border); border-radius:6px; padding:10px; display:flex; flex-direction:column; gap:8px;">
+            <div style="font-size:0.75rem; font-weight:600; color:var(--accent);">➕ Add Notebook Entry</div>
+            <textarea id="newNoteInput" class="form-textarea" placeholder="Log a tactical deduction, observation, or hypothesis…" style="min-height:55px;"></textarea>
+
+            <div style="display:flex; gap:6px;">
+              <select id="newNoteCategory" class="form-select" style="flex:1; font-size:0.75rem;">
+                <option value="tactical">tactical</option>
+                <option value="observation">observation</option>
+                <option value="hypothesis">hypothesis</option>
+                <option value="general">general</option>
+              </select>
+              <input type="text" id="newNoteTags" class="form-input" placeholder="tags (comma separated)" style="flex:2; font-size:0.75rem;">
+              <button class="btn-primary" id="btnCreateNote" style="padding:6px 12px; font-size:0.75rem;">
+                <span>Save</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Filter & Search -->
+          <div class="notes-filter-row">
+            <input type="text" id="coachNotesSearch" class="search-input" placeholder="Search notes &amp; tags…" style="flex:1;">
+            <select id="coachNotesCategoryFilter" class="form-select" style="width:115px; font-size:0.75rem; padding:5px 8px;">
+              <option value="">All Categories</option>
+              <option value="tactical">tactical</option>
+              <option value="observation">observation</option>
+              <option value="hypothesis">hypothesis</option>
+              <option value="general">general</option>
+            </select>
+            <button class="btn-icon" id="btnRefreshNotes" title="Refresh coach notes">🔄</button>
+          </div>
+        </div>
+
+        <!-- Notes List Container -->
+        <div class="notes-list" id="coachNotesList">
+          <div style="text-align:center; padding:30px 10px; color:var(--text-dim); font-size:0.8rem;">Loading coach notes…</div>
+        </div>
+
+        <!-- Standing Directives (coaching_notes.md) Section -->
+        <div class="standing-orders-box">
+          <div class="form-label" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+            <span>Active Standing Orders (coaching_notes.md)</span>
+            <button class="btn-action-sm" id="btnSaveStandingNotes">Save Changes</button>
+          </div>
+          <div style="font-size:0.7rem; color:var(--text-dim); margin-bottom:6px;">
+            These directives are read directly by the Cat agent on every decision tick:
+          </div>
+          <textarea id="standingNotesEditor" class="form-textarea" style="min-height:90px; font-size:0.76rem;" placeholder="Standing orders in markdown format…"></textarea>
+        </div>
+      </div>
+
+      <!-- Tab 3: Catalog -->
+      <div class="sidebar-content" id="tabCatalog" style="display: none;">
+        <div class="form-label">Available MCP Tools (7)</div>
+        
+        <div class="catalog-item">
+          <div class="catalog-title">
+            <span>get_boxscore</span>
+            <span class="catalog-badge" onclick="selectAndSwitchTool('get_boxscore')">Test ↗</span>
+          </div>
+          <div class="catalog-desc">Reads box score for active game: cats' KPIs, accuracy, kills, and movement metrics.</div>
+        </div>
+
+        <div class="catalog-item">
+          <div class="catalog-title">
+            <span>get_coverage_map</span>
+            <span class="catalog-badge" onclick="selectAndSwitchTool('get_coverage_map')">Test ↗</span>
+          </div>
+          <div class="catalog-desc">Inspects spatial grid heatmap showing where cats have spent ticks across the arena.</div>
+        </div>
+
+        <div class="catalog-item">
+          <div class="catalog-title">
+            <span>get_event_reel</span>
+            <span class="catalog-badge" onclick="selectAndSwitchTool('get_event_reel')">Test ↗</span>
+          </div>
+          <div class="catalog-desc">Granular combat events (attacks, whiffs, kills, damage) and death log buffer.</div>
+        </div>
+
+        <div class="catalog-item">
+          <div class="catalog-title">
+            <span>write_coach_note</span>
+            <span class="catalog-badge" onclick="selectAndSwitchTool('write_coach_note')">Test ↗</span>
+          </div>
+          <div class="catalog-desc">Logs a private entry into the Coach's tactical notebook (coach_memory.jsonl) across cycles.</div>
+        </div>
+
+        <div class="catalog-item">
+          <div class="catalog-title">
+            <span>read_coach_notes</span>
+            <span class="catalog-badge" onclick="selectAndSwitchTool('read_coach_notes')">Test ↗</span>
+          </div>
+          <div class="catalog-desc">Searches and recalls historical entries from the Coach's tactical notebook.</div>
+        </div>
+
+
+        <div class="catalog-item">
+          <div class="catalog-title">
+            <span>update_coach_note</span>
+            <span class="catalog-badge" onclick="selectAndSwitchTool('update_coach_note')">Test ↗</span>
+          </div>
+          <div class="catalog-desc">Updates an existing coach memory note's text, category, or tags by memory ID.</div>
+        </div>
+
+        <div class="catalog-item">
+          <div class="catalog-title">
+            <span>delete_coach_note</span>
+            <span class="catalog-badge" onclick="selectAndSwitchTool('delete_coach_note')">Test ↗</span>
+          </div>
+          <div class="catalog-desc">Deletes a coach tactical memory note from disk by memory ID.</div>
+        </div>
+
+        <div class="form-label" style="margin-top: 10px;">Registered Resources (4)</div>
+
+        <div class="catalog-item">
+          <div class="catalog-title" style="color: var(--warning);">cm://sim/active/boxscore</div>
+          <div class="catalog-desc">Live JSON resource of current game box score KPIs.</div>
+        </div>
+        <div class="catalog-item">
+          <div class="catalog-title" style="color: var(--warning);">cm://sim/active/events</div>
+          <div class="catalog-desc">Combat and event history log resource.</div>
+        </div>
+        <div class="catalog-item">
+          <div class="catalog-title" style="color: var(--warning);">cm://sim/active/coverage_map</div>
+          <div class="catalog-desc">Spatial exploration heatmap resource.</div>
+        </div>
+        <div class="catalog-item">
+          <div class="catalog-title" style="color: var(--warning);">cm://coach/notes</div>
+          <div class="catalog-desc">Coach historical tactical notes and memories resource.</div>
+        </div>
+      </div>
+
+      <!-- Tab 3: Server Info -->
+      <div class="sidebar-content" id="tabInfo" style="display: none;">
+        <div class="catalog-item">
+          <div class="catalog-title">Server Protocol</div>
+          <div class="catalog-desc">Model Context Protocol (MCP) version 2024-11-05 via Starlette Server-Sent Events.</div>
+        </div>
+        <div class="catalog-item">
+          <div class="catalog-title">SSE Transport Endpoint</div>
+          <div class="catalog-desc" style="font-family: var(--font-mono); color: var(--accent);">
+            http://127.0.0.1:9050/sse
+          </div>
+        </div>
+        <div class="catalog-item">
+          <div class="catalog-title">Messages Transport Endpoint</div>
+          <div class="catalog-desc" style="font-family: var(--font-mono); color: var(--accent);">
+            http://127.0.0.1:9050/messages/
+          </div>
+        </div>
+        <div class="catalog-item">
+          <div class="catalog-title">Simulation Server Target</div>
+          <div class="catalog-desc" style="font-family: var(--font-mono); color: var(--success);" id="infoGameUrl">
+            http://127.0.0.1:8000
+          </div>
+        </div>
+        <div class="catalog-item">
+          <div class="catalog-title">How To Connect LLM Clients</div>
+          <div class="catalog-desc">
+            To connect Claude Desktop or an external MCP client, configure:
+            <pre style="margin-top:6px; background:var(--payload-bg); border:1px solid var(--payload-border); padding:8px; border-radius:4px; font-size:0.7rem; color:var(--payload-text);">{
+  "mcpServers": {
+    "cat_and_mouse": {
+      "url": "http://127.0.0.1:9050/sse"
+    }
+  }
+}</pre>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+  </div>
+
+  <script>
+    // Theme Management: DEFAULTS TO LIGHT MODE
+    const btnThemeToggle = document.getElementById('btnThemeToggle');
+    const themeIcon = document.getElementById('themeIcon');
+    const themeLabel = document.getElementById('themeLabel');
+
+    function applyTheme(theme) {
+      document.documentElement.setAttribute('data-theme', theme);
+      localStorage.setItem('cm_mcp_theme', theme);
+      if (theme === 'dark') {
+        themeIcon.innerText = '☀️';
+        themeLabel.innerText = 'Light';
+      } else {
+        themeIcon.innerText = '🌙';
+        themeLabel.innerText = 'Dark';
+      }
+    }
+
+    // Always default to 'light'
+    const savedTheme = localStorage.getItem('cm_mcp_theme') || 'light';
+    applyTheme(savedTheme);
+
+    btnThemeToggle.addEventListener('click', () => {
+      const current = document.documentElement.getAttribute('data-theme') || 'light';
+      applyTheme(current === 'light' ? 'dark' : 'light');
+    });
+
+    // State
+    const events = [];
+    let currentFilter = 'all';
+    let searchQuery = '';
+    let autoScroll = true;
+
+    // Elements
+    const feed = document.getElementById('streamFeed');
+    const emptyState = document.getElementById('emptyState');
+    const streamCount = document.getElementById('streamCount');
+    const autoScrollCheck = document.getElementById('autoScrollCheck');
+    const searchFilter = document.getElementById('searchFilter');
+    const filterBtns = document.querySelectorAll('.filter-btn');
+    const clearBtn = document.getElementById('clearBtn');
+
+    // Metrics elements
+    const valActiveClients = document.getElementById('valActiveClients');
+    const valToolCalls = document.getElementById('valToolCalls');
+    const valRequests = document.getElementById('valRequests');
+    const valLatency = document.getElementById('valLatency');
+    const statusText = document.getElementById('streamStatusText');
+    const statusBadge = document.getElementById('streamStatusBadge');
+
+    // Tool params definition
+    const toolParamSchemas = {
+      get_boxscore: [
+        { name: 'sim_id', label: 'Simulation ID', type: 'text', default: 'active' }
+      ],
+      get_coverage_map: [
+        { name: 'sim_id', label: 'Simulation ID', type: 'text', default: 'active' }
+      ],
+      get_event_reel: [
+        { name: 'sim_id', label: 'Simulation ID', type: 'text', default: 'active' },
+        { name: 'limit', label: 'Limit', type: 'number', default: '20' },
+        { name: 'since_tick', label: 'Since Tick (optional)', type: 'number', default: '' },
+        { name: 'actor_id', label: 'Actor ID (e.g. cat-1)', type: 'text', default: '' },
+        { name: 'event_type', label: 'Event Type (e.g. attack, death)', type: 'text', default: '' }
+      ],
+      write_coach_note: [
+        { name: 'note', label: 'Memory Note', type: 'textarea', default: 'Observed cat-1 lunging effectively on east corner.' },
+        { name: 'category', label: 'Category', type: 'select', options: ['tactical', 'observation', 'hypothesis', 'general'], default: 'tactical' },
+        { name: 'tags', label: 'Tags (comma separated)', type: 'text', default: 'east, attack, coordination' }
+      ],
+      read_coach_notes: [
+        { name: 'limit', label: 'Limit', type: 'number', default: '10' },
+        { name: 'category', label: 'Category (optional)', type: 'select', options: ['', 'tactical', 'observation', 'hypothesis', 'general'], default: '' },
+        { name: 'search', label: 'Search Keyword (optional)', type: 'text', default: '' }
+      ],
+      update_coach_note: [
+        { name: 'memory_id', label: 'Memory ID', type: 'text', default: '' },
+        { name: 'note', label: 'Updated Note', type: 'textarea', default: '' },
+        { name: 'category', label: 'Category', type: 'select', options: ['', 'tactical', 'observation', 'hypothesis', 'general'], default: 'tactical' },
+        { name: 'tags', label: 'Tags (comma separated)', type: 'text', default: '' }
+      ],
+      delete_coach_note: [
+        { name: 'memory_id', label: 'Memory ID', type: 'text', default: '' }
+      ]
+    };
+
+    function renderToolParams(toolName) {
+      const container = document.getElementById('dynamicToolParams');
+      container.innerHTML = '';
+      const params = toolParamSchemas[toolName] || [];
+
+      params.forEach(p => {
+        const group = document.createElement('div');
+        group.className = 'form-group';
+        group.style.marginBottom = '10px';
+
+        const label = document.createElement('label');
+        label.className = 'form-label';
+        label.innerText = p.label;
+        group.appendChild(label);
+
+        if (p.type === 'select') {
+          const select = document.createElement('select');
+          select.className = 'form-select';
+          select.id = `param_${p.name}`;
+          p.options.forEach(opt => {
+            const optEl = document.createElement('option');
+            optEl.value = opt;
+            optEl.innerText = opt ? opt : '— (Any) —';
+            if (opt === p.default) optEl.selected = true;
+            select.appendChild(optEl);
+          });
+          group.appendChild(select);
+        } else if (p.type === 'textarea') {
+          const area = document.createElement('textarea');
+          area.className = 'form-textarea';
+          area.id = `param_${p.name}`;
+          area.value = p.default;
+          group.appendChild(area);
+        } else {
+          const input = document.createElement('input');
+          input.type = p.type;
+          input.className = 'form-input';
+          input.id = `param_${p.name}`;
+          input.value = p.default;
+          group.appendChild(input);
+        }
+
+        container.appendChild(group);
+      });
+    }
+
+    // Change tool dropdown
+    const toolSelect = document.getElementById('toolSelect');
+    toolSelect.addEventListener('change', () => {
+      renderToolParams(toolSelect.value);
+    });
+    renderToolParams('get_boxscore');
+
+    function selectAndSwitchTool(name) {
+      toolSelect.value = name;
+      renderToolParams(name);
+      document.querySelectorAll('.sidebar-tab-btn').forEach(b => b.classList.remove('active'));
+      document.querySelector('[data-tab="tabTester"]').classList.add('active');
+      document.querySelectorAll('.sidebar-content').forEach(c => c.style.display = 'none');
+      document.getElementById('tabTester').style.display = 'flex';
+    }
+
+    // Tool execution
+    const btnRunTool = document.getElementById('btnRunTool');
+    const toolResultBox = document.getElementById('toolResultBox');
+
+    btnRunTool.addEventListener('click', async () => {
+      const tool = toolSelect.value;
+      const paramsDef = toolParamSchemas[tool] || [];
+      const args = {};
+
+      paramsDef.forEach(p => {
+        const el = document.getElementById(`param_${p.name}`);
+        if (!el) return;
+        let val = el.value.trim();
+        if (p.type === 'number') {
+          if (val !== '') args[p.name] = parseInt(val, 10);
+        } else if (p.name === 'tags') {
+          if (val) args[p.name] = val.split(',').map(s => s.trim()).filter(Boolean);
+        } else {
+          if (val !== '') args[p.name] = val;
+        }
+      });
+
+      btnRunTool.disabled = true;
+      btnRunTool.innerHTML = '<span>⏳ Running tool…</span>';
+      toolResultBox.innerText = `Executing ${tool}…`;
+
+      try {
+        const resp = await fetch('/api/mcp/execute-tool', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ tool, arguments: args })
+        });
+        const data = await resp.json();
+        toolResultBox.innerText = JSON.stringify(data, null, 2);
+      } catch (err) {
+        toolResultBox.innerText = `Error: ${err.message}`;
+      } finally {
+        btnRunTool.disabled = false;
+        btnRunTool.innerHTML = '<span>🚀 Execute Tool</span>';
+      }
+    });
+
+    // Sidebar tab switching
+    document.querySelectorAll('.sidebar-tab-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.sidebar-tab-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        const tabId = btn.dataset.tab;
+        document.querySelectorAll('.sidebar-content').forEach(c => c.style.display = 'none');
+        document.getElementById(tabId).style.display = 'flex';
+      });
+    });
+
+    // Stream rendering
+    function updateMetrics(stats) {
+      if (!stats) return;
+      if (stats.active_clients !== undefined) valActiveClients.innerText = stats.active_clients;
+      if (stats.total_tool_calls !== undefined) valToolCalls.innerText = stats.total_tool_calls;
+      if (stats.total_requests !== undefined) valRequests.innerText = stats.total_requests;
+      if (stats.avg_latency_ms !== undefined) {
+        valLatency.innerHTML = `${stats.avg_latency_ms} <span style="font-size: 0.8rem; font-weight: normal; color: var(--text-dim);">ms</span>`;
+      }
+    }
+
+    function createEventCard(evt, isNew = false) {
+      const card = document.createElement('div');
+      card.className = `log-card ${isNew ? 'new-pulse' : ''}`;
+      card.dataset.id = evt.id;
+      card.dataset.type = evt.type;
+      card.dataset.search = `${evt.summary} ${evt.tool || ''} ${evt.client_ip || ''} ${evt.resource || ''}`.toLowerCase();
+
+      const metaRow = document.createElement('div');
+      metaRow.className = 'log-meta-row';
+
+      const left = document.createElement('div');
+      left.className = 'log-left';
+
+      const timeEl = document.createElement('span');
+      timeEl.className = 'log-time';
+      let formattedTime = evt.time_str || '';
+      if (evt.timestamp) {
+        try {
+          const d = new Date(evt.timestamp);
+          if (!isNaN(d.getTime())) {
+            const h = String(d.getHours()).padStart(2, '0');
+            const m = String(d.getMinutes()).padStart(2, '0');
+            const s = String(d.getSeconds()).padStart(2, '0');
+            const ms = String(d.getMilliseconds()).padStart(3, '0');
+            formattedTime = `${h}:${m}:${s}.${ms}`;
+          }
+        } catch (_) {}
+      }
+      timeEl.innerText = formattedTime;
+      timeEl.title = evt.timestamp ? `UTC: ${evt.timestamp}` : '';
+      left.appendChild(timeEl);
+
+      const tag = document.createElement('span');
+      tag.className = `badge-tag tag-${evt.type}`;
+      tag.innerText = evt.type === 'tool_call' ? `TOOL: ${evt.tool}` :
+                      evt.type === 'connection' ? `SSE ${evt.status?.toUpperCase() || 'EVENT'}` :
+                      evt.type === 'request' ? `REQ` :
+                      evt.type === 'resource_read' ? `RESOURCE` : evt.type;
+      left.appendChild(tag);
+
+      if (evt.client_ip) {
+        const caller = document.createElement('span');
+        caller.className = 'log-caller';
+        caller.innerText = `• ${evt.client_ip}`;
+        left.appendChild(caller);
+      }
+
+      metaRow.appendChild(left);
+
+      if (evt.duration_ms !== undefined && evt.duration_ms !== null) {
+        const dur = document.createElement('span');
+        dur.className = 'log-duration';
+        dur.innerText = `${evt.duration_ms} ms`;
+        metaRow.appendChild(dur);
+      }
+
+      card.appendChild(metaRow);
+
+      const summary = document.createElement('div');
+      summary.className = 'log-summary';
+      summary.innerText = evt.summary || '(no description)';
+      card.appendChild(summary);
+
+      if (evt.details || evt.arguments) {
+        const toggleBtn = document.createElement('button');
+        toggleBtn.className = 'log-details-toggle';
+        toggleBtn.innerHTML = '<span>▶ Details / Payload</span>';
+        
+        const payloadBox = document.createElement('pre');
+        payloadBox.className = 'log-payload';
+        payloadBox.style.display = 'none';
+        payloadBox.innerText = JSON.stringify(evt.details || evt.arguments, null, 2);
+
+        toggleBtn.addEventListener('click', () => {
+          const isOpen = payloadBox.style.display !== 'none';
+          payloadBox.style.display = isOpen ? 'none' : 'block';
+          toggleBtn.innerHTML = isOpen ? '<span>▶ Details / Payload</span>' : '<span>▼ Hide Payload</span>';
+        });
+
+        card.appendChild(toggleBtn);
+        card.appendChild(payloadBox);
+      }
+
+      return card;
+    }
+
+    function applyFilterAndSearch() {
+      const q = searchQuery.toLowerCase();
+      let visible = 0;
+      const cards = feed.querySelectorAll('.log-card');
+      cards.forEach(card => {
+        const type = card.dataset.type;
+        const text = card.dataset.search || '';
+        const matchFilter = (currentFilter === 'all') ||
+                            (currentFilter === 'error' && (card.dataset.level === 'error' || type === 'error')) ||
+                            (type === currentFilter);
+        const matchQuery = !q || text.includes(q);
+
+        if (matchFilter && matchQuery) {
+          card.style.display = 'flex';
+          visible++;
+        } else {
+          card.style.display = 'none';
+        }
+      });
+
+      if (emptyState) {
+        emptyState.style.display = (visible === 0) ? 'block' : 'none';
+      }
+      streamCount.innerText = `(${visible} events)`;
+    }
+
+    function addEvent(evt, isNew = true) {
+      if (emptyState) emptyState.style.display = 'none';
+      events.unshift(evt);
+      const card = createEventCard(evt, isNew);
+      feed.prepend(card);
+      applyFilterAndSearch();
+
+      if (autoScroll) {
+        feed.scrollTop = 0;
+      }
+    }
+
+    // Event Filters
+    filterBtns.forEach(btn => {
+      btn.addEventListener('click', () => {
+        filterBtns.forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        currentFilter = btn.dataset.filter;
+        applyFilterAndSearch();
+      });
+    });
+
+    searchFilter.addEventListener('input', (e) => {
+      searchQuery = e.target.value.trim();
+      applyFilterAndSearch();
+    });
+
+    autoScrollCheck.addEventListener('change', (e) => {
+      autoScroll = e.target.checked;
+      if (autoScroll) {
+        feed.scrollTop = 0;
+      }
+    });
+
+    clearBtn.addEventListener('click', async () => {
+      feed.querySelectorAll('.log-card').forEach(c => c.remove());
+      events.length = 0;
+      if (emptyState) emptyState.style.display = 'block';
+      streamCount.innerText = '(0 events)';
+      try {
+        await fetch('/api/mcp/clear-logs', { method: 'POST' });
+      } catch (e) {}
+    });
+
+    // Real-time EventSource connection
+    function connectEventStream() {
+      const es = new EventSource('/api/mcp/stream');
+
+      es.addEventListener('init', (e) => {
+        statusText.innerText = 'Connected & Streaming';
+        statusBadge.style.color = 'var(--success)';
+        try {
+          const payload = JSON.parse(e.data);
+          if (payload.stats) updateMetrics(payload.stats);
+          if (Array.isArray(payload.history)) {
+            feed.querySelectorAll('.log-card').forEach(c => c.remove());
+            events.length = 0;
+            // payload.history is in chronological order (oldest to newest).
+            // Prepending each one places the newest event right at the top.
+            payload.history.forEach(evt => addEvent(evt, false));
+            feed.scrollTop = 0;
+          }
+        } catch (err) {
+          console.error('Failed to parse init payload', err);
+        }
+      });
+
+      es.addEventListener('message', (e) => {
+        try {
+          const evt = JSON.parse(e.data);
+          addEvent(evt, true);
+        } catch (err) {
+          console.error('Failed to parse event message', err);
+        }
+      });
+
+      es.addEventListener('stats', (e) => {
+        try {
+          const stats = JSON.parse(e.data);
+          updateMetrics(stats);
+        } catch (err) {}
+      });
+
+      es.addEventListener('ping', () => {
+        // Heartbeat received
+      });
+
+      es.onerror = () => {
+        statusText.innerText = 'Reconnecting…';
+        statusBadge.style.color = 'var(--warning)';
+      };
+
+      // Poll stats every 3 seconds as a fallback
+      setInterval(async () => {
+        try {
+          const res = await fetch('/api/mcp/status');
+          if (res.ok) {
+            const data = await res.json();
+            updateMetrics(data.stats);
+          }
+        } catch (e) {}
+      }, 3000);
+    }
+
+    // -------------------------------------------------------------
+    // Coach Notes & Memories Manager Tab Logic
+    // -------------------------------------------------------------
+    const coachNotesList = document.getElementById('coachNotesList');
+    const coachMemCount = document.getElementById('coachMemCount');
+    const coachNotesSearch = document.getElementById('coachNotesSearch');
+    const coachNotesCategoryFilter = document.getElementById('coachNotesCategoryFilter');
+    const btnRefreshNotes = document.getElementById('btnRefreshNotes');
+    const newNoteInput = document.getElementById('newNoteInput');
+    const newNoteCategory = document.getElementById('newNoteCategory');
+    const newNoteTags = document.getElementById('newNoteTags');
+    const btnCreateNote = document.getElementById('btnCreateNote');
+    const standingNotesEditor = document.getElementById('standingNotesEditor');
+    const btnSaveStandingNotes = document.getElementById('btnSaveStandingNotes');
+
+    let allCoachMemories = [];
+
+    async function loadCoachNotes() {
+      try {
+        const cat = coachNotesCategoryFilter.value;
+        const q = coachNotesSearch.value.trim();
+        const params = new URLSearchParams();
+        if (cat) params.append('category', cat);
+        if (q) params.append('search', q);
+
+        const res = await fetch(`/api/mcp/coach-notes?${params.toString()}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        allCoachMemories = data.memories || [];
+        coachMemCount.innerText = `(${allCoachMemories.length} notes)`;
+        
+        if (data.active_standing_notes !== undefined && document.activeElement !== standingNotesEditor) {
+          standingNotesEditor.value = data.active_standing_notes || '';
+        }
+
+        renderCoachNotes(allCoachMemories);
+      } catch (err) {
+        coachNotesList.innerHTML = `<div style="color:var(--danger); padding:20px; font-size:0.75rem;">Failed to load notes: ${err.message}</div>`;
+      }
+    }
+
+    function renderCoachNotes(memories) {
+      coachNotesList.innerHTML = '';
+      if (!memories || memories.length === 0) {
+        coachNotesList.innerHTML = '<div style="text-align:center; padding:30px 10px; color:var(--text-dim); font-size:0.8rem;">No coach memories found. Add one above or let the coach write notes!</div>';
+        return;
+      }
+
+      memories.forEach(mem => {
+        const card = document.createElement('div');
+        card.className = 'note-card';
+        card.id = `note_card_${mem.id}`;
+
+        const header = document.createElement('div');
+        header.className = 'note-header';
+
+        const meta = document.createElement('div');
+        meta.className = 'note-meta';
+        const catBadge = document.createElement('span');
+        catBadge.className = 'badge-tag tag-tool_call';
+        catBadge.innerText = mem.category || 'tactical';
+        meta.appendChild(catBadge);
+
+        if (mem.tick !== null && mem.tick !== undefined) {
+          const tickEl = document.createElement('span');
+          tickEl.innerText = `Tick ${mem.tick}`;
+          meta.appendChild(tickEl);
+        }
+
+        if (mem.timestamp) {
+          const timeEl = document.createElement('span');
+          timeEl.innerText = mem.timestamp.replace('T', ' ').replace('Z', '');
+          meta.appendChild(timeEl);
+        }
+        header.appendChild(meta);
+
+        const actions = document.createElement('div');
+        actions.className = 'note-actions';
+
+        const btnEdit = document.createElement('button');
+        btnEdit.className = 'btn-action-sm';
+        btnEdit.innerText = 'Edit';
+        btnEdit.addEventListener('click', () => toggleEditNote(mem.id));
+        actions.appendChild(btnEdit);
+
+        const btnDel = document.createElement('button');
+        btnDel.className = 'btn-action-sm danger';
+        btnDel.innerText = 'Delete';
+        btnDel.addEventListener('click', () => deleteNote(mem.id));
+        actions.appendChild(btnDel);
+
+        header.appendChild(actions);
+        card.appendChild(header);
+
+        const content = document.createElement('div');
+        content.className = 'note-content-text';
+        content.id = `note_content_${mem.id}`;
+        content.innerText = mem.note || '';
+        card.appendChild(content);
+
+        if (mem.tags && mem.tags.length > 0) {
+          const tagsRow = document.createElement('div');
+          tagsRow.className = 'note-tags-row';
+          tagsRow.id = `note_tags_${mem.id}`;
+          mem.tags.forEach(t => {
+            const pill = document.createElement('span');
+            pill.className = 'note-tag-pill';
+            pill.innerText = `#${t}`;
+            tagsRow.appendChild(pill);
+          });
+          card.appendChild(tagsRow);
+        }
+
+        // Inline edit box
+        const editBox = document.createElement('div');
+        editBox.className = 'note-edit-box';
+        editBox.id = `edit_box_${mem.id}`;
+        editBox.style.display = 'none';
+
+        const editTextarea = document.createElement('textarea');
+        editTextarea.className = 'form-textarea';
+        editTextarea.id = `edit_text_${mem.id}`;
+        editTextarea.value = mem.note || '';
+        editBox.appendChild(editTextarea);
+
+        const editRow = document.createElement('div');
+        editRow.style.display = 'flex';
+        editRow.style.gap = '6px';
+
+        const editCat = document.createElement('select');
+        editCat.className = 'form-select';
+        editCat.id = `edit_cat_${mem.id}`;
+        editCat.style.flex = '1';
+        ['tactical', 'observation', 'hypothesis', 'general'].forEach(c => {
+          const opt = document.createElement('option');
+          opt.value = c;
+          opt.innerText = c;
+          if (c === mem.category) opt.selected = true;
+          editCat.appendChild(opt);
+        });
+        editRow.appendChild(editCat);
+
+        const editTagsInput = document.createElement('input');
+        editTagsInput.className = 'form-input';
+        editTagsInput.id = `edit_tags_${mem.id}`;
+        editTagsInput.style.flex = '2';
+        editTagsInput.value = (mem.tags || []).join(', ');
+        editRow.appendChild(editTagsInput);
+
+        editBox.appendChild(editRow);
+
+        const editBtns = document.createElement('div');
+        editBtns.className = 'note-edit-buttons';
+
+        const btnCancel = document.createElement('button');
+        btnCancel.className = 'btn-action-sm';
+        btnCancel.innerText = 'Cancel';
+        btnCancel.addEventListener('click', () => toggleEditNote(mem.id));
+        editBtns.appendChild(btnCancel);
+
+        const btnSave = document.createElement('button');
+        btnSave.className = 'btn-action-sm';
+        btnSave.style.background = 'var(--accent)';
+        btnSave.style.color = '#fff';
+        btnSave.style.borderColor = 'var(--accent)';
+        btnSave.innerText = 'Save Note';
+        btnSave.addEventListener('click', () => saveEditNote(mem.id));
+        editBtns.appendChild(btnSave);
+
+        editBox.appendChild(editBtns);
+        card.appendChild(editBox);
+
+        coachNotesList.appendChild(card);
+      });
+    }
+
+    function toggleEditNote(id) {
+      const box = document.getElementById(`edit_box_${id}`);
+      if (!box) return;
+      box.style.display = box.style.display === 'none' ? 'flex' : 'none';
+    }
+
+    async function saveEditNote(id) {
+      const text = document.getElementById(`edit_text_${id}`).value.trim();
+      const category = document.getElementById(`edit_cat_${id}`).value;
+      const tagsStr = document.getElementById(`edit_tags_${id}`).value;
+      const tags = tagsStr.split(',').map(s => s.trim()).filter(Boolean);
+
+      try {
+        const res = await fetch(`/api/mcp/coach-notes/${id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ note: text, category, tags })
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        await loadCoachNotes();
+      } catch (err) {
+        alert(`Failed to save note: ${err.message}`);
+      }
+    }
+
+    async function deleteNote(id) {
+      if (!confirm('Are you sure you want to delete this coach memory note?')) return;
+      try {
+        const res = await fetch(`/api/mcp/coach-notes/${id}`, { method: 'DELETE' });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        await loadCoachNotes();
+      } catch (err) {
+        alert(`Failed to delete note: ${err.message}`);
+      }
+    }
+
+    // Create Note Handler
+    btnCreateNote.addEventListener('click', async () => {
+      const note = newNoteInput.value.trim();
+      if (!note) return;
+      const category = newNoteCategory.value;
+      const tags = newNoteTags.value.split(',').map(s => s.trim()).filter(Boolean);
+
+      btnCreateNote.disabled = true;
+      try {
+        const res = await fetch('/api/mcp/coach-notes', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ note, category, tags })
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        newNoteInput.value = '';
+        newNoteTags.value = '';
+        await loadCoachNotes();
+      } catch (err) {
+        alert(`Failed to create note: ${err.message}`);
+      } finally {
+        btnCreateNote.disabled = false;
+      }
+    });
+
+    // Save standing orders
+    btnSaveStandingNotes.addEventListener('click', async () => {
+      const notes = standingNotesEditor.value;
+      btnSaveStandingNotes.disabled = true;
+      btnSaveStandingNotes.innerText = 'Saving…';
+      try {
+        const res = await fetch('/api/mcp/coach-standing-notes', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ notes })
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        btnSaveStandingNotes.innerText = '✓ Saved!';
+        setTimeout(() => { btnSaveStandingNotes.innerText = 'Save Changes'; }, 1500);
+      } catch (err) {
+        alert(`Failed to save standing orders: ${err.message}`);
+        btnSaveStandingNotes.innerText = 'Save Changes';
+      } finally {
+        btnSaveStandingNotes.disabled = false;
+      }
+    });
+
+    coachNotesSearch.addEventListener('input', () => loadCoachNotes());
+    coachNotesCategoryFilter.addEventListener('change', () => loadCoachNotes());
+    btnRefreshNotes.addEventListener('click', () => loadCoachNotes());
+
+    // Switch to Coach Notes tab hook
+    document.querySelector('[data-tab="tabCoachNotes"]').addEventListener('click', () => {
+      loadCoachNotes();
+    });
+
+    // Initialize
+    connectEventStream();
+    loadCoachNotes();
+  </script>
+</body>
+</html>

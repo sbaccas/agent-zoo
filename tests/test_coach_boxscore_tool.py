@@ -112,10 +112,63 @@ def allow_fetch(monkeypatch):
     monkeypatch.setenv(ev.BOXSCORE_FETCH_ENV, "1")
 
 
+def _format_mcp_response(name: str, **response_kwargs):
+    status_code = response_kwargs.get("status_code", 200)
+    json_raises = response_kwargs.get("json_raises")
+    payload = response_kwargs.get("payload")
+
+    if json_raises:
+        return {"available": False, "reason": f"ValueError: {json_raises}"}
+    if status_code == 403:
+        return {"available": False, "reason": "disclosure is disabled"}
+    if status_code != 200:
+        return {"available": False, "reason": f"game server returned HTTP {status_code}"}
+    if payload is None or not isinstance(payload, dict):
+        return {"available": False, "reason": "game server returned an unexpected payload"}
+    cats = payload.get("cats")
+    if name == "get_boxscore" and (not isinstance(cats, list) or not cats):
+        return {"available": False, "reason": "game server reported no cats"}
+
+    if name == "get_coverage_map":
+        return {
+            "available": True,
+            "simulation_id": payload.get("simulation_id"),
+            "tick": payload.get("tick"),
+            "ascii": payload.get("ascii"),
+            "arena": payload.get("arena"),
+            "grid_size": payload.get("grid_size"),
+            "cell_size": payload.get("cell_size"),
+            "cats": cats,
+        }
+
+    tick = payload.get("tick")
+    since = payload.get("tracking_since_tick")
+    measured = tick - since if isinstance(tick, int) and isinstance(since, int) else None
+    res = {
+        "available": True,
+        "simulation_id": payload.get("simulation_id"),
+        "status": payload.get("status"),
+        "tick": tick,
+        "round": payload.get("round"),
+        "tracking_since_tick": since,
+        "ticks_measured": measured,
+        "arena": payload.get("arena"),
+        "leader": payload.get("leader"),
+        "cats": cats,
+    }
+    for k in ("mice_alive", "mice_initial", "captures"):
+        if k in payload:
+            res[k] = payload[k]
+    return res
+
+
 def _patch_get(**response_kwargs):
-    """Patch the one call the tool makes, returning the mock for assertions."""
-    mock = AsyncMock(return_value=_Response(**response_kwargs))
-    return patch("httpx.AsyncClient.get", new=mock), mock
+    """Patch the MCPClient call the tool makes, returning the mock for assertions."""
+    async def _mock_call(tool_name: str, arguments=None):
+        return _format_mcp_response(tool_name, **response_kwargs)
+
+    mock = AsyncMock(side_effect=_mock_call)
+    return patch("app.mcp.client.MCPClient.call_tool", new=mock), mock
 
 
 # --------------------------------------------------------------------------
@@ -249,7 +302,7 @@ async def test_connection_error_returns_a_flag_rather_than_raising(allow_fetch):
     lost over a statistic that is optional by design.
     """
     mock = AsyncMock(side_effect=httpx.ConnectError("connection refused"))
-    with patch("httpx.AsyncClient.get", new=mock):
+    with patch("app.mcp.client.MCPClient.call_tool", new=mock):
         result = await ev.get_boxscore()
 
     assert result["available"] is False
@@ -260,7 +313,7 @@ async def test_connection_error_returns_a_flag_rather_than_raising(allow_fetch):
 async def test_timeout_returns_a_flag_rather_than_hanging(allow_fetch):
     """A wedged server costs a few seconds, not the evaluation budget."""
     mock = AsyncMock(side_effect=httpx.ReadTimeout("timed out"))
-    with patch("httpx.AsyncClient.get", new=mock):
+    with patch("app.mcp.client.MCPClient.call_tool", new=mock):
         result = await ev.get_boxscore()
 
     assert result["available"] is False
@@ -306,7 +359,7 @@ async def test_the_unavailable_payload_carries_no_statistics(allow_fetch):
     measurement: the coach sees a familiar key and reads it as data.
     """
     mock = AsyncMock(side_effect=httpx.ConnectError("boom"))
-    with patch("httpx.AsyncClient.get", new=mock):
+    with patch("app.mcp.client.MCPClient.call_tool", new=mock):
         result = await ev.get_boxscore()
 
     assert set(result) == {"available", "reason"}
@@ -327,7 +380,7 @@ async def test_no_request_is_made_when_the_env_guard_is_set(monkeypatch):
     """
     monkeypatch.setenv(ev.BOXSCORE_FETCH_ENV, "0")
     mock = AsyncMock(return_value=_Response(payload=_payload()))
-    with patch("httpx.AsyncClient.get", new=mock):
+    with patch("app.mcp.client.MCPClient.call_tool", new=mock):
         result = await ev.get_boxscore()
 
     mock.assert_not_awaited()
@@ -346,7 +399,7 @@ async def test_pytest_alone_is_enough_to_suppress_the_request(monkeypatch):
     assert "PYTEST_CURRENT_TEST" in __import__("os").environ
 
     mock = AsyncMock(return_value=_Response(payload=_payload()))
-    with patch("httpx.AsyncClient.get", new=mock):
+    with patch("app.mcp.client.MCPClient.call_tool", new=mock):
         result = await ev.get_boxscore()
 
     mock.assert_not_awaited()
@@ -372,30 +425,26 @@ async def test_the_request_targets_the_active_simulation(allow_fetch):
     with patcher:
         await ev.get_boxscore()
 
-    url = mock.await_args.args[0]
-    assert url.endswith("/api/simulations/active/boxscore")
+    assert mock.await_args.args[0] == "get_boxscore"
+    assert mock.await_args.args[1] == {"sim_id": "active"}
 
 
 @pytest.mark.asyncio
 async def test_the_base_url_is_configurable(allow_fetch, monkeypatch):
-    """The game server is a separate process and need not be on this host."""
-    monkeypatch.setenv(ev.GAME_SERVER_URL_ENV, "http://gameserver.internal:9111/")
-    patcher, mock = _patch_get(payload=_payload())
-    with patcher:
-        await ev.get_boxscore()
-
-    url = mock.await_args.args[0]
-    assert url == "http://gameserver.internal:9111/api/simulations/active/boxscore"
+    """The MCP server is a separate process and configurable via CAT_MCP_SERVER_URL."""
+    monkeypatch.setenv("CAT_MCP_SERVER_URL", "http://mcp.internal:9111/")
+    from app.mcp.client import MCPClient
+    client = MCPClient()
+    assert client.base_url == "http://mcp.internal:9111"
 
 
 @pytest.mark.asyncio
 async def test_the_default_base_url_is_the_local_game_server(allow_fetch, monkeypatch):
-    monkeypatch.delenv(ev.GAME_SERVER_URL_ENV, raising=False)
-    patcher, mock = _patch_get(payload=_payload())
-    with patcher:
-        await ev.get_boxscore()
-
-    assert mock.await_args.args[0].startswith("http://127.0.0.1:8000/")
+    monkeypatch.delenv("CAT_MCP_SERVER_URL", raising=False)
+    monkeypatch.delenv("MCP_SERVER_URL", raising=False)
+    from app.mcp.client import MCPClient
+    client = MCPClient()
+    assert client.base_url == "http://127.0.0.1:9050"
 
 
 def test_the_timeout_is_short_relative_to_the_evaluation_budget():
@@ -507,7 +556,7 @@ def test_the_tool_declaration_gives_no_tactical_instructions(banned):
 async def test_the_unavailable_reason_states_a_cause_not_a_judgement(allow_fetch):
     """The reason is diagnostic text for the coach, not advice."""
     mock = AsyncMock(side_effect=httpx.ConnectError("connection refused"))
-    with patch("httpx.AsyncClient.get", new=mock):
+    with patch("app.mcp.client.MCPClient.call_tool", new=mock):
         result = await ev.get_boxscore()
 
     for banned in BANNED:
@@ -605,8 +654,8 @@ async def test_coverage_map_tool_returns_grid_and_ascii(allow_fetch):
 
 @pytest.mark.asyncio
 async def test_coverage_map_tool_handles_disabled_disclosure(allow_fetch):
-    mock = AsyncMock(return_value=_Response(status_code=403, payload={"detail": "Forbidden"}))
-    with patch("httpx.AsyncClient.get", new=mock):
+    mock = AsyncMock(return_value={"available": False, "reason": "coverage map disclosure is disabled"})
+    with patch("app.mcp.client.MCPClient.call_tool", new=mock):
         result = await ev.get_coverage_map()
 
     assert result["available"] is False

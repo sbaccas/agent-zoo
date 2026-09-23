@@ -53,6 +53,7 @@ fi
 CAT_PORT="${PORT:-${CAT_AGENT_PORT:-8001}}"
 CAT_HOST="${HOST:-127.0.0.1}"
 GAME_URL="${GAME_SERVER_URL:-http://127.0.0.1:8000}"
+export CAT_MCP_SERVER_URL="${CAT_MCP_SERVER_URL:-http://127.0.0.1:9050}"
 
 # Check if target port is already running and terminate existing listeners
 PIDS_PORT=$(lsof -ti "tcp:${CAT_PORT}" -sTCP:LISTEN 2>/dev/null || true)

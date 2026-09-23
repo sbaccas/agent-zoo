@@ -17,6 +17,7 @@ import json
 import logging
 import os
 from pathlib import Path
+import time
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger("cat_agent")
@@ -28,6 +29,7 @@ logger = logging.getLogger("cat_agent")
 RUNTIME_DIR = Path(os.environ.get("CAT_AGENT_RUNTIME_DIR") or (Path(__file__).parent / "runtime"))
 TRANSCRIPT_PATH = RUNTIME_DIR / "transcript.jsonl"
 COACHING_NOTES_PATH = RUNTIME_DIR / "coaching_notes.md"
+COACH_MEMORY_PATH = RUNTIME_DIR / "coach_memory.jsonl"
 # Full model inputs, one record per Gemini call, for the workbench's inspector.
 PROMPTS_PATH = RUNTIME_DIR / "prompts.jsonl"
 # The model settings in force for this run. Written once at startup and read by
@@ -276,3 +278,155 @@ def reset_coaching_notes() -> None:
             COACHING_NOTES_PATH.unlink()
     except Exception as exc:
         logger.warning("Failed to reset coaching notes: %s", exc)
+
+
+import uuid
+
+
+def append_coach_memory(
+    note: str,
+    category: str = "tactical",
+    tags: Optional[List[str]] = None,
+    tick: Optional[int] = None,
+) -> Dict[str, Any]:
+    """Records a coach memory or observation for future recall."""
+    _ensure_runtime_dir()
+    now_str = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    unique_suffix = uuid.uuid4().hex[:8]
+    record = {
+        "id": f"mem-{int(time.time() * 1000)}-{unique_suffix}",
+        "timestamp": now_str,
+        "tick": tick,
+        "category": category,
+        "tags": tags or [],
+        "note": note.strip(),
+    }
+
+    try:
+        with COACH_MEMORY_PATH.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(record, separators=(",", ":")) + "\n")
+    except Exception as exc:
+        logger.warning("Failed to append coach memory: %s", exc)
+    return record
+
+
+def read_coach_memories(
+    limit: Optional[int] = 10,
+    category: Optional[str] = None,
+    search: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """Returns stored coach memories, newest first, with optional filtering."""
+    if not COACH_MEMORY_PATH.exists():
+        return []
+    records: List[Dict[str, Any]] = []
+    try:
+        with COACH_MEMORY_PATH.open("r", encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    records.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+    except Exception as exc:
+        logger.warning("Failed to read coach memory: %s", exc)
+        return []
+
+    if category:
+        records = [r for r in records if r.get("category") == category]
+    if search:
+        s_lower = search.lower()
+        records = [
+            r
+            for r in records
+            if s_lower in r.get("note", "").lower()
+            or any(s_lower in str(t).lower() for t in r.get("tags", []))
+        ]
+
+    records.reverse()
+    if limit is not None and limit > 0:
+        records = records[:limit]
+    return records
+
+
+def update_coach_memory(
+    memory_id: str,
+    note: Optional[str] = None,
+    category: Optional[str] = None,
+    tags: Optional[List[str]] = None,
+) -> Optional[Dict[str, Any]]:
+    """Updates an existing coach memory record by ID. Returns updated record or None if not found."""
+    if not COACH_MEMORY_PATH.exists():
+        return None
+    records: List[Dict[str, Any]] = []
+    updated_record: Optional[Dict[str, Any]] = None
+    try:
+        with COACH_MEMORY_PATH.open("r", encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                    if rec.get("id") == memory_id:
+                        if note is not None:
+                            rec["note"] = note.strip()
+                        if category is not None:
+                            rec["category"] = category
+                        if tags is not None:
+                            rec["tags"] = tags
+                        rec["updated_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                        updated_record = rec
+                    records.append(rec)
+                except json.JSONDecodeError:
+                    continue
+        if updated_record is not None:
+            with COACH_MEMORY_PATH.open("w", encoding="utf-8") as fh:
+                for rec in records:
+                    fh.write(json.dumps(rec, separators=(",", ":")) + "\n")
+        return updated_record
+    except Exception as exc:
+        logger.warning("Failed to update coach memory %s: %s", memory_id, exc)
+        return None
+
+
+def delete_coach_memory(memory_id: str) -> bool:
+    """Deletes a coach memory record by ID. Returns True if deleted, False otherwise."""
+    if not COACH_MEMORY_PATH.exists():
+        return False
+    records: List[Dict[str, Any]] = []
+    found = False
+    try:
+        with COACH_MEMORY_PATH.open("r", encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                    if rec.get("id") == memory_id:
+                        found = True
+                        continue
+                    records.append(rec)
+                except json.JSONDecodeError:
+                    continue
+        if found:
+            with COACH_MEMORY_PATH.open("w", encoding="utf-8") as fh:
+                for rec in records:
+                    fh.write(json.dumps(rec, separators=(",", ":")) + "\n")
+        return found
+    except Exception as exc:
+        logger.warning("Failed to delete coach memory %s: %s", memory_id, exc)
+        return False
+
+
+def reset_coach_memories() -> None:
+    """Wipes the coach memory store."""
+    try:
+        if COACH_MEMORY_PATH.exists():
+            COACH_MEMORY_PATH.unlink()
+    except Exception as exc:
+        logger.warning("Failed to reset coach memory: %s", exc)
+
+

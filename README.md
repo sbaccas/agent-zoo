@@ -207,6 +207,7 @@ agent-zoo/
 │   │   ├── world.py            # Discrete 2D grid, collision & raycasting
 │   │   └── rules.py            # Combat, lunge mechanics & win conditions
 │   ├── api/                    # REST endpoints & control interfaces
+│   ├── mcp/                    # Model Context Protocol (MCP) server & client (:9050)
 │   ├── models/                 # Pydantic domain models
 │   └── static/                 # Board visualizer & simulation control panel
 │
