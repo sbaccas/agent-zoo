@@ -345,18 +345,220 @@ def write(captured: Dict[str, Any]) -> Path:
     return dest
 
 
+def refresh_latest_symlink() -> Optional[str]:
+    """Updates the 'latest' symlink to point to the newest archive directory, or unlinks it."""
+    root = archive_root()
+    link = root / "latest"
+    if not root.exists():
+        if link.is_symlink() or link.exists():
+            try:
+                link.unlink()
+            except Exception:
+                pass
+        return None
+
+    dirs = sorted([p for p in root.iterdir() if p.is_dir() and not p.is_symlink()], key=lambda p: p.name, reverse=True)
+    if not dirs:
+        if link.is_symlink() or link.exists():
+            try:
+                link.unlink()
+            except Exception:
+                pass
+        return None
+
+    newest = dirs[0]
+    try:
+        if link.is_symlink() or link.exists():
+            link.unlink()
+        link.symlink_to(newest.name)
+        return newest.name
+    except Exception:
+        return None
+
+
 def _update_latest_symlink(dest: Path) -> None:
     """Points ``archive/latest`` at the newest archive, for ad-hoc analysis.
 
     Best effort. A failure here costs a convenience shortcut, not the archive.
     """
-    link = archive_root() / "latest"
-    try:
-        if link.is_symlink() or link.exists():
+    refresh_latest_symlink()
+
+
+def list_archives() -> List[Dict[str, Any]]:
+    """Lists all archived games on disk, sorted newest first."""
+    root = archive_root()
+    if not root.exists():
+        return []
+
+    latest_name = None
+    link = root / "latest"
+    if link.is_symlink():
+        try:
+            latest_name = os.readlink(link)
+        except OSError:
+            pass
+
+    results = []
+    for entry in root.iterdir():
+        if not entry.is_dir() or entry.is_symlink():
+            continue
+
+        folder_name = entry.name
+        manifest_file = entry / "manifest.json"
+        manifest_data = None
+        if manifest_file.exists():
+            try:
+                manifest_data = json.loads(manifest_file.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+
+        total_bytes = 0
+        file_count = 0
+        try:
+            for f in entry.rglob("*"):
+                if f.is_file():
+                    total_bytes += f.stat().st_size
+                    file_count += 1
+        except Exception:
+            pass
+
+        final_info = (manifest_data or {}).get("final", {})
+        archived_at = (manifest_data or {}).get("archived_at")
+        if not archived_at:
+            mtime = datetime.fromtimestamp(entry.stat().st_mtime, tz=timezone.utc)
+            archived_at = mtime.isoformat().replace("+00:00", "Z")
+
+        results.append({
+            "id": folder_name,
+            "dir_name": folder_name,
+            "archived_at": archived_at,
+            "simulation_id": (manifest_data or {}).get("simulation_id", "unknown"),
+            "reason": (manifest_data or {}).get("reason", "unknown"),
+            "tick": final_info.get("tick", 0),
+            "round": final_info.get("round", 0),
+            "captures": final_info.get("captures", 0),
+            "scores": final_info.get("scores", {}),
+            "mice_remaining": final_info.get("mice_remaining", 0),
+            "agents": (manifest_data or {}).get("agents", {}),
+            "has_boxscore": (entry / "boxscore.json").exists(),
+            "has_notes": (entry / "coaching_notes.md").exists(),
+            "has_run_config": (entry / "run_config.json").exists(),
+            "total_size_bytes": total_bytes,
+            "files_count": file_count,
+            "is_latest": folder_name == latest_name,
+        })
+
+    results.sort(key=lambda x: x["dir_name"], reverse=True)
+    return results
+
+
+def get_archive_detail(archive_id: str) -> Optional[Dict[str, Any]]:
+    """Loads detailed information for a single archive run."""
+    root = archive_root()
+    dest = (root / archive_id).resolve()
+    if not dest.is_relative_to(root.resolve()) or not dest.is_dir() or dest.is_symlink():
+        return None
+
+    manifest_file = dest / "manifest.json"
+    manifest = None
+    if manifest_file.exists():
+        try:
+            manifest = json.loads(manifest_file.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+
+    boxscore_file = dest / "boxscore.json"
+    boxscore = None
+    if boxscore_file.exists():
+        try:
+            boxscore = json.loads(boxscore_file.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+
+    run_config_file = dest / "run_config.json"
+    run_config = None
+    if run_config_file.exists():
+        try:
+            run_config = json.loads(run_config_file.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+
+    notes_file = dest / "coaching_notes.md"
+    coaching_notes = None
+    if notes_file.exists():
+        try:
+            coaching_notes = notes_file.read_text(encoding="utf-8")
+        except Exception:
+            pass
+
+    files = []
+    total_bytes = 0
+    for f in sorted(dest.rglob("*")):
+        if f.is_file():
+            size = f.stat().st_size
+            total_bytes += size
+            rel = str(f.relative_to(dest))
+            files.append({
+                "path": rel,
+                "name": f.name,
+                "size_bytes": size,
+            })
+
+    latest_name = None
+    link = root / "latest"
+    if link.is_symlink():
+        try:
+            latest_name = os.readlink(link)
+        except OSError:
+            pass
+
+    return {
+        "id": archive_id,
+        "manifest": manifest,
+        "boxscore": boxscore,
+        "run_config": run_config,
+        "coaching_notes": coaching_notes,
+        "files": files,
+        "total_size_bytes": total_bytes,
+        "is_latest": archive_id == latest_name,
+    }
+
+
+def delete_archive_run(archive_id: str) -> bool:
+    """Removes an archive directory from disk and refreshes the latest symlink."""
+    root = archive_root()
+    dest = (root / archive_id).resolve()
+    if not dest.is_relative_to(root.resolve()) or not dest.is_dir() or dest.is_symlink():
+        return False
+
+    shutil.rmtree(dest)
+    refresh_latest_symlink()
+    return True
+
+
+def wipe_all_archives() -> int:
+    """Wipes all archived simulation runs from disk and unlinks latest."""
+    root = archive_root()
+    if not root.exists():
+        return 0
+
+    count = 0
+    for entry in list(root.iterdir()):
+        if entry.is_dir() and not entry.is_symlink():
+            try:
+                shutil.rmtree(entry)
+                count += 1
+            except Exception as exc:
+                logger.warning("Failed to remove archive %s: %s", entry, exc)
+
+    link = root / "latest"
+    if link.is_symlink() or link.exists():
+        try:
             link.unlink()
-        link.symlink_to(dest.name)
-    except Exception:
-        pass
+        except Exception:
+            pass
+
+    return count
 
 
 async def archive_game(sim: Any, reason: str) -> Optional[Path]:

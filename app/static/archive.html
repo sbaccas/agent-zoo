@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Simulation Archives — Cat &amp; Mouse</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🗄️</text></svg>">
+  <link rel="stylesheet" href="/static/styles.css?v=15">
+</head>
+<body class="settings-standalone-body">
+  <div class="settings-standalone-container archive-window-container">
+    <header class="settings-standalone-header">
+      <div class="modal-title-group">
+        <span class="modal-icon">🗄️</span>
+        <div>
+          <h2>Simulation Archives</h2>
+          <div class="subtitle">Inspect, download, and manage runs on disk</div>
+        </div>
+      </div>
+      <div style="display: flex; align-items: center; gap: 8px;">
+        <span class="settings-header-badge" id="archiveStatusBadge">Connecting…</span>
+        <button id="btnCaptureCurrent" class="btn btn-sm btn-primary" title="Snapshot the active running game to disk right now">📸 Capture Active Game</button>
+        <button id="btnWipeArchives" class="btn btn-sm btn-danger" title="Permanently delete all archives from disk">🗑️ Wipe All</button>
+        <button id="btnRefreshArchives" class="btn btn-sm btn-outline" title="Refresh archives from disk">🔄 Refresh</button>
+      </div>
+    </header>
+
+    <main class="archive-layout">
+      <!-- Left sidebar: Run list -->
+      <aside class="archive-sidebar">
+        <div class="archive-search-box">
+          <input type="text" id="archiveSearch" class="form-input archive-search-input" placeholder="Filter by tick, sim ID, reason…">
+          <div class="archive-stats-row" id="archiveStatsRow">
+            <span id="archiveCountText">0 runs</span>
+            <span id="archiveSizeText">0 B total</span>
+          </div>
+        </div>
+        <div class="archive-list" id="archiveList">
+          <div class="archive-loading">Loading archives from disk…</div>
+        </div>
+      </aside>
+
+      <!-- Right detail view -->
+      <section class="archive-main">
+        <div id="archiveEmptyState" class="archive-empty-prompt">
+          <div class="archive-empty-icon">📂</div>
+          <h3>Select an archive to inspect</h3>
+          <p>Choose an archived run from the list on the left to view box scores, KPIs, coaching notes, configuration, and artifacts.</p>
+        </div>
+
+        <div id="archiveDetailContent" class="archive-detail-panel" style="display: none;">
+          <!-- Header for active archive -->
+          <div class="archive-detail-header">
+            <div class="archive-detail-title-group">
+              <div class="archive-detail-title-row">
+                <h3 id="detailArchiveId">--</h3>
+                <span id="detailLatestPill" class="badge-pill badge-latest" style="display: none;">LATEST</span>
+                <span id="detailReasonBadge" class="badge-pill">reason</span>
+              </div>
+              <div class="archive-detail-meta" id="detailMetaRow"></div>
+            </div>
+            <div class="archive-detail-actions">
+              <button id="btnDeleteSelected" class="btn btn-sm btn-danger" title="Delete this archive run from disk">🗑️ Delete Run</button>
+            </div>
+          </div>
+
+          <!-- Navigation tabs -->
+          <div class="archive-tabs">
+            <button class="archive-tab-btn active" data-tab="tabOverview">📊 Overview &amp; KPIs</button>
+            <button class="archive-tab-btn" data-tab="tabBoxscore">📋 Box Score</button>
+            <button class="archive-tab-btn" data-tab="tabNotes">📝 Coaching Notes</button>
+            <button class="archive-tab-btn" data-tab="tabFiles">📦 Artifact Files</button>
+            <button class="archive-tab-btn" data-tab="tabManifest">🔍 Raw Manifest</button>
+          </div>
+
+          <!-- Tab Contents -->
+          <div class="archive-tab-body">
+            <!-- 1. Overview Tab -->
+            <div id="tabOverview" class="archive-tab-pane active">
+              <div class="archive-card-grid">
+                <div class="metric-card">
+                  <div class="metric-label">Final Tick</div>
+                  <div class="metric-value" id="kpiFinalTick">0</div>
+                </div>
+                <div class="metric-card">
+                  <div class="metric-label">Round</div>
+                  <div class="metric-value" id="kpiFinalRound">0</div>
+                </div>
+                <div class="metric-card">
+                  <div class="metric-label">Total Captures</div>
+                  <div class="metric-value" id="kpiFinalCaptures">0</div>
+                </div>
+                <div class="metric-card mouse-card">
+                  <div class="metric-label">Mice Remaining</div>
+                  <div class="metric-value" id="kpiMiceRemaining">0</div>
+                </div>
+                <div class="metric-card">
+                  <div class="metric-label">Arena Dimensions</div>
+                  <div class="metric-value" id="kpiDimensions">100 × 100</div>
+                </div>
+                <div class="metric-card">
+                  <div class="metric-label">Disk Footprint</div>
+                  <div class="metric-value" id="kpiDiskFootprint">--</div>
+                </div>
+              </div>
+
+              <!-- Agents and Provenance -->
+              <div class="archive-section-card">
+                <h4>🐾 Participating Agents</h4>
+                <div id="detailAgentsList" class="detail-tag-list"></div>
+              </div>
+
+              <div class="archive-section-card">
+                <h4>📜 Code Provenance &amp; Git State</h4>
+                <div id="detailProvenance" class="detail-provenance-box"></div>
+              </div>
+            </div>
+
+            <!-- 2. Box Score Tab -->
+            <div id="tabBoxscore" class="archive-tab-pane">
+              <div id="detailBoxscoreWrap" class="boxscore-table-wrap">
+                <div class="archive-loading">No box score data saved for this run.</div>
+              </div>
+            </div>
+
+            <!-- 3. Coaching Notes Tab -->
+            <div id="tabNotes" class="archive-tab-pane">
+              <div id="detailNotesWrap" class="archive-code-block">
+                <div class="archive-loading">No coaching notes in this archive.</div>
+              </div>
+            </div>
+
+            <!-- 4. Files Tab -->
+            <div id="tabFiles" class="archive-tab-pane">
+              <div class="archive-files-table-wrap">
+                <table class="archive-files-table">
+                  <thead>
+                    <tr>
+                      <th>Artifact Name</th>
+                      <th>Size</th>
+                      <th>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody id="detailFilesTableBody"></tbody>
+                </table>
+              </div>
+            </div>
+
+            <!-- 5. Raw Manifest Tab -->
+            <div id="tabManifest" class="archive-tab-pane">
+              <pre id="detailManifestJson" class="archive-code-block json-view"></pre>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- Confirmation Modal Dialog -->
+    <div id="archiveConfirmModal" class="modal-backdrop" style="display: none;">
+      <div class="modal-dialog archive-confirm-dialog">
+        <div class="modal-header">
+          <div class="modal-title-group">
+            <span class="modal-icon" id="confirmModalIcon">⚠️</span>
+            <h2 id="confirmModalTitle">Confirm Action</h2>
+          </div>
+          <button id="btnCancelConfirm" class="btn-close">&times;</button>
+        </div>
+        <div class="modal-body">
+          <p id="confirmModalMessage" class="confirm-message">Are you sure?</p>
+          <div id="confirmModalWarning" class="confirm-warning" style="display: none;"></div>
+        </div>
+        <div class="modal-footer">
+          <button id="btnDismissConfirm" class="btn btn-secondary">Cancel</button>
+          <button id="btnExecuteConfirm" class="btn btn-danger">Confirm</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Capture Feedback Banner -->
+    <div id="archiveNotification" class="archive-notification" style="display: none;"></div>
+
+    <footer class="settings-standalone-footer">
+      <div class="boxscore-updated" id="archiveFooterNote">Showing archives saved to disk</div>
+      <div class="modal-footer-right">
+        <button id="btnCloseArchiveWindow" class="btn btn-secondary" title="Close this window">Close Window</button>
+      </div>
+    </footer>
+  </div>
+
+  <script src="/static/archive.js?v=1"></script>
+</body>
+</html>

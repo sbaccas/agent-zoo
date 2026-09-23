@@ -7,6 +7,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 from app.api.admin import router as admin_router, simulations
 from app.api.agents import router as agents_router
+from app.api.archives import router as archives_router
 from app.api.ws import router as ws_router
 from app.game.archive import archive_game, env_flag
 
@@ -73,7 +74,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     # browser loads to render the UI is in here: the static bundle plus the
     # three HTML shells, which are served by FileResponse routes rather than
     # from the /static mount.
-    _REVALIDATE_EXACT = frozenset({"/", "/settings", "/boxscore", "/heatmap"})
+    _REVALIDATE_EXACT = frozenset({"/", "/settings", "/boxscore", "/heatmap", "/archive"})
 
     async def dispatch(self, request: Request, call_next):
         response: Response = await call_next(request)
@@ -130,6 +131,7 @@ app.add_middleware(SecurityHeadersMiddleware)
 # Include API routers
 app.include_router(admin_router)
 app.include_router(agents_router)
+app.include_router(archives_router)
 app.include_router(ws_router)
 
 # Mount static files
@@ -163,5 +165,10 @@ async def boxscore_page():
 @app.get("/heatmap")
 async def heatmap_page():
     return FileResponse(static_dir / "heatmap.html")
+
+
+@app.get("/archive")
+async def archive_page():
+    return FileResponse(static_dir / "archive.html")
 
 
