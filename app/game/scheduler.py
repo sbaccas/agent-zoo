@@ -29,6 +29,7 @@ class Scheduler:
         # would credit itself for a rival cat's kill and reinforce its own misses.
         self.scores: Dict[str, int] = {}
         self.events: List[GameEvent] = []
+        self.entity_events: Dict[str, List[Dict[str, Any]]] = {}
         self.consecutive_http_errors: dict = {}
         self.deaths: List[Dict[str, Any]] = []
         self.notified_deaths: set = set()
@@ -246,8 +247,6 @@ class Scheduler:
             # hit/miss by diffing its own `score` against the previous tick.
             "score": self.scores.get(entity.id, 0),
             "scoreboard": self.get_scoreboard(),
-            "deaths": [dict(d) for d in self.deaths],
-            "recent_deaths": [dict(d) for d in self.deaths[-5:]],
         }
 
     def _register_capture(self, owner_id: str, victim: Entity, source: str, zone_id: Optional[str] = None) -> None:
@@ -278,21 +277,51 @@ class Scheduler:
         self.scores[owner_id] = self.scores.get(owner_id, 0) + 1
         if self.stats is not None:
             self.stats.record_kill(owner_id, zone_id)
+
+        # Matter-of-fact event payload entries for the agents
+        if owner_id not in self.entity_events:
+            self.entity_events[owner_id] = []
+        if is_cat:
+            self.entity_events[owner_id].append({
+                "tick": self.tick,
+                "type": "elimination",
+                "target": victim.id,
+                "target_type": "cat",
+                "source": source,
+            })
+        else:
+            self.entity_events[owner_id].append({
+                "tick": self.tick,
+                "type": "elimination",
+                "target": victim.id,
+                "target_type": "mouse",
+                "source": source,
+            })
+
+        if victim.id not in self.entity_events:
+            self.entity_events[victim.id] = []
+        self.entity_events[victim.id].append({
+            "tick": self.tick,
+            "type": "eliminated",
+            "by": owner_id,
+            "source": source,
+        })
+
         owner = self.entity_manager.entities.get(owner_id)
         o_pos = f"({owner.position.x}, {owner.position.y})" if owner else "?"
         if is_cat:
             msg = (
-                f"💀 [TICK {self.tick} | R{self.round}] DEATH: {victim.id} was eliminated by {owner_id} at {o_pos} "
-                f"via {source}! ({victim.id} is out of the game!)"
+                f"⚡ [TICK {self.tick} | R{self.round}] GLORIOUS CONQUEST: {owner_id} at {o_pos} "
+                f"eliminated rival predator {victim.id} via {source}! ({victim.id} is out of the game!)"
             )
-            event_type = "cat_knockout"
+            event_type = "elimination"
         else:
             msg = (
-                f"💥 [TICK {self.tick} | R{self.round}] CAPTURE: {owner_id} at {o_pos} "
-                f"caught {victim.id} at ({victim.position.x}, {victim.position.y}) "
+                f"✨ [TICK {self.tick} | R{self.round}] FEAST OF CHAMPIONS: {owner_id} at {o_pos} "
+                f"eliminated {victim.id} at ({victim.position.x}, {victim.position.y}) "
                 f"via {source}! (Total captures: {self.captures})"
             )
-            event_type = "capture"
+            event_type = "elimination"
 
         logger.info(msg)
         print(msg, flush=True)
@@ -307,14 +336,40 @@ class Scheduler:
             details={"source": source, "victim_type": victim.type.value, "zone_id": zone_id},
         ))
 
-    def _register_damage(self, owner_id: str, victim: Entity, source: str, zone_id: Optional[str] = None) -> None:
+    def _register_damage(self, owner_id: str, victim: Entity, source: str, zone_id: Optional[str] = None, damage: int = 34) -> None:
         """Record a hit that damages but does not eliminate an entity."""
+        # Matter-of-fact event payload entries for the agents
+        if owner_id not in self.entity_events:
+            self.entity_events[owner_id] = []
+        self.entity_events[owner_id].append({
+            "tick": self.tick,
+            "type": "damage_dealt",
+            "target": victim.id,
+            "target_type": victim.type.value,
+            "amount": damage,
+            "target_hp": victim.hp,
+            "target_max_hp": victim.max_hp,
+            "source": source,
+        })
+
+        if victim.id not in self.entity_events:
+            self.entity_events[victim.id] = []
+        self.entity_events[victim.id].append({
+            "tick": self.tick,
+            "type": "damage_taken",
+            "source_id": owner_id,
+            "amount": damage,
+            "remaining_hp": victim.hp,
+            "max_hp": victim.max_hp,
+            "source": source,
+        })
+
         owner = self.entity_manager.entities.get(owner_id)
         o_pos = f"({owner.position.x}, {owner.position.y})" if owner else "?"
         msg = (
-            f"🩸 [TICK {self.tick} | R{self.round}] HIT: {owner_id} at {o_pos} "
+            f"🩸 [TICK {self.tick} | R{self.round}] VICIOUS BLOW: {owner_id} at {o_pos} "
             f"slashed {victim.id} at ({victim.position.x}, {victim.position.y}) "
-            f"via {source}! ({victim.id} HP: {victim.hp}/{victim.max_hp})"
+            f"via {source} for {damage} damage! ({victim.id} HP: {victim.hp}/{victim.max_hp})"
         )
         logger.info(msg)
         print(msg, flush=True)
@@ -328,6 +383,7 @@ class Scheduler:
             message=msg,
             details={
                 "source": source,
+                "damage": damage,
                 "victim_hp": victim.hp,
                 "victim_max_hp": victim.max_hp,
                 "zone_id": zone_id,
@@ -364,7 +420,7 @@ class Scheduler:
                         if not victim.alive:
                             self._register_capture(zone.owner_id, victim, f"{zone.kind} zone", zone_id=zone.id)
                         else:
-                            self._register_damage(zone.owner_id, victim, f"{zone.kind} zone", zone_id=zone.id)
+                            self._register_damage(zone.owner_id, victim, f"{zone.kind} zone", zone_id=zone.id, damage=atk_power)
 
         expired = [z for z in self.action_handler.hazard_zones if z.lethal_until_tick < self.tick]
         for zone in expired:
@@ -481,13 +537,14 @@ class Scheduler:
                         message=f"⚔️ [TICK {self.tick} | R{self.round}] SLASH: {cat.id} executed slash attack ({len(res.affected_entities)} hits)",
                         details=slash_details,
                     ))
+                    slash_dmg = slash_details.get("damage", 34)
                     for victim_id in res.affected_entities:
                         victim = self.entity_manager.entities.get(victim_id)
                         if victim:
                             if not victim.alive:
                                 self._register_capture(cat.id, victim, "slash impact")
                             else:
-                                self._register_damage(cat.id, victim, "slash impact")
+                                self._register_damage(cat.id, victim, "slash impact", damage=slash_dmg)
 
         # 2. Mice turn
         for mouse in mice:
@@ -566,6 +623,22 @@ class Scheduler:
                 cat_threat = overlapping_cats[0]
                 old_x, old_y = mouse.position.x, mouse.position.y
                 self.entity_manager.displace_entity(mouse, bounce_dist=2)
+                if mouse.id not in self.entity_events:
+                    self.entity_events[mouse.id] = []
+                self.entity_events[mouse.id].append({
+                    "tick": self.tick,
+                    "type": "bump",
+                    "target": cat_threat.id,
+                    "source": "collision",
+                })
+                if cat_threat.id not in self.entity_events:
+                    self.entity_events[cat_threat.id] = []
+                self.entity_events[cat_threat.id].append({
+                    "tick": self.tick,
+                    "type": "bump",
+                    "target": mouse.id,
+                    "source": "collision",
+                })
                 msg = f"🔄 [TICK {self.tick} | R{self.round}] BUMP: {mouse.id} collided with {cat_threat.id} at ({old_x}, {old_y}) -> bounced to ({mouse.position.x}, {mouse.position.y}) (facing {mouse.facing.value.upper()})"
                 logger.info(msg)
                 print(msg, flush=True)

@@ -3,24 +3,39 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Box Score — Cat &amp; Mouse</title>
+  <title>Game Stats — Cat &amp; Mouse</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📊</text></svg>">
-  <link rel="stylesheet" href="/static/styles.css?v=14">
+  <link rel="stylesheet" href="/static/styles.css?v=16">
 </head>
 <body class="settings-standalone-body">
-  <div class="settings-standalone-container boxscore-container">
+  <div class="settings-standalone-container boxscore-container gamestats-container">
     <header class="settings-standalone-header">
       <div class="modal-title-group">
         <span class="modal-icon">📊</span>
         <div>
-          <h2>Box Score</h2>
-          <div class="subtitle">Per-Cat Performance KPIs</div>
+          <h2>Game Stats</h2>
+          <div class="subtitle">Live Performance, Movement &amp; Replayable Events</div>
         </div>
       </div>
       <div class="settings-header-badge" id="syncStatus">Connecting…</div>
     </header>
 
-    <main class="settings-standalone-content">
+    <!-- 3 Tabs Navigation Bar -->
+    <nav class="stats-tabs-nav" aria-label="Game Stats Navigation">
+      <button id="tabBtnBoxscore" class="stats-tab-btn active" data-tab="tabBoxscore">
+        <span>📊 1. Box Score</span>
+      </button>
+      <button id="tabBtnCatpath" class="stats-tab-btn" data-tab="tabCatpath">
+        <span>🗺️ 2. Cat Path</span>
+      </button>
+      <button id="tabBtnEvents" class="stats-tab-btn" data-tab="tabEvents">
+        <span>⚡ 3. Game Events &amp; Replay</span>
+        <span id="eventCountBadge" class="stats-tab-badge">0</span>
+      </button>
+    </nav>
+
+    <!-- Tab 1: Box Score Content -->
+    <main id="tabBoxscore" class="settings-standalone-content stats-tab-panel active">
       <!-- Simulation meta strip: populated by boxscore.js -->
       <div class="boxscore-meta" id="boxscoreMeta"></div>
 
@@ -29,7 +44,6 @@
 
       <!-- Pre-start hint: only shown while the game has not ticked yet -->
       <div class="boxscore-hint" id="boxscoreHint" style="display: none;"></div>
-
 
       <!-- Loading / error / empty states -->
       <div class="boxscore-state" id="boxscoreState">Loading box score…</div>
@@ -42,16 +56,117 @@
       </p>
     </main>
 
+    <!-- Tab 2: Cat Path (Movement Map) Content -->
+    <main id="tabCatpath" class="settings-standalone-content stats-tab-panel" style="display: none;">
+      <!-- Simulation meta strip for heatmap -->
+      <div class="boxscore-meta" id="heatmapMeta"></div>
+
+      <div class="boxscore-caveat" id="heatmapCaveat" style="display: none;"></div>
+
+      <div class="heatmap-controls">
+        <label class="heatmap-control">
+          <span>Digest grid</span>
+          <select id="gridSize">
+            <option value="2">2 x 2</option>
+            <option value="3">3 x 3</option>
+            <option value="4">4 x 4</option>
+            <option value="5" selected>5 x 5</option>
+          </select>
+        </label>
+        <label class="heatmap-control">
+          <span>Window</span>
+          <select id="windowTicks">
+            <option value="">All recorded ticks</option>
+            <option value="100">Last 100 ticks</option>
+            <option value="300">Last 300 ticks</option>
+            <option value="500">Last 500 ticks</option>
+          </select>
+        </label>
+        <label class="heatmap-control heatmap-control-check">
+          <input type="checkbox" id="showPath" checked>
+          <span>Trace path</span>
+        </label>
+      </div>
+
+      <div class="boxscore-state" id="heatmapState">Loading movement map…</div>
+
+      <div id="heatmapCats"></div>
+
+      <p class="boxscore-legend">
+        The canvas is full arena resolution — brighter means more ticks spent there.
+        The digest below each map is the coarse version the coach receives; its
+        digits are percentages of ticks and always sum to 100.
+      </p>
+    </main>
+
+    <!-- Tab 3: Game Events & Replay Content -->
+    <main id="tabEvents" class="settings-standalone-content stats-tab-panel" style="display: none;">
+      <!-- Replay & Timeline Control Bar -->
+      <div class="replay-control-bar">
+        <div class="replay-status-group">
+          <span class="replay-label">Live Tick:</span>
+          <strong id="replayCurrentTick" class="replay-tick-val">0</strong>
+          <span id="replayFeedback" class="replay-feedback-chip" style="display: none;">Rewound to tick 0</span>
+        </div>
+        <div class="replay-actions-group">
+          <button id="btnReplayStepBack" class="btn btn-sm btn-outline" title="Rewind 1 tick (Step Back)">⟵ Step Back</button>
+          <button id="btnReplayStepForward" class="btn btn-sm btn-outline" title="Advance 1 tick">Step ⟶</button>
+          <div class="replay-jump-group">
+            <input type="number" id="inputSeekTick" class="form-input form-input-sm" placeholder="Tick #" min="0" style="width: 80px;">
+            <button id="btnSeekTick" class="btn btn-sm btn-primary" title="Rewind board to this tick">⏪ Replay Tick</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Events Filter Bar -->
+      <div class="events-filter-bar">
+        <div class="events-filter-types">
+          <button class="event-filter-chip active" data-filter="all">All Events</button>
+          <button class="event-filter-chip" data-filter="elimination">💀 Eliminations</button>
+          <button class="event-filter-chip" data-filter="combat">⚔️ Combat Hits</button>
+          <button class="event-filter-chip" data-filter="hazard">🔥 Hazard Zones</button>
+        </div>
+        <div class="events-filter-inputs">
+          <select id="eventActorFilter" class="form-select form-select-sm">
+            <option value="">All Animals</option>
+          </select>
+          <input type="text" id="eventSearchInput" class="form-input form-input-sm" placeholder="Filter events...">
+        </div>
+      </div>
+
+      <!-- Loading / Empty state -->
+      <div class="boxscore-state" id="eventsState">Loading game events…</div>
+
+      <!-- Events Feed / Table -->
+      <div class="events-table-wrap" id="eventsTableWrap">
+        <table class="events-table">
+          <thead>
+            <tr>
+              <th style="width: 70px;">Tick</th>
+              <th style="width: 120px;">Event</th>
+              <th style="width: 140px;">Actor / Target</th>
+              <th style="width: 90px;">Coords</th>
+              <th style="width: 120px;">Source</th>
+              <th>Details</th>
+              <th style="width: 95px; text-align: center;">Replay</th>
+            </tr>
+          </thead>
+          <tbody id="eventsTableBody">
+          </tbody>
+        </table>
+      </div>
+    </main>
+
     <footer class="settings-standalone-footer">
-      <div class="boxscore-updated" id="boxscoreUpdated">Auto-refreshing every 2s</div>
+      <div class="boxscore-updated" id="syncUpdated">Auto-refreshing every 2s</div>
       <div class="modal-footer-right">
         <button id="btnCloseWindow" class="btn btn-secondary" title="Close this window">Close Window</button>
-        <button id="btnOpenHeatmap" class="btn btn-secondary" title="Open the movement map: where each cat spends its ticks">🔥 Movement Map</button>
-        <button id="btnRefreshBoxscore" class="btn btn-primary" title="Fetch the latest box score from the active simulation now">Refresh</button>
+        <button id="btnCopyDigest" class="btn btn-secondary" style="display: none;" title="Copy coarse movement digest">Copy Digest</button>
+        <button id="btnRefreshActiveTab" class="btn btn-primary" title="Refresh data now">Refresh</button>
       </div>
     </footer>
   </div>
 
-  <script src="/static/boxscore.js?v=3"></script>
+  <script src="/static/boxscore.js?v=4"></script>
 </body>
 </html>

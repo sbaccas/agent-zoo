@@ -419,6 +419,18 @@ body {
   color: #991b1b;
 }
 
+.event-item.event-cat_eliminated {
+  background-color: #fdf2f8;
+  border-color: #fbcfe8;
+  color: #831843;
+}
+
+.event-item.event-damage {
+  background-color: #fff1f2;
+  border-color: #fecdd3;
+  color: #9f1239;
+}
+
 .event-item.event-slash {
   background-color: #fff1f2;
   border-color: #fecdd3;
@@ -442,6 +454,16 @@ body {
 
 .event-pill.pill-capture {
   background-color: #dc2626;
+  color: #ffffff;
+}
+
+.event-pill.pill-cat_eliminated {
+  background-color: #9333ea;
+  color: #ffffff;
+}
+
+.event-pill.pill-damage {
+  background-color: #e11d48;
   color: #ffffff;
 }
 
@@ -1764,4 +1786,289 @@ body {
 
 .archive-notification.error {
   background-color: #dc2626;
+}
+
+/* ============================================================
+   Game Stats Multi-Tab Navigation & Layout
+   Tabs: 1) Box Score  2) Cat Path  3) Game Events & Replay
+   ============================================================ */
+
+.gamestats-container {
+  max-width: 980px;
+}
+
+.stats-tabs-nav {
+  display: flex;
+  gap: 8px;
+  padding: 12px 20px 0;
+  background-color: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-color);
+}
+
+.stats-tab-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 18px;
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  background: transparent;
+  border: none;
+  border-bottom: 3px solid transparent;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  position: relative;
+}
+
+.stats-tab-btn:hover {
+  color: var(--text-primary);
+  background-color: rgba(0, 0, 0, 0.03);
+}
+
+.stats-tab-btn.active {
+  color: var(--accent-color);
+  border-bottom-color: var(--accent-color);
+  font-weight: 700;
+}
+
+.stats-tab-badge {
+  font-size: 0.7rem;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 9999px;
+  background-color: #e2e8f0;
+  color: #475569;
+}
+
+.stats-tab-btn.active .stats-tab-badge {
+  background-color: #dbeafe;
+  color: #1d4ed8;
+}
+
+.stats-tab-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 18px 24px;
+}
+
+/* ------------------------------------------------------------
+   Tab 3: Game Events & Replay Controls
+   ------------------------------------------------------------ */
+
+.replay-control-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  background-color: #f8fafc;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+}
+
+.replay-status-group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.replay-label {
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-secondary);
+}
+
+.replay-tick-val {
+  font-size: 1.15rem;
+  font-weight: 800;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.replay-feedback-chip {
+  font-size: 0.78rem;
+  font-weight: 600;
+  padding: 3px 9px;
+  border-radius: 9999px;
+  background-color: #dcfce7;
+  color: #166534;
+  border: 1px solid #86efac;
+  animation: fadeIn 0.2s ease;
+}
+
+.replay-actions-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.replay-jump-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 6px;
+}
+
+.form-input-sm {
+  padding: 5px 8px;
+  font-size: 0.8rem;
+  border-radius: 6px;
+  border: 1px solid var(--border-card);
+}
+
+.events-filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.events-filter-types {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.event-filter-chip {
+  padding: 5px 11px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  border-radius: 9999px;
+  border: 1px solid var(--border-card);
+  background-color: var(--bg-primary);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.event-filter-chip:hover {
+  background-color: #f1f5f9;
+  color: var(--text-primary);
+}
+
+.event-filter-chip.active {
+  background-color: #e0e7ff;
+  color: #3730a3;
+  border-color: #c7d2fe;
+}
+
+.events-filter-inputs {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.events-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background-color: var(--bg-primary);
+  max-height: 480px;
+  overflow-y: auto;
+}
+
+.events-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.83rem;
+}
+
+.events-table th {
+  position: sticky;
+  top: 0;
+  background-color: #f8fafc;
+  color: var(--text-secondary);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  padding: 9px 12px;
+  border-bottom: 2px solid var(--border-color);
+  text-align: left;
+  z-index: 2;
+}
+
+.events-table td {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border-color);
+  color: var(--text-primary);
+  vertical-align: middle;
+}
+
+.events-table tr:hover td {
+  background-color: #f8fafc;
+}
+
+.event-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: 9999px;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+
+.event-badge-capture {
+  background-color: #fef3c7;
+  color: #92400e;
+  border-color: #fcd34d;
+}
+
+.event-badge-elimination {
+  background-color: #fee2e2;
+  color: #991b1b;
+  border-color: #fca5a5;
+}
+
+.event-badge-damage-dealt {
+  background-color: #ede9fe;
+  color: #5b21b6;
+  border-color: #c4b5fd;
+}
+
+.event-badge-damage-taken {
+  background-color: #fce7f3;
+  color: #9d174d;
+  border-color: #fbcfe8;
+}
+
+.event-badge-hazard {
+  background-color: #ffedd5;
+  color: #9a3412;
+  border-color: #fed7aa;
+}
+
+.event-badge-default {
+  background-color: #f1f5f9;
+  color: #475569;
+  border-color: #cbd5e1;
+}
+
+.btn-replay-event {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 9px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  border-radius: 6px;
+  border: 1px solid #bfdbfe;
+  background-color: #eff6ff;
+  color: #1d4ed8;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-replay-event:hover {
+  background-color: #dbeafe;
+  border-color: #93c5fd;
 }

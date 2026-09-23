@@ -219,4 +219,45 @@ async def test_disclosure_api_and_heatmap_gating():
         assert hm_res3.status_code == 200
 
 
+@pytest.mark.asyncio
+async def test_gamestats_events_and_seek_replay_api():
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        # Step forward a few ticks to generate state history
+        await client.post("/api/simulations/active/step")
+        await client.post("/api/simulations/active/step")
+        state_res = await client.get("/api/simulations/active/state")
+        current_tick = state_res.json()["tick"]
+        assert current_tick >= 2
+
+        # GET /api/simulations/active/events
+        ev_res = await client.get("/api/simulations/active/events")
+        assert ev_res.status_code == 200
+        data = ev_res.json()
+        assert "events" in data
+        assert "deaths" in data
+        assert "entity_events" in data
+        assert "can_step_back" in data
+        assert data["tick"] == current_tick
+
+        # POST /api/simulations/active/seek to rewind to tick 0
+        seek_res = await client.post("/api/simulations/active/seek", json={"tick": 0})
+        assert seek_res.status_code == 200
+        rewound_data = seek_res.json()
+        assert rewound_data["tick"] <= 1
+
+
+@pytest.mark.asyncio
+async def test_gamestats_pages_served():
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        for path in ["/boxscore", "/gamestats", "/stats"]:
+            res = await client.get(path)
+            assert res.status_code == 200
+            assert "Game Stats" in res.text
+            assert "Cat Path" in res.text
+            assert "Game Events" in res.text
+
+
+
 

@@ -9,6 +9,7 @@ from app.models.simulation import (
     SimulationConfig,
     SimulationStateResponse,
     SpeciesConfig,
+    SeekSimulationRequest,
     UpdateDisclosureConfigRequest,
     UpdateSpeciesConfigRequest,
     UpdateTickRateRequest,
@@ -89,6 +90,13 @@ async def step_back_simulation(sim_id: str):
     return await sim.step_back()
 
 
+@router.post("/{sim_id}/seek", response_model=SimulationStateResponse)
+async def seek_simulation(sim_id: str, req: SeekSimulationRequest):
+    """Seek/rewind the simulation state back to a historical tick."""
+    sim = get_simulation_or_404(sim_id)
+    return await sim.seek_to_tick(req.tick)
+
+
 @router.post("/{sim_id}/stop", response_model=SimulationStateResponse)
 async def stop_simulation(sim_id: str):
     sim = get_simulation_or_404(sim_id)
@@ -127,6 +135,41 @@ async def get_boxscore(sim_id: str):
     """
     sim = get_simulation_or_404(sim_id)
     return sim.get_boxscore()
+
+
+@router.get("/{sim_id}/events")
+async def get_events(
+    sim_id: str,
+    limit: Optional[int] = Query(None, ge=1, le=1000),
+    since_tick: Optional[int] = Query(None, ge=0),
+    actor_id: Optional[str] = Query(None),
+    event_type: Optional[str] = Query(None),
+):
+    """Retrieve structured game events and death annals for Game Stats."""
+    sim = get_simulation_or_404(sim_id)
+    all_events = list(sim.scheduler.events)
+    if since_tick is not None:
+        all_events = [e for e in all_events if e.tick >= since_tick]
+    if actor_id:
+        all_events = [e for e in all_events if e.actor_id == actor_id or e.target_id == actor_id]
+    if event_type:
+        all_events = [e for e in all_events if e.event_type == event_type]
+    if limit is not None:
+        all_events = all_events[-limit:]
+
+    history_ticks = [snap.tick for snap in sim.history]
+    return {
+        "simulation_id": sim.simulation_id,
+        "tick": sim.scheduler.tick,
+        "round": sim.scheduler.round,
+        "events": [e.model_dump() for e in all_events],
+        "deaths": [dict(d) for d in sim.scheduler.deaths],
+        "entity_events": {k: [dict(ev) for ev in v] for k, v in sim.scheduler.entity_events.items()},
+        "can_step_back": len(sim.history) > 0,
+        "history_min_tick": min(history_ticks) if history_ticks else sim.scheduler.tick,
+        "history_max_tick": max(history_ticks) if history_ticks else sim.scheduler.tick,
+        "history_length": len(history_ticks),
+    }
 
 
 @router.get("/{sim_id}/heatmap")

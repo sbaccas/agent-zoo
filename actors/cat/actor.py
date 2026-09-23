@@ -776,6 +776,68 @@ async def reset_adk_session(agent_id: str):
         pass
 
 
+def format_event_heraldry(events: List[Dict[str, Any]], current_tick: int) -> str:
+    """Format matter-of-fact observation events into ostentatious chronicle heraldry.
+
+    Data-only: describes feats, strikes, and wounds that occurred without issuing
+    tactical imperatives or spoon-feeding strategy to the model.
+    """
+    if not events:
+        return ""
+    lines = []
+    for ev in events:
+        ev_type = ev.get("type")
+        tick = ev.get("tick")
+        tick_suffix = f" (tick {tick})" if tick is not None and tick != current_tick else ""
+        if ev_type == "elimination":
+            target = ev.get("target", "rival")
+            src = ev.get("source", "strike")
+            lines.append(
+                f"  ⚡ GLORIOUS CONQUEST{tick_suffix}: Rival predator {target} eliminated via {src}! "
+                f"Takedown confirmed (+1 Score)."
+            )
+        elif ev_type == "capture":
+            target = ev.get("target", "prey")
+            src = ev.get("source", "strike")
+            lines.append(
+                f"  ✨ FEAST OF CHAMPIONS{tick_suffix}: Prey {target} vanquished and claimed via {src}!"
+            )
+        elif ev_type == "damage_dealt":
+            target = ev.get("target", "target")
+            amt = ev.get("amount", 34)
+            thp = ev.get("target_hp", 0)
+            tmhp = ev.get("target_max_hp", 100)
+            src = ev.get("source", "strike")
+            lines.append(
+                f"  ⚔️ VICIOUS BLOW{tick_suffix}: Slashed {target} for {amt} damage via {src} "
+                f"(target vitality: {thp}/{tmhp} HP)!"
+            )
+        elif ev_type == "damage_taken":
+            src_id = ev.get("source_id", "rival")
+            amt = ev.get("amount", 34)
+            rem_hp = ev.get("remaining_hp", 0)
+            mhp = ev.get("max_hp", 100)
+            src = ev.get("source", "strike")
+            lines.append(
+                f"  🩸 BLOOD DRAWN{tick_suffix}: Struck by {src_id} via {src} for -{amt} HP "
+                f"({rem_hp}/{mhp} HP remaining)! Battle scars deepen!"
+            )
+        elif ev_type == "bump":
+            target = ev.get("target", "entity")
+            lines.append(
+                f"  💥 IMPACT COLLISION{tick_suffix}: Kinetic collision with {target}!"
+            )
+        elif ev_type == "eliminated":
+            killer = ev.get("by", "rival")
+            src = ev.get("source", "strike")
+            lines.append(
+                f"  ☠️ FALLEN IN BATTLE{tick_suffix}: Eliminated by {killer} via {src}!"
+            )
+    if not lines:
+        return ""
+    return "Chronicle of Feats & Carnage:\n" + "\n".join(lines) + "\n"
+
+
 def build_decision_prompt(
     obs: Observation,
     history: Optional[List[Dict[str, Any]]] = None,
@@ -978,14 +1040,6 @@ def build_decision_prompt(
             f"    true, ATTACK connects; if it is false, ATTACK cannot connect.\n"
         )
 
-    deaths_line = ""
-    if obs.recent_deaths:
-        death_strs = [
-            f"{d.get('id')} (killed by {d.get('killed_by')} via {d.get('source')} at tick {d.get('tick')})"
-            for d in obs.recent_deaths
-        ]
-        deaths_line = f"Recent Deaths Announced: {', '.join(death_strs)}\n"
-
     observation_context = (
         f"--- CURRENT OBSERVATION (Tick {obs.tick}, Round {obs.round}) ---\n"
         f"Agent ID: {obs.self.get('id', agent_id)}\n"
@@ -1006,7 +1060,6 @@ def build_decision_prompt(
         f"  • lunge_cooldown: {lunge_cd} tick(s)\n"
         f"{aim_line}"
         f"Visible Entities in Viewport: {entities}\n"
-        f"{deaths_line}"
         f"Legal Actions this tick: {legal}"
     )
 
@@ -1367,11 +1420,6 @@ async def interrogate_adk_gemini(
 
             life_status = "ELIMINATED / DEAD (Knocked out of the game. You have 0 HP and cannot move or act.)" if is_dead else f"ACTIVE ({self_hp}/{self_max_hp} HP)"
 
-            deaths_info = ""
-            if recent_deaths:
-                d_list = [f"{d.get('id')} by {d.get('killed_by')} via {d.get('source')} at tick {d.get('tick')}" for d in recent_deaths]
-                deaths_info = f"Recent Casualties Announced: {', '.join(d_list)}\n"
-
             prompt = (
                 f"{history_context}"
                 f"--- CURRENT OBSERVATION (Tick {tick}, Round {round_num}) ---\n"
@@ -1385,7 +1433,6 @@ async def interrogate_adk_gemini(
                 f"attack_range: {caps.get('attack_range', 2)} tiles\n"
                 f"Visible Entities in Viewport: {entities}\n"
                 f"Legal Actions available: {legal}\n"
-                f"{deaths_info}"
                 f"{directive_context}"
                 f"{COMMANDER_BLOCK_HEADER}\n"
                 f'COMMANDER: "{user_prompt}"\n'

@@ -1076,6 +1076,7 @@ async def sync_live_observation(agent_id: Optional[str] = None) -> bool:
                     "scoreboard": data.get("scoreboard", {}),
                     "deaths": data.get("deaths", []),
                     "recent_deaths": data.get("recent_deaths", []),
+                    "events": data.get("events", []),
                 }
 
                 state.agent_id = target_id

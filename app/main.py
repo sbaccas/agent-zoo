@@ -74,7 +74,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     # browser loads to render the UI is in here: the static bundle plus the
     # three HTML shells, which are served by FileResponse routes rather than
     # from the /static mount.
-    _REVALIDATE_EXACT = frozenset({"/", "/settings", "/boxscore", "/heatmap", "/archive"})
+    _REVALIDATE_EXACT = frozenset({"/", "/settings", "/boxscore", "/heatmap", "/archive", "/gamestats", "/stats"})
 
     async def dispatch(self, request: Request, call_next):
         response: Response = await call_next(request)
@@ -158,6 +158,8 @@ async def settings_page():
 
 
 @app.get("/boxscore")
+@app.get("/gamestats")
+@app.get("/stats")
 async def boxscore_page():
     return FileResponse(static_dir / "boxscore.html")
 

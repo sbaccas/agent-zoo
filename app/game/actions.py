@@ -177,6 +177,7 @@ class ActionHandler:
                     "zone_id": zone.id,
                     "aoe_ticks": max(1, aoe_ticks),
                     "lethal_until_tick": zone.lethal_until_tick,
+                    "damage": atk_power,
                 },
             )
 

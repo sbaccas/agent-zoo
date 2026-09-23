@@ -235,6 +235,10 @@ class UpdateTickRateRequest(BaseModel):
     tick_rate: float = Field(..., gt=0, le=100.0)
 
 
+class SeekSimulationRequest(BaseModel):
+    tick: int = Field(..., ge=0)
+
+
 class ModifyPopulationRequest(BaseModel):
     species: str
     delta: int

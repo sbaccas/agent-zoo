@@ -23,7 +23,7 @@ logger = logging.getLogger("simulation")
 class SimulationSnapshot:
     def __init__(self, tick: int, round: int, captures: int, entities: list, events: list,
                  scores: Optional[dict] = None, hazard_zones: Optional[list] = None,
-                 stats: Optional[dict] = None):
+                 stats: Optional[dict] = None, entity_events: Optional[dict] = None):
         self.tick = tick
         self.round = round
         self.captures = captures
@@ -41,6 +41,7 @@ class SimulationSnapshot:
         # the tracker hands over plain integers, including a length marker
         # standing in for the visited-tile set.
         self.stats = dict(stats or {})
+        self.entity_events = {k: list(v) for k, v in (entity_events or {}).items()}
 
 
 class Simulation:
@@ -97,6 +98,7 @@ class Simulation:
             scores=dict(self.scheduler.scores),
             hazard_zones=[z.model_copy(deep=True) for z in self.action_handler.hazard_zones],
             stats=self.stats.snapshot(),
+            entity_events={k: [dict(ev) for ev in v] for k, v in self.scheduler.entity_events.items()},
         )
         self.history.append(snapshot)
         if len(self.history) > self.max_history:
@@ -250,6 +252,7 @@ class Simulation:
             self.scheduler.captures = snapshot.captures
             self.scheduler.scores = dict(snapshot.scores)
             self.scheduler.events = list(snapshot.events)
+            self.scheduler.entity_events = {k: list(v) for k, v in snapshot.entity_events.items()}
             self.entity_manager.entities = {
                 e.id: e.model_copy(deep=True) for e in snapshot.entities
             }
@@ -260,6 +263,44 @@ class Simulation:
             msg = f"⏪ [STEP BACK] Rewound to Tick {snapshot.tick} | Round {snapshot.round} | Captures: {snapshot.captures}"
             logger.info(msg)
             print(msg, flush=True)
+
+        return self.get_state()
+
+    async def seek_to_tick(self, target_tick: int) -> SimulationStateResponse:
+        """Rewind the simulation state to a target historical tick in history."""
+        async with self._lock:
+            if not self.history:
+                return self.get_state()
+
+            if self.status == SimulationStatus.RUNNING:
+                self.status = SimulationStatus.PAUSED
+                if self._loop_task and not self._loop_task.done():
+                    self._loop_task.cancel()
+
+            target_snapshot = None
+            while self.history:
+                snap = self.history.pop()
+                if snap.tick <= target_tick:
+                    target_snapshot = snap
+                    break
+
+            if target_snapshot is not None:
+                self.scheduler.tick = target_snapshot.tick
+                self.scheduler.round = target_snapshot.round
+                self.scheduler.captures = target_snapshot.captures
+                self.scheduler.scores = dict(target_snapshot.scores)
+                self.scheduler.events = list(target_snapshot.events)
+                self.scheduler.entity_events = {k: list(v) for k, v in target_snapshot.entity_events.items()}
+                self.entity_manager.entities = {
+                    e.id: e.model_copy(deep=True) for e in target_snapshot.entities
+                }
+                self.action_handler.hazard_zones = [
+                    z.model_copy(deep=True) for z in target_snapshot.hazard_zones
+                ]
+                self.stats.restore(target_snapshot.stats)
+                msg = f"⏪ [SEEK] Rewound to Tick {target_snapshot.tick} | Round {target_snapshot.round} | Captures: {target_snapshot.captures}"
+                logger.info(msg)
+                print(msg, flush=True)
 
         return self.get_state()
 
@@ -290,6 +331,7 @@ class Simulation:
             self.scheduler.captures = 0
             self.scheduler.scores.clear()
             self.scheduler.events.clear()
+            self.scheduler.entity_events.clear()
             self.stats.reset()
             self.status = SimulationStatus.CREATED
 
