@@ -146,9 +146,10 @@ sequence of events, timestamps, and target alignments.
 The full transcript is no longer dumped into your prompt context by default to prevent context bloat.
 Use `pull_transcript` to inspect recent sequences of observations, positions, chosen moves, and reasoning.
 
-5. **`read_coach_notes`** & **`write_coach_note`** — your persistent tactical notebook and memory journal.
+5. **`read_coach_notes`** & **`write_coach_note`** — your Coach Private Notes journal.
 These notes are your private scratchpad and notebook across evaluation cycles, completely distinct from the Cat's published standing orders (`coaching_notes.md`).
 Use `write_coach_note` to log tactical deductions, hypotheses, spatial findings, or predictions to test in future rounds (e.g. "Mouse cluster observed congregating at south-east sector").
+You can optionally link specific tick records to your note using `linked_ticks=[...]` to save the exact observation, action, and reasoning snapshot for future memory traversal and RAG retrieval.
 Use `read_coach_notes` at the start of every cycle to recall what you previously observed and learned.
 
 **Call it before you write your notes, on every evaluation.** Call these tools before

@@ -326,16 +326,49 @@ def reset_coaching_notes() -> None:
 import uuid
 
 
+def get_transcript_ticks_snapshot(ticks: List[int]) -> List[Dict[str, Any]]:
+    """Retrieves compact transcript records for specific tick numbers.
+
+    Extracts timestamped context, actor positions, facing, chosen action,
+    reasoning thought, and visible entities for RAG traversal and memory linkage.
+    """
+    if not ticks:
+        return []
+    tick_set = set(ticks)
+    records = read_transcript_records()
+    snapshots = []
+    for r in records:
+        if r.get("tick") in tick_set:
+            snapshots.append(
+                {
+                    "tick": r.get("tick"),
+                    "x": r.get("x"),
+                    "y": r.get("y"),
+                    "facing": r.get("facing"),
+                    "action": r.get("action"),
+                    "thought": r.get("thought"),
+                    "score": r.get("score"),
+                    "tick_type": r.get("tick_type"),
+                    "visible": r.get("visible"),
+                }
+            )
+    return snapshots
+
+
 def append_coach_memory(
     note: str,
     category: str = "tactical",
     tags: Optional[List[str]] = None,
     tick: Optional[int] = None,
+    linked_ticks: Optional[List[int]] = None,
 ) -> Dict[str, Any]:
-    """Records a coach memory or observation for future recall."""
+    """Records a coach memory or observation for future recall, optionally linked to transcript ticks."""
     _ensure_runtime_dir()
     now_str = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     unique_suffix = uuid.uuid4().hex[:8]
+    clean_ticks = [int(t) for t in linked_ticks] if linked_ticks else []
+    tick_snapshots = get_transcript_ticks_snapshot(clean_ticks) if clean_ticks else []
+
     record = {
         "id": f"mem-{int(time.time() * 1000)}-{unique_suffix}",
         "timestamp": now_str,
@@ -343,6 +376,8 @@ def append_coach_memory(
         "category": category,
         "tags": tags or [],
         "note": note.strip(),
+        "linked_ticks": clean_ticks,
+        "tick_snapshots": tick_snapshots,
     }
 
     try:
@@ -398,12 +433,15 @@ def update_coach_memory(
     note: Optional[str] = None,
     category: Optional[str] = None,
     tags: Optional[List[str]] = None,
+    linked_ticks: Optional[List[int]] = None,
 ) -> Optional[Dict[str, Any]]:
     """Updates an existing coach memory record by ID. Returns updated record or None if not found."""
     if not COACH_MEMORY_PATH.exists():
         return None
     records: List[Dict[str, Any]] = []
     updated_record: Optional[Dict[str, Any]] = None
+    clean_ticks = [int(t) for t in linked_ticks] if linked_ticks is not None else None
+
     try:
         with COACH_MEMORY_PATH.open("r", encoding="utf-8") as fh:
             for line in fh:
@@ -419,6 +457,9 @@ def update_coach_memory(
                             rec["category"] = category
                         if tags is not None:
                             rec["tags"] = tags
+                        if clean_ticks is not None:
+                            rec["linked_ticks"] = clean_ticks
+                            rec["tick_snapshots"] = get_transcript_ticks_snapshot(clean_ticks)
                         rec["updated_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
                         updated_record = rec
                     records.append(rec)

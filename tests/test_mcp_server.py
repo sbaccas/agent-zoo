@@ -362,13 +362,33 @@ async def test_mcp_ui_and_telemetry_endpoints():
             assert r_notes.json()["ok"] is True
             assert r_notes.json()["count"] >= 1
 
-            # Create note via REST API
+            # Create note via REST API with linked ticks
+            # First seed a mock tick in the transcript
+            store.append_tick({
+                "tick": 42,
+                "observation": {"self": {"position": {"x": 10, "y": 15}, "facing": "east"}, "visible_entities": []},
+                "response": {"action": "attack", "thought": "Mouse detected near north corridor"},
+                "source": "adk_gemini",
+                "tick_type": "play",
+                "executed": True,
+            })
+
             r_create = await client.post(
                 "/api/mcp/coach-notes",
-                json={"note": "REST API note test", "category": "hypothesis", "tags": ["rest", "api"]}
+                json={
+                    "note": "REST API note test",
+                    "category": "hypothesis",
+                    "tags": ["rest", "api"],
+                    "linked_ticks": [42],
+                }
             )
             assert r_create.status_code == 200
-            created_id = r_create.json()["memory"]["id"]
+            mem_created = r_create.json()["memory"]
+            created_id = mem_created["id"]
+            assert mem_created["linked_ticks"] == [42]
+            assert len(mem_created["tick_snapshots"]) == 1
+            assert mem_created["tick_snapshots"][0]["tick"] == 42
+            assert mem_created["tick_snapshots"][0]["action"] == "attack"
 
             # Update note via REST API
             r_upd = await client.put(

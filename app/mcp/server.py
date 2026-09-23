@@ -269,18 +269,19 @@ def create_mcp_server(name: str = "cat-and-mouse-mcp", version: str = "0.1.0") -
 
     @server.tool(
         name="write_coach_note",
-        description="Records a private entry to the Coach's tactical notebook (coach_memory.jsonl). Call this during evaluation to log key hypotheses, spatial deductions, mouse clustering, and observations for your future self across cycles. (Note: These are distinct from the actor's published standing orders in coaching_notes.md).",
+        description="Records a private entry to the Coach's tactical notebook (coach_memory.jsonl). Call this during evaluation to log key hypotheses, spatial deductions, mouse clustering, and observations for your future self across cycles. Supports linking specific transcript tick numbers (linked_ticks=[...]) to capture their contextual snapshots for future RAG recall. (Note: These are distinct from the actor's published standing orders in coaching_notes.md).",
     )
     async def write_coach_note(
         note: str,
         category: str = "tactical",
         tags: Optional[List[str]] = None,
         tick: Optional[int] = None,
+        linked_ticks: Optional[List[int]] = None,
     ) -> Dict[str, Any]:
-        """Save a coach memory note to disk."""
+        """Save a coach memory note to disk with optional linked transcript ticks."""
         start = time.perf_counter()
         record = store.append_coach_memory(
-            note=note, category=category, tags=tags, tick=tick
+            note=note, category=category, tags=tags, tick=tick, linked_ticks=linked_ticks
         )
         dur = round((time.perf_counter() - start) * 1000, 2)
         res = {"status": "saved", "memory": record}
@@ -289,11 +290,11 @@ def create_mcp_server(name: str = "cat-and-mouse-mcp", version: str = "0.1.0") -
             event_type="tool_call",
             level="success",
             tool="write_coach_note",
-            arguments={"note": note, "category": category, "tags": tags, "tick": tick},
+            arguments={"note": note, "category": category, "tags": tags, "tick": tick, "linked_ticks": linked_ticks},
             duration_ms=dur,
             status="ok",
             summary=f"write_coach_note ({dur}ms) [{category}] \"{preview}\"",
-            details={"arguments": {"note": note, "category": category, "tags": tags, "tick": tick}, "result": res},
+            details={"arguments": {"note": note, "category": category, "tags": tags, "tick": tick, "linked_ticks": linked_ticks}, "result": res},
         )
         return res
 
@@ -302,7 +303,6 @@ def create_mcp_server(name: str = "cat-and-mouse-mcp", version: str = "0.1.0") -
         description="Searches and retrieves historical entries from the Coach's tactical notebook (coach_memory.jsonl) across evaluation cycles.",
     )
     async def read_coach_notes(
-
         limit: Optional[int] = 10,
         category: Optional[str] = None,
         search: Optional[str] = None,
@@ -340,6 +340,7 @@ def create_mcp_server(name: str = "cat-and-mouse-mcp", version: str = "0.1.0") -
         note: Optional[str] = None,
         category: Optional[str] = None,
         tags: Optional[List[str]] = None,
+        linked_ticks: Optional[List[int]] = None,
     ) -> Dict[str, Any]:
         """Modify an existing coach memory note."""
         start = time.perf_counter()
@@ -348,6 +349,7 @@ def create_mcp_server(name: str = "cat-and-mouse-mcp", version: str = "0.1.0") -
             note=note,
             category=category,
             tags=tags,
+            linked_ticks=linked_ticks,
         )
         dur = round((time.perf_counter() - start) * 1000, 2)
         if record is None:
@@ -746,7 +748,10 @@ def create_mcp_app(server: Optional[MCPServer] = None):
         category = body.get("category", "tactical")
         tags = body.get("tags")
         tick = body.get("tick")
-        record = store.append_coach_memory(note=note, category=category, tags=tags, tick=tick)
+        linked_ticks = body.get("linked_ticks")
+        record = store.append_coach_memory(
+            note=note, category=category, tags=tags, tick=tick, linked_ticks=linked_ticks
+        )
         return JSONResponse({"ok": True, "memory": record})
 
     async def coach_notes_item_endpoint(request: Request) -> JSONResponse:
@@ -761,6 +766,7 @@ def create_mcp_app(server: Optional[MCPServer] = None):
                 note=body.get("note"),
                 category=body.get("category"),
                 tags=body.get("tags"),
+                linked_ticks=body.get("linked_ticks"),
             )
             if record is None:
                 return JSONResponse({"ok": False, "error": "Note not found"}, status_code=404)

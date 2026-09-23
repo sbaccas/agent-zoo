@@ -1442,7 +1442,7 @@
     if (!directives.length) {
       evalNotesContent.classList.add('eval-notes-empty');
       evalNotesContent.textContent =
-        'No coaching notes yet. The evaluator publishes its first set of standing orders once the interval above elapses.';
+        'No standing orders yet. The evaluator publishes its first set of standing orders once the interval above elapses.';
       return;
     }
 

@@ -499,12 +499,14 @@ async def write_coach_note(
     note: str,
     category: str = "tactical",
     tags: Optional[List[str]] = None,
+    linked_ticks: Optional[List[int]] = None,
 ) -> Dict[str, Any]:
     """Records a private entry to the Coach's tactical notebook (coach_memory.jsonl).
 
     Call this during evaluation to log key hypotheses, spatial deductions, mouse clustering,
-    or observations for your future self across cycles. Note: this is separate from the actor's
-    published standing orders in coaching_notes.md.
+    or observations for your future self across cycles. You can pass linked_ticks=[...] to attach
+    specific transcript ticks and their snapshots for memory retrieval. Note: this is separate
+    from the actor's published standing orders in coaching_notes.md.
     """
     mcp_url = os.environ.get("CAT_MCP_SERVER_URL") or os.environ.get("MCP_SERVER_URL") or "http://127.0.0.1:9050"
     if mcp_url:
@@ -513,14 +515,16 @@ async def write_coach_note(
             client = MCPClient(base_url=mcp_url)
             res = await client.call_tool(
                 "write_coach_note",
-                {"note": note, "category": category, "tags": tags},
+                {"note": note, "category": category, "tags": tags, "linked_ticks": linked_ticks},
             )
             if res.get("status") == "saved":
                 return res
         except Exception:
             pass
 
-    record = store.append_coach_memory(note=note, category=category, tags=tags)
+    record = store.append_coach_memory(
+        note=note, category=category, tags=tags, linked_ticks=linked_ticks
+    )
     return {"status": "saved", "memory": record}
 
 
