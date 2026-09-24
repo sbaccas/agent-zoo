@@ -58,6 +58,9 @@ document.addEventListener('DOMContentLoaded', () => {
   const CANVAS_PX = 360;
   const DASH = '—';
 
+  const urlParams = new URLSearchParams(window.location.search);
+  const activeSimId = urlParams.get('sim') || urlParams.get('simulation_id') || 'active';
+
   let currentTab = 'tabBoxscore';
   let activeEventFilter = 'all';
   let cachedEventsData = null;
@@ -159,7 +162,10 @@ document.addEventListener('DOMContentLoaded', () => {
      TAB 1: BOX SCORE LOGIC
      ============================================================ */
   function hasAttachedAgent(cat) {
-    return isNum(cat.model_control_pct);
+    if (!cat) return false;
+    const mode = cat.mode || cat.agent_mode;
+    if (['ws', 'http', 'adk_gemini'].includes(mode)) return true;
+    return isNum(cat.model_control_pct) || isNum(cat.decisions_by_model);
   }
 
   const SECTIONS = [
@@ -172,37 +178,42 @@ document.addEventListener('DOMContentLoaded', () => {
       ],
     },
     {
-      title: 'Slash & Combat',
+      title: 'Slashing & Combat',
       rows: [
-        { label: 'Swings', key: 'swings', dir: 'none', format: (v) => fmtInt(v), tip: 'total attack actions executed by this cat' },
-        { label: 'Hits', key: 'hits', dir: 'high', format: (v) => fmtInt(v), tip: 'attack actions that caught at least one prey in the blade rectangle' },
-        { label: 'Accuracy', key: 'accuracy_pct', dir: 'high', format: (v) => fmtPct(v), tip: 'hits / swings — share of attacks that connected' },
-        { label: 'Strike zone conversion', key: 'conversion_pct', dir: 'high', format: (v) => fmtPct(v), tip: 'kills / swings — share of attacks that resulted in a capture' },
-        { label: 'Whiffs', key: 'whiffs', dir: 'low', format: (v) => fmtInt(v), tip: 'swings that hit nothing (swings minus hits)' },
-        { label: 'Multi-kills', key: 'multikills', dir: 'high', format: (v) => fmtInt(v), tip: 'swings that caught two or more prey in the same strike' },
-        { label: 'Damage dealt', key: 'damage_dealt', dir: 'high', format: (v) => fmtInt(v), tip: 'total hit points subtracted from rivals and prey' },
-        { label: 'Lingering zone kills', key: 'zone_kills', dir: 'high', format: (v) => fmtInt(v), tip: 'prey killed by stepping into the lingering blade zone after the swing tick' },
+        { label: 'Slash attempts', key: 'slash_attempts', dir: 'high', format: (v) => fmtInt(v), tip: 'total attack actions executed by this cat' },
+        { label: 'Hits (landed)', key: 'landed_slashes', dir: 'high', format: (v) => fmtInt(v), tip: 'attack actions that caught at least one prey in the blade rectangle or lingering zone' },
+        { label: 'Slash accuracy', key: 'slash_accuracy', dir: 'high', format: (v) => fmtPct(v), tip: 'landed slashes / slash attempts. A slash counts as landed if it killed at any point in its lethal window' },
+        { label: 'Whiffs', key: 'whiffs', dir: 'low', format: (v) => fmtInt(v), tip: 'slash attempts - landed slashes' },
+        { label: 'Multi-kills', key: 'multi_kills', dir: 'high', format: (v) => fmtInt(v), tip: 'swings that captured 2 or more mice at once' },
+        { label: 'Strike zone chances', key: 'zone_chances', dir: 'high', format: (v) => fmtInt(v), tip: 'ticks with prey inside this cat\'s slash AoE range' },
+        { label: 'Strike zone conversion', key: 'zone_conversion', dir: 'high', format: (v) => fmtPct(v), tip: 'strike-zone slash attempts / strike-zone chances' },
+        { label: 'Zone chances declined', key: 'zone_declined', dir: 'low', format: (v) => fmtInt(v), tip: 'strike-zone chances - strike-zone slash attempts' },
       ],
     },
     {
       title: 'Movement & Positioning',
       rows: [
-        { label: 'Tiles run', key: 'tiles_run', dir: 'none', format: (v) => fmtInt(v), tip: 'total steps taken since tracking began' },
+        { label: 'Tiles run', key: 'tiles_run', dir: 'high', format: (v) => fmtInt(v), tip: 'total tiles of distance travelled' },
+        { label: 'Ground covered', key: 'ground_covered', dir: 'high', format: (v) => fmtPct(v), tip: 'unique tiles visited / total arena tiles' },
         { label: 'Unique tiles visited', key: 'unique_tiles', dir: 'high', format: (v) => fmtInt(v), tip: 'distinct arena coordinates this cat has set foot on' },
-        { label: 'Confinement', key: 'confinement_pct', dir: 'low', format: (v) => fmtPct(v), tip: 'share of elapsed ticks spent in this cat\'s most-visited 10x10 block' },
-        { label: 'Ticks per tile', key: 'ticks_per_tile', dir: 'low', format: (v) => fmtFloat(v, 2), tip: 'elapsed ticks / tiles run — lower is more active' },
-        { label: 'Wall bonks', key: 'wall_bonks', dir: 'low', format: (v) => fmtInt(v), tip: 'attempted moves into arena boundary walls' },
-        { label: 'Corner trapped', key: 'corner_trapped_ticks', dir: 'low', format: (v) => fmtInt(v), tip: 'ticks spent within 2 tiles of an arena corner with no escape' },
+        { label: 'Speed (tiles/tick)', key: 'speed_tiles_per_tick', dir: 'high', format: (v) => fmtFloat(v, 3), tip: 'tiles run / ticks elapsed' },
+        { label: 'Ticks per tile', key: 'ticks_per_tile', dir: 'low', format: (v) => fmtFloat(v, 2), tip: '(ticks free + ticks locked) / unique tiles — how long the cat loiters per tile' },
+        { label: 'Moves (1-tile)', key: 'moves', dir: 'none', format: (v) => fmtInt(v), tip: 'single-tile steps taken' },
+        { label: 'Lunges (2-tile)', key: 'lunges', dir: 'none', format: (v) => fmtInt(v), tip: 'two-tile dashes taken' },
+        { label: 'Lunge share', key: 'lunge_share', dir: 'high', format: (v) => fmtPct(v), tip: 'lunges / (moves + lunges)' },
+        { label: 'Wall bonks', key: 'wall_bonks', dir: 'low', format: (v) => fmtInt(v), tip: 'moves or lunges that clipped an arena boundary' },
+        { label: 'Prey in sight', key: 'prey_in_sight_pct', dir: 'high', format: (v) => fmtPct(v), tip: 'ticks with prey in the vision box / ticks free' },
+        { label: 'Locked recovery', key: 'locked_pct', dir: 'low', format: (v) => fmtPct(v), tip: 'ticks locked in attack/lunge recovery / (ticks free + ticks locked)' },
       ],
     },
     {
       title: 'Control',
       rows: [
-        { label: 'Autonomous decisions', key: 'decisions_autonomous', dir: 'none', eligible: hasAttachedAgent, format: (v) => fmtInt(v), tip: 'ticks played by the cat\'s configured LLM agent' },
-        { label: 'Heuristic fallbacks', key: 'decisions_fallback', dir: 'low', eligible: hasAttachedAgent, format: (v) => fmtInt(v), tip: 'ticks where the model timed out or errored and the reflex heuristic played instead' },
-        { label: 'Stale answers', key: 'decisions_stale', dir: 'low', eligible: hasAttachedAgent, format: (v) => fmtInt(v), tip: 'decisions returned by the model after the simulation had already advanced' },
-        { label: 'Deliberation timeouts', key: 'decisions_timeout', dir: 'low', eligible: hasAttachedAgent, format: (v) => fmtInt(v), tip: 'ticks where the model exceeded its deliberation time budget' },
-        { label: 'Model control %', key: 'model_control_pct', dir: 'high', eligible: hasAttachedAgent, format: (v) => fmtPct(v), tip: 'autonomous decisions / total decisions — share of ticks truly driven by the model' },
+        { label: 'Model control %', key: 'model_control_pct', dir: 'high', eligible: hasAttachedAgent, format: (v) => fmtPct(v), tip: 'decisions by model / (decisions by model + fallbacks) — share of ticks truly driven by the model' },
+        { label: 'Decisions by model', key: 'decisions_by_model', dir: 'high', eligible: hasAttachedAgent, format: (v) => fmtInt(v), tip: 'ticks played by the cat\'s configured LLM agent' },
+        { label: 'Reflex decisions', key: 'decisions_by_agent_reflex', dir: 'none', eligible: hasAttachedAgent, format: (v) => fmtInt(v), tip: 'ticks where agent reflex fast-path answered' },
+        { label: 'Heuristic fallbacks', key: 'decisions_by_fallback', dir: 'low', eligible: hasAttachedAgent, format: (v) => fmtInt(v), tip: 'ticks where no usable answer arrived and the reflex heuristic played instead' },
+        { label: 'Stale answers', key: 'decisions_stale', dir: 'low', eligible: hasAttachedAgent, format: (v) => fmtInt(v), tip: 'answers that arrived after the simulation had already advanced' },
       ],
     },
   ];
@@ -296,7 +307,8 @@ document.addEventListener('DOMContentLoaded', () => {
     if (cat.position && isNum(cat.position.x) && isNum(cat.position.y)) {
       const pos = document.createElement('div');
       pos.className = 'boxscore-cat-pos';
-      pos.textContent = `(${cat.position.x}, ${cat.position.y}) · ${cat.hp || 0} HP`;
+      const hpVal = (cat.hp !== undefined && cat.hp !== null) ? cat.hp : (cat.alive ? 100 : 0);
+      pos.textContent = `(${cat.position.x}, ${cat.position.y}) · ${hpVal} HP`;
       th.appendChild(pos);
     }
     return th;
@@ -359,7 +371,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   async function loadBoxScore() {
     try {
-      const resp = await fetch('/api/simulations/active/boxscore');
+      const resp = await fetch(`/api/simulations/${encodeURIComponent(activeSimId)}/boxscore`);
       if (resp.status === 404) {
         setSyncIdle('No Active Game');
         clearChildren(boxscoreMeta);
@@ -533,7 +545,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const params = new URLSearchParams({ grid });
       if (last) params.set('last', last);
 
-      const resp = await fetch(`/api/simulations/active/heatmap?${params.toString()}`);
+      const resp = await fetch(`/api/simulations/${encodeURIComponent(activeSimId)}/heatmap?${params.toString()}`);
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
 
       const data = await resp.json();
@@ -597,7 +609,7 @@ document.addEventListener('DOMContentLoaded', () => {
   if (btnCopyDigest) {
     btnCopyDigest.addEventListener('click', async () => {
       try {
-        const resp = await fetch('/api/simulations/active/heatmap.txt');
+        const resp = await fetch(`/api/simulations/${encodeURIComponent(activeSimId)}/heatmap.txt`);
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
         const text = await resp.text();
         await navigator.clipboard.writeText(text);
@@ -692,7 +704,7 @@ document.addEventListener('DOMContentLoaded', () => {
   async function replayToTick(tick) {
     try {
       showFeedback(`Rewinding board to tick ${tick}...`);
-      const resp = await fetch('/api/simulations/active/seek', {
+      const resp = await fetch(`/api/simulations/${encodeURIComponent(activeSimId)}/seek`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ tick: Number(tick) }),
@@ -839,7 +851,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   async function loadEvents() {
     try {
-      const resp = await fetch('/api/simulations/active/events');
+      const resp = await fetch(`/api/simulations/${encodeURIComponent(activeSimId)}/events`);
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
       const data = await resp.json();
       cachedEventsData = data;
@@ -959,7 +971,7 @@ document.addEventListener('DOMContentLoaded', () => {
   setInterval(() => {
     refreshActiveTab();
     if (currentTab !== 'tabEvents') {
-      fetch('/api/simulations/active/events')
+      fetch(`/api/simulations/${encodeURIComponent(activeSimId)}/events`)
         .then((r) => (r.ok ? r.json() : null))
         .then((d) => {
           if (d && eventCountBadge) {

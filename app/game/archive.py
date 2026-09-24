@@ -166,7 +166,7 @@ def cat_runtime_dir(agent_id: Optional[str] = None) -> Path:
 
     if override:
         return Path(override)
-    return tmp_base / "cm_runtime"
+    return REPO_ROOT / "actors" / "cat" / "runtime"
 
 
 def _jsonable(value: Any) -> Any:

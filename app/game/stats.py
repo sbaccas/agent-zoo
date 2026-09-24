@@ -322,6 +322,8 @@ class StatsTracker:
                 "id": cat.id,
                 "mode": entity_manager.get_agent_mode(cat.id),
                 "alive": cat.alive,
+                "hp": getattr(cat, "hp", 100),
+                "max_hp": getattr(cat, "max_hp", 100),
                 "position": {"x": cat.position.x, "y": cat.position.y},
 
                 "kills": s.kills,
@@ -329,15 +331,22 @@ class StatsTracker:
                 "tiles_per_kill": _rate(s.tiles_run, s.kills),
 
                 "slash_attempts": s.slash_attempts,
+                "swings": s.slash_attempts,
                 "slash_accuracy": _rate(s.landed_slashes, s.slash_attempts),
+                "accuracy_pct": _rate(s.landed_slashes, s.slash_attempts),
+                "landed_slashes": s.landed_slashes,
+                "hits": s.landed_slashes,
                 "whiffs": s.slash_attempts - s.landed_slashes,
                 "multi_kills": s.multi_kills,
+                "multikills": s.multi_kills,
 
                 "zone_chances": s.zone_chances,
                 "zone_conversion": _rate(s.zone_attempts, s.zone_chances),
+                "conversion_pct": _rate(s.zone_attempts, s.zone_chances),
                 "zone_declined": s.zone_chances - s.zone_attempts,
 
                 "tiles_run": s.tiles_run,
+                "distance_traveled": s.tiles_run,
                 "unique_tiles": unique_tiles,
                 "ground_covered": unique_tiles / arena_tiles,
                 "speed_tiles_per_tick": _rate(s.tiles_run, elapsed),
@@ -359,6 +368,7 @@ class StatsTracker:
                 # Decision provenance. Null for a cat with no agent attached:
                 # there was no model to answer, so there is no share to report.
                 "decisions_by_model": s.decisions_by_model,
+                "decisions_autonomous": s.decisions_by_model,
                 "decisions_by_agent_reflex": s.decisions_by_agent_reflex,
                 "decisions_by_fallback": s.decisions_by_fallback,
                 "decisions_stale": s.decisions_stale,

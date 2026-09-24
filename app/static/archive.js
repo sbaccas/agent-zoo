@@ -379,7 +379,7 @@
           accPct,
           convPct,
           c.whiffs ?? 0,
-          c.distance_traveled ?? 0
+          c.tiles_run ?? c.distance_traveled ?? 0
         ].forEach(val => {
           const td = document.createElement('td');
           td.textContent = String(val);

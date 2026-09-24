@@ -130,3 +130,61 @@ async def test_mcp_server_routes_coach_notes_by_cat_id(isolated_dirs):
 
     assert "Cat-2 specific note" in notes2
     assert "Cat-1 specific note" not in notes2
+
+    # Reading with cat_id="all" returns notes from both cats
+    res_all = await server.call_tool("read_coach_notes", {"cat_id": "all"})
+    all_notes = [m["note"] for m in res_all.structured_content["result"].get("memories", [])]
+    assert "Cat-1 specific note" in all_notes
+    assert "Cat-2 specific note" in all_notes
+
+    # MCP resources for cat-1 and cat-2
+    res_r_cat1 = await server.read_resource("cm://coach/cat-1/notes")
+    res_r_cat2 = await server.read_resource("cm://coach/cat-2/notes")
+    res_r_all = await server.read_resource("cm://coach/notes")
+
+    import json
+    p1 = json.loads(res_r_cat1[0].content)
+    p2 = json.loads(res_r_cat2[0].content)
+    pall = json.loads(res_r_all[0].content)
+
+    assert p1["count"] == 1
+    assert p1["memories"][0]["note"] == "Cat-1 specific note"
+    assert p2["count"] == 1
+    assert p2["memories"][0]["note"] == "Cat-2 specific note"
+    assert pall["count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_mcp_rest_endpoint_coach_notes_multi_agent(isolated_dirs):
+    from starlette.testclient import TestClient
+    from app.mcp.server import create_mcp_app
+
+    store.append_coach_memory("Cat 1 stealth plan", category="tactical", agent_id="cat-1")
+    store.append_coach_memory("Cat 2 pincer plan", category="tactical", agent_id="cat-2")
+
+    app = create_mcp_app()
+    with TestClient(app) as client:
+        # Default / all cats
+        resp_all = client.get("/api/mcp/coach-notes")
+        assert resp_all.status_code == 200
+        data_all = resp_all.json()
+        assert data_all["ok"] is True
+        assert data_all["counts"]["all"] == 2
+        assert data_all["counts"]["cat-1"] == 1
+        assert data_all["counts"]["cat-2"] == 1
+        assert len(data_all["memories"]) == 2
+
+        # Cat 1 only
+        resp_c1 = client.get("/api/mcp/coach-notes?cat_id=cat-1")
+        assert resp_c1.status_code == 200
+        data_c1 = resp_c1.json()
+        assert len(data_c1["memories"]) == 1
+        assert data_c1["memories"][0]["note"] == "Cat 1 stealth plan"
+
+        # Cat 2 only
+        resp_c2 = client.get("/api/mcp/coach-notes?cat_id=cat-2")
+        assert resp_c2.status_code == 200
+        data_c2 = resp_c2.json()
+        assert len(data_c2["memories"]) == 1
+        assert data_c2["memories"][0]["note"] == "Cat 2 pincer plan"
+

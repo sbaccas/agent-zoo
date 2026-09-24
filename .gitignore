@@ -46,6 +46,9 @@ htmlcov/
 notes.sh
 
 # Cat agent runtime scratch (per-game transcript & coaching notes)
+/runtime
+runtime/
+runtime_*/
 actors/cat/runtime/
 actors/cat/runtime_*/
 cm_runtime*/

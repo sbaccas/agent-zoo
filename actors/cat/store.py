@@ -23,21 +23,23 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger("cat_agent")
 
+LOCAL_RUNTIME_DIR = Path(__file__).parent / "runtime"
+
+
 def _resolve_runtime_dir(agent_id: Optional[str] = None) -> Path:
     override = os.environ.get("CAT_AGENT_RUNTIME_DIR")
     if override:
         return Path(override)
     target_id = agent_id or os.environ.get("CAT_ID")
-    tmp_base = Path(tempfile.gettempdir())
     if not target_id:
         port = os.environ.get("PORT")
         if port == "8003":
             target_id = "cat-2"
         elif port == "8001":
             target_id = "cat-1"
-        else:
-            return tmp_base / "cm_runtime"
-    return tmp_base / f"cm_runtime_{target_id}"
+    if not target_id or target_id == "cat-1":
+        return LOCAL_RUNTIME_DIR
+    return Path(__file__).parent / f"runtime_{target_id}"
 
 
 RUNTIME_DIR = _resolve_runtime_dir()
@@ -52,6 +54,35 @@ RUN_CONFIG_PATH = RUNTIME_DIR / "run_config.json"
 def _ensure_runtime_dir(target_dir: Optional[Path] = None) -> None:
     d = target_dir or RUNTIME_DIR
     d.mkdir(parents=True, exist_ok=True)
+    if not os.environ.get("CAT_AGENT_RUNTIME_DIR"):
+        LOCAL_RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _mirror_to_local_runtime(filename: str, content: str, mode: str = "w", agent_id: Optional[str] = None) -> None:
+    """Mirrors runtime files directly into the local repository directory so they are always visible."""
+    if os.environ.get("CAT_AGENT_RUNTIME_DIR"):
+        return
+    try:
+        LOCAL_RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+        target = LOCAL_RUNTIME_DIR / filename
+        if mode == "a":
+            with target.open("a", encoding="utf-8") as fh:
+                fh.write(content)
+        else:
+            target.write_text(content, encoding="utf-8")
+
+        # Also write to temp folder for external tool compatibility
+        tmp_target_id = agent_id or os.environ.get("CAT_ID") or "cat-1"
+        tmp_dir = Path(tempfile.gettempdir()) / f"cm_runtime_{tmp_target_id}"
+        tmp_dir.mkdir(parents=True, exist_ok=True)
+        tmp_target = tmp_dir / filename
+        if mode == "a":
+            with tmp_target.open("a", encoding="utf-8") as fh:
+                fh.write(content)
+        else:
+            tmp_target.write_text(content, encoding="utf-8")
+    except Exception as exc:
+        logger.debug("Failed mirroring to local runtime: %s", exc)
 
 
 def set_agent_id(agent_id: str) -> None:
@@ -59,7 +90,7 @@ def set_agent_id(agent_id: str) -> None:
     global RUNTIME_DIR, TRANSCRIPT_PATH, COACHING_NOTES_PATH, NOTICE_BOARD_PATH, COACH_MEMORY_PATH, PROMPTS_PATH, RUN_CONFIG_PATH
     if os.environ.get("CAT_AGENT_RUNTIME_DIR"):
         return  # explicit env override or test fixture takes precedence
-    RUNTIME_DIR = Path(tempfile.gettempdir()) / f"cm_runtime_{agent_id}"
+    RUNTIME_DIR = LOCAL_RUNTIME_DIR if (not agent_id or agent_id == "cat-1") else (Path(__file__).parent / f"runtime_{agent_id}")
     _ensure_runtime_dir()
     TRANSCRIPT_PATH = RUNTIME_DIR / "transcript.jsonl"
     COACHING_NOTES_PATH = RUNTIME_DIR / "coaching_notes.md"
@@ -73,8 +104,13 @@ def get_cat_paths(agent_id: str) -> Dict[str, Path]:
     """Returns file paths for a specific cat agent."""
     if os.environ.get("CAT_AGENT_RUNTIME_DIR"):
         cat_dir = Path(os.environ["CAT_AGENT_RUNTIME_DIR"])
+        if agent_id and (Path(os.environ["CAT_AGENT_RUNTIME_DIR"]) / agent_id).is_dir():
+            cat_dir = Path(os.environ["CAT_AGENT_RUNTIME_DIR"]) / agent_id
     else:
-        cat_dir = Path(tempfile.gettempdir()) / f"cm_runtime_{agent_id}"
+        if not agent_id or agent_id == "cat-1":
+            cat_dir = LOCAL_RUNTIME_DIR
+        else:
+            cat_dir = Path(__file__).parent / f"runtime_{agent_id}"
     _ensure_runtime_dir(cat_dir)
     return {
         "runtime_dir": cat_dir,
@@ -148,8 +184,11 @@ def append_tick(exchange: Dict[str, Any]) -> None:
     try:
         _ensure_runtime_dir()
         record = _compact_record(exchange)
+        line = json.dumps(record, separators=(",", ":")) + "\n"
         with TRANSCRIPT_PATH.open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps(record, separators=(",", ":")) + "\n")
+            fh.write(line)
+        if not os.environ.get("CAT_AGENT_RUNTIME_DIR") and TRANSCRIPT_PATH.resolve() != (LOCAL_RUNTIME_DIR / "transcript.jsonl").resolve():
+            _mirror_to_local_runtime("transcript.jsonl", line, mode="a")
     except Exception as exc:
         # Transcript logging is diagnostic. It must never stall or crash a tick.
         logger.warning("Failed to append tick to transcript: %s", exc)
@@ -249,8 +288,11 @@ def append_prompt(record: Dict[str, Any]) -> None:
     """
     try:
         _ensure_runtime_dir()
+        line = json.dumps(record, separators=(",", ":")) + "\n"
         with PROMPTS_PATH.open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps(record, separators=(",", ":")) + "\n")
+            fh.write(line)
+        if not os.environ.get("CAT_AGENT_RUNTIME_DIR") and PROMPTS_PATH.resolve() != (LOCAL_RUNTIME_DIR / "prompts.jsonl").resolve():
+            _mirror_to_local_runtime("prompts.jsonl", line, mode="a")
     except Exception as exc:
         # Same contract as the transcript: diagnostics never break a tick.
         logger.warning("Failed to append prompt record: %s", exc)
@@ -319,7 +361,10 @@ def write_run_config(config: Dict[str, Any]) -> None:
         _ensure_runtime_dir()
         payload = dict(config)
         payload["written_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        RUN_CONFIG_PATH.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        content = json.dumps(payload, indent=2)
+        RUN_CONFIG_PATH.write_text(content, encoding="utf-8")
+        if not os.environ.get("CAT_AGENT_RUNTIME_DIR") and RUN_CONFIG_PATH.resolve() != (LOCAL_RUNTIME_DIR / "run_config.json").resolve():
+            _mirror_to_local_runtime("run_config.json", content, mode="w")
     except Exception as exc:
         logger.warning("Failed to write run config: %s", exc)
 
@@ -334,7 +379,10 @@ def write_coaching_notes(notes: str, tick_range: Optional[str] = None, agent_id:
         if tick_range:
             header += f" | ticks {tick_range}"
         header += " -->\n"
-        target_path.write_text(header + notes.strip() + "\n", encoding="utf-8")
+        full_content = header + notes.strip() + "\n"
+        target_path.write_text(full_content, encoding="utf-8")
+        if not os.environ.get("CAT_AGENT_RUNTIME_DIR") and (not agent_id or agent_id == "cat-1") and target_path.resolve() != (LOCAL_RUNTIME_DIR / "coaching_notes.md").resolve():
+            _mirror_to_local_runtime("coaching_notes.md", full_content, mode="w", agent_id=agent_id)
     except Exception as exc:
         logger.warning("Failed to write coaching notes: %s", exc)
 
@@ -381,7 +429,10 @@ def write_notice_board(content: str) -> None:
     """Writes global notice board content for all agents."""
     _ensure_runtime_dir()
     try:
-        NOTICE_BOARD_PATH.write_text(content.strip(), encoding="utf-8")
+        text = content.strip()
+        NOTICE_BOARD_PATH.write_text(text, encoding="utf-8")
+        if not os.environ.get("CAT_AGENT_RUNTIME_DIR") and NOTICE_BOARD_PATH.resolve() != (LOCAL_RUNTIME_DIR / "notice_board.md").resolve():
+            _mirror_to_local_runtime("notice_board.md", text, mode="w")
     except Exception as exc:
         logger.warning("Failed to write notice board: %s", exc)
 
@@ -427,6 +478,25 @@ def get_transcript_ticks_snapshot(ticks: List[int], agent_id: Optional[str] = No
     return snapshots
 
 
+def list_known_cat_ids() -> List[str]:
+    """Discovers available cat agent IDs across active runtime directories."""
+    if os.environ.get("CAT_AGENT_RUNTIME_DIR"):
+        return [os.environ.get("CAT_ID") or "cat-1"]
+    tmp_base = Path(tempfile.gettempdir())
+    found: List[str] = []
+    for default_id in ["cat-1", "cat-2"]:
+        found.append(default_id)
+    try:
+        for p in tmp_base.glob("cm_runtime_*"):
+            if p.is_dir():
+                cid = p.name[len("cm_runtime_") :]
+                if cid and cid not in ("all", "*") and cid not in found:
+                    found.append(cid)
+    except Exception:
+        pass
+    return found
+
+
 def append_coach_memory(
     note: str,
     category: str = "tactical",
@@ -442,11 +512,13 @@ def append_coach_memory(
     unique_suffix = uuid.uuid4().hex[:8]
     clean_ticks = [int(t) for t in linked_ticks] if linked_ticks else []
     tick_snapshots = get_transcript_ticks_snapshot(clean_ticks, agent_id=agent_id) if clean_ticks else []
+    resolved_cat_id = agent_id or os.environ.get("CAT_ID") or "cat-1"
 
     record = {
         "id": f"mem-{int(time.time() * 1000)}-{unique_suffix}",
         "timestamp": now_str,
         "tick": tick,
+        "cat_id": resolved_cat_id,
         "category": category,
         "tags": tags or [],
         "note": note.strip(),
@@ -455,8 +527,11 @@ def append_coach_memory(
     }
 
     try:
+        line = json.dumps(record, separators=(",", ":")) + "\n"
         with target_path.open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps(record, separators=(",", ":")) + "\n")
+            fh.write(line)
+        if not os.environ.get("CAT_AGENT_RUNTIME_DIR") and (not agent_id or agent_id == "cat-1") and target_path.resolve() != (LOCAL_RUNTIME_DIR / "coach_memory.jsonl").resolve():
+            _mirror_to_local_runtime("coach_memory.jsonl", line, mode="a", agent_id=agent_id)
     except Exception as exc:
         logger.warning("Failed to append coach memory: %s", exc)
     return record
@@ -469,10 +544,79 @@ def read_coach_memories(
     agent_id: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """Returns stored coach memories, newest first, with optional filtering."""
+    # When agent_id is "all", or when agent_id is None and default COACH_MEMORY_PATH doesn't exist
+    if agent_id in ("all", "*") or (
+        agent_id is None and not os.environ.get("CAT_AGENT_RUNTIME_DIR") and not COACH_MEMORY_PATH.exists()
+    ):
+        records: List[Dict[str, Any]] = []
+        seen_ids = set()
+        if COACH_MEMORY_PATH.exists():
+            try:
+                with COACH_MEMORY_PATH.open("r", encoding="utf-8") as fh:
+                    for line in fh:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            rec = json.loads(line)
+                            if rec.get("id") and rec["id"] not in seen_ids:
+                                seen_ids.add(rec["id"])
+                                if "cat_id" not in rec:
+                                    rec["cat_id"] = "cat-1"
+                                records.append(rec)
+                        except json.JSONDecodeError:
+                            continue
+            except Exception as exc:
+                logger.warning("Failed to read default coach memory: %s", exc)
+
+        for cid in list_known_cat_ids():
+            cpath = get_cat_paths(cid)["coach_memory"]
+            if not cpath.exists():
+                continue
+            try:
+                with cpath.open("r", encoding="utf-8") as fh:
+                    for line in fh:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            rec = json.loads(line)
+                            if rec.get("id") and rec["id"] not in seen_ids:
+                                seen_ids.add(rec["id"])
+                                if "cat_id" not in rec:
+                                    rec["cat_id"] = cid
+                                records.append(rec)
+                        except json.JSONDecodeError:
+                            continue
+            except Exception as exc:
+                logger.warning("Failed to read coach memory for %s: %s", cid, exc)
+
+        if category:
+            records = [r for r in records if r.get("category") == category]
+        if search:
+            s_lower = search.lower()
+            records = [
+                r
+                for r in records
+                if s_lower in r.get("note", "").lower()
+                or any(s_lower in str(t).lower() for t in r.get("tags", []))
+            ]
+
+        def _sort_key(r):
+            ts = r.get("timestamp") or ""
+            tk = r.get("tick") or 0
+            mid = r.get("id") or ""
+            return (ts, tk, mid)
+
+        records.sort(key=_sort_key, reverse=True)
+        if limit is not None and limit > 0:
+            records = records[:limit]
+        return records
+
     target_path = get_cat_paths(agent_id)["coach_memory"] if agent_id else COACH_MEMORY_PATH
     if not target_path.exists():
         return []
-    records: List[Dict[str, Any]] = []
+    records = []
     try:
         with target_path.open("r", encoding="utf-8") as fh:
             for line in fh:
@@ -480,7 +624,10 @@ def read_coach_memories(
                 if not line:
                     continue
                 try:
-                    records.append(json.loads(line))
+                    rec = json.loads(line)
+                    if "cat_id" not in rec:
+                        rec["cat_id"] = agent_id or "cat-1"
+                    records.append(rec)
                 except json.JSONDecodeError:
                     continue
     except Exception as exc:
@@ -513,75 +660,101 @@ def update_coach_memory(
     agent_id: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
     """Updates an existing coach memory record by ID. Returns updated record or None if not found."""
-    target_path = get_cat_paths(agent_id)["coach_memory"] if agent_id else COACH_MEMORY_PATH
-    if not target_path.exists():
-        return None
-    records: List[Dict[str, Any]] = []
-    updated_record: Optional[Dict[str, Any]] = None
     clean_ticks = [int(t) for t in linked_ticks] if linked_ticks is not None else None
 
-    try:
-        with target_path.open("r", encoding="utf-8") as fh:
-            for line in fh:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    rec = json.loads(line)
-                    if rec.get("id") == memory_id:
-                        if note is not None:
-                            rec["note"] = note.strip()
-                        if category is not None:
-                            rec["category"] = category
-                        if tags is not None:
-                            rec["tags"] = tags
-                        if clean_ticks is not None:
-                            rec["linked_ticks"] = clean_ticks
-                            rec["tick_snapshots"] = get_transcript_ticks_snapshot(clean_ticks, agent_id=agent_id)
-                        rec["updated_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-                        updated_record = rec
-                    records.append(rec)
-                except json.JSONDecodeError:
-                    continue
-        if updated_record is not None:
-            with target_path.open("w", encoding="utf-8") as fh:
-                for rec in records:
-                    fh.write(json.dumps(rec, separators=(",", ":")) + "\n")
-        return updated_record
-    except Exception as exc:
-        logger.warning("Failed to update coach memory %s: %s", memory_id, exc)
-        return None
+    def _try_update_in_file(path: Path, cat_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        if not path.exists():
+            return None
+        recs: List[Dict[str, Any]] = []
+        updated: Optional[Dict[str, Any]] = None
+        try:
+            with path.open("r", encoding="utf-8") as fh:
+                for line in fh:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        rec = json.loads(line)
+                        if rec.get("id") == memory_id:
+                            if note is not None:
+                                rec["note"] = note.strip()
+                            if category is not None:
+                                rec["category"] = category
+                            if tags is not None:
+                                rec["tags"] = tags
+                            if clean_ticks is not None:
+                                rec["linked_ticks"] = clean_ticks
+                                rec["tick_snapshots"] = get_transcript_ticks_snapshot(clean_ticks, agent_id=cat_id)
+                            rec["updated_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                            if "cat_id" not in rec and cat_id:
+                                rec["cat_id"] = cat_id
+                            updated = rec
+                        recs.append(rec)
+                    except json.JSONDecodeError:
+                        continue
+            if updated is not None:
+                with path.open("w", encoding="utf-8") as fh:
+                    for r in recs:
+                        fh.write(json.dumps(r, separators=(",", ":")) + "\n")
+            return updated
+        except Exception as exc:
+            logger.warning("Failed to update coach memory %s in %s: %s", memory_id, path, exc)
+            return None
+
+    if agent_id and agent_id not in ("all", "*"):
+        return _try_update_in_file(get_cat_paths(agent_id)["coach_memory"], agent_id)
+
+    res = _try_update_in_file(COACH_MEMORY_PATH, "cat-1")
+    if res is not None:
+        return res
+
+    for cid in list_known_cat_ids():
+        res = _try_update_in_file(get_cat_paths(cid)["coach_memory"], cid)
+        if res is not None:
+            return res
+    return None
 
 
 def delete_coach_memory(memory_id: str, agent_id: Optional[str] = None) -> bool:
     """Deletes a coach memory record by ID. Returns True if deleted, False otherwise."""
-    target_path = get_cat_paths(agent_id)["coach_memory"] if agent_id else COACH_MEMORY_PATH
-    if not target_path.exists():
-        return False
-    records: List[Dict[str, Any]] = []
-    found = False
-    try:
-        with target_path.open("r", encoding="utf-8") as fh:
-            for line in fh:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    rec = json.loads(line)
-                    if rec.get("id") == memory_id:
-                        found = True
+    def _try_delete_in_file(path: Path) -> bool:
+        if not path.exists():
+            return False
+        recs: List[Dict[str, Any]] = []
+        found = False
+        try:
+            with path.open("r", encoding="utf-8") as fh:
+                for line in fh:
+                    line = line.strip()
+                    if not line:
                         continue
-                    records.append(rec)
-                except json.JSONDecodeError:
-                    continue
-        if found:
-            with target_path.open("w", encoding="utf-8") as fh:
-                for rec in records:
-                    fh.write(json.dumps(rec, separators=(",", ":")) + "\n")
-        return found
-    except Exception as exc:
-        logger.warning("Failed to delete coach memory %s: %s", memory_id, exc)
-        return False
+                    try:
+                        rec = json.loads(line)
+                        if rec.get("id") == memory_id:
+                            found = True
+                            continue
+                        recs.append(rec)
+                    except json.JSONDecodeError:
+                        continue
+            if found:
+                with path.open("w", encoding="utf-8") as fh:
+                    for r in recs:
+                        fh.write(json.dumps(r, separators=(",", ":")) + "\n")
+            return found
+        except Exception as exc:
+            logger.warning("Failed to delete coach memory %s in %s: %s", memory_id, path, exc)
+            return False
+
+    if agent_id and agent_id not in ("all", "*"):
+        return _try_delete_in_file(get_cat_paths(agent_id)["coach_memory"])
+
+    if _try_delete_in_file(COACH_MEMORY_PATH):
+        return True
+
+    for cid in list_known_cat_ids():
+        if _try_delete_in_file(get_cat_paths(cid)["coach_memory"]):
+            return True
+    return False
 
 
 def reset_coach_memories(agent_id: Optional[str] = None) -> None:

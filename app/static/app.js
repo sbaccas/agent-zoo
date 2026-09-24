@@ -2072,8 +2072,9 @@
   // /settings and /boxscore with FileResponse and ignores the query string, and
   // neither page reads its own query params, so the parameter is inert beyond
   // defeating the no-op-focus path.
-  function popoutUrl(path) {
-    return `${path}?v=${Date.now()}`;
+  function popoutUrl(path, simId = null) {
+    const targetSim = simId || currentSimId || 'active';
+    return `${path}?sim=${encodeURIComponent(targetSim)}&v=${Date.now()}`;
   }
 
   function openSettingsWindow() {

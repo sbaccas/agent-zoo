@@ -369,13 +369,13 @@ def create_mcp_server(name: str = "cat-and-mouse-mcp", version: str = "0.1.0") -
 
     @server.tool(
         name="read_coach_notes",
-        description="Searches and retrieves historical entries from the Coach's tactical notebook (coach_memory.jsonl) across evaluation cycles.",
+        description="Searches and retrieves historical entries from the Coach's tactical notebook (coach_memory.jsonl) across evaluation cycles. Supports filtering by cat_id ('all' by default, 'cat-1', or 'cat-2').",
     )
     async def read_coach_notes(
         limit: Optional[int] = 10,
         category: Optional[str] = None,
         search: Optional[str] = None,
-        cat_id: Optional[str] = "cat-1",
+        cat_id: Optional[str] = "all",
     ) -> Dict[str, Any]:
         """Recall saved coach memories with optional filtering."""
         start = time.perf_counter()
@@ -385,10 +385,12 @@ def create_mcp_server(name: str = "cat-and-mouse-mcp", version: str = "0.1.0") -
         dur = round((time.perf_counter() - start) * 1000, 2)
         res = {
             "available": True,
+            "cat_id": cat_id,
             "count": len(memories),
             "memories": memories,
         }
         cat_str = category if category else "all"
+        target_agent = cat_id or "all"
         get_telemetry().record_event(
             event_type="tool_call",
             level="success",
@@ -396,7 +398,7 @@ def create_mcp_server(name: str = "cat-and-mouse-mcp", version: str = "0.1.0") -
             arguments={"limit": limit, "category": category, "search": search, "cat_id": cat_id},
             duration_ms=dur,
             status="ok",
-            summary=f"read_coach_notes ({dur}ms) [{cat_id or 'cat-1'}] -> {len(memories)} notes (category={cat_str})",
+            summary=f"read_coach_notes ({dur}ms) [{target_agent}] -> {len(memories)} notes (category={cat_str})",
             details={"arguments": {"limit": limit, "category": category, "search": search, "cat_id": cat_id}, "result": res},
         )
         return res
@@ -411,7 +413,7 @@ def create_mcp_server(name: str = "cat-and-mouse-mcp", version: str = "0.1.0") -
         category: Optional[str] = None,
         tags: Optional[List[str]] = None,
         linked_ticks: Optional[List[int]] = None,
-        cat_id: Optional[str] = "cat-1",
+        cat_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Modify an existing coach memory note."""
         start = time.perf_counter()
@@ -440,6 +442,7 @@ def create_mcp_server(name: str = "cat-and-mouse-mcp", version: str = "0.1.0") -
 
         res = {"status": "updated", "memory": record}
         preview = (record.get("note", "")[:45] + "…") if len(record.get("note", "")) > 45 else record.get("note", "")
+        cat_tag = record.get("cat_id") or cat_id or "auto"
         get_telemetry().record_event(
             event_type="tool_call",
             level="success",
@@ -447,7 +450,7 @@ def create_mcp_server(name: str = "cat-and-mouse-mcp", version: str = "0.1.0") -
             arguments={"memory_id": memory_id, "note": note, "category": category, "tags": tags, "cat_id": cat_id},
             duration_ms=dur,
             status="ok",
-            summary=f"update_coach_note ({dur}ms) [{memory_id}] [{cat_id or 'cat-1'}] \"{preview}\"",
+            summary=f"update_coach_note ({dur}ms) [{memory_id}] [{cat_tag}] \"{preview}\"",
             details={"arguments": {"memory_id": memory_id, "note": note, "category": category, "tags": tags, "cat_id": cat_id}, "result": res},
         )
         return res
@@ -456,7 +459,7 @@ def create_mcp_server(name: str = "cat-and-mouse-mcp", version: str = "0.1.0") -
         name="delete_coach_note",
         description="Deletes a coach tactical memory note by memory ID.",
     )
-    async def delete_coach_note(memory_id: str, cat_id: Optional[str] = "cat-1") -> Dict[str, Any]:
+    async def delete_coach_note(memory_id: str, cat_id: Optional[str] = None) -> Dict[str, Any]:
         """Delete an existing coach memory note."""
         start = time.perf_counter()
         deleted = store.delete_coach_memory(memory_id=memory_id, agent_id=cat_id)
@@ -464,6 +467,7 @@ def create_mcp_server(name: str = "cat-and-mouse-mcp", version: str = "0.1.0") -
         res = {"status": "deleted" if deleted else "not_found", "memory_id": memory_id}
         level = "success" if deleted else "warn"
         status_str = "ok" if deleted else "warning"
+        cat_tag = cat_id or "auto"
         get_telemetry().record_event(
             event_type="tool_call",
             level=level,
@@ -471,7 +475,7 @@ def create_mcp_server(name: str = "cat-and-mouse-mcp", version: str = "0.1.0") -
             arguments={"memory_id": memory_id, "cat_id": cat_id},
             duration_ms=dur,
             status=status_str,
-            summary=f"delete_coach_note ({dur}ms) [{cat_id or 'cat-1'}] -> {memory_id} ({'deleted' if deleted else 'not found'})",
+            summary=f"delete_coach_note ({dur}ms) [{cat_tag}] -> {memory_id} ({'deleted' if deleted else 'not found'})",
             details={"arguments": {"memory_id": memory_id, "cat_id": cat_id}, "result": res},
         )
         return res
@@ -648,12 +652,12 @@ def create_mcp_server(name: str = "cat-and-mouse-mcp", version: str = "0.1.0") -
     @server.resource(
         "cm://coach/notes",
         name="Coach Past Notes and Memory",
-        description="The coach's historical tactical notes, hypotheses, and memories.",
+        description="The coach's historical tactical notes, hypotheses, and memories across all active cats.",
         mime_type="application/json",
     )
     async def coach_notes_resource() -> str:
         start = time.perf_counter()
-        memories = store.read_coach_memories(limit=50)
+        memories = store.read_coach_memories(limit=50, agent_id="all")
         dur = round((time.perf_counter() - start) * 1000, 2)
         get_telemetry().record_event(
             event_type="resource_read",
@@ -665,6 +669,48 @@ def create_mcp_server(name: str = "cat-and-mouse-mcp", version: str = "0.1.0") -
             details={"uri": "cm://coach/notes", "count": len(memories)},
         )
         return json.dumps({"count": len(memories), "memories": memories})
+
+    @server.resource(
+        "cm://coach/cat-1/notes",
+        name="Cat-1 Coach Notes and Memory",
+        description="Coach's private tactical notes and memories specifically for Cat-1.",
+        mime_type="application/json",
+    )
+    async def coach_notes_cat1_resource() -> str:
+        start = time.perf_counter()
+        memories = store.read_coach_memories(limit=50, agent_id="cat-1")
+        dur = round((time.perf_counter() - start) * 1000, 2)
+        get_telemetry().record_event(
+            event_type="resource_read",
+            level="info",
+            resource="cm://coach/cat-1/notes",
+            duration_ms=dur,
+            status="ok",
+            summary=f"Resource read cm://coach/cat-1/notes in {dur}ms ({len(memories)} notes)",
+            details={"uri": "cm://coach/cat-1/notes", "count": len(memories)},
+        )
+        return json.dumps({"count": len(memories), "cat_id": "cat-1", "memories": memories})
+
+    @server.resource(
+        "cm://coach/cat-2/notes",
+        name="Cat-2 Coach Notes and Memory",
+        description="Coach's private tactical notes and memories specifically for Cat-2.",
+        mime_type="application/json",
+    )
+    async def coach_notes_cat2_resource() -> str:
+        start = time.perf_counter()
+        memories = store.read_coach_memories(limit=50, agent_id="cat-2")
+        dur = round((time.perf_counter() - start) * 1000, 2)
+        get_telemetry().record_event(
+            event_type="resource_read",
+            level="info",
+            resource="cm://coach/cat-2/notes",
+            duration_ms=dur,
+            status="ok",
+            summary=f"Resource read cm://coach/cat-2/notes in {dur}ms ({len(memories)} notes)",
+            details={"uri": "cm://coach/cat-2/notes", "count": len(memories)},
+        )
+        return json.dumps({"count": len(memories), "cat_id": "cat-2", "memories": memories})
 
     @server.resource(
         "cm://game/notice_board",
@@ -897,15 +943,33 @@ def create_mcp_app(server: Optional[MCPServer] = None):
     async def coach_notes_list_endpoint(request: Request) -> JSONResponse:
         category = request.query_params.get("category") or None
         search = request.query_params.get("search") or None
+        cat_id = request.query_params.get("cat_id") or request.query_params.get("agent_id") or "all"
         limit_str = request.query_params.get("limit")
         limit = int(limit_str) if limit_str and limit_str.isdigit() else None
-        memories = store.read_coach_memories(limit=limit, category=category, search=search)
-        active_notes = store.read_coaching_notes()
+        memories = store.read_coach_memories(limit=limit, category=category, search=search, agent_id=cat_id)
+
+        all_for_counts = store.read_coach_memories(limit=500, agent_id="all")
+        cat1_count = sum(1 for m in all_for_counts if m.get("cat_id") == "cat-1")
+        cat2_count = sum(1 for m in all_for_counts if m.get("cat_id") == "cat-2")
+
+        standing_notes = {
+            "cat-1": store.read_coaching_notes(agent_id="cat-1"),
+            "cat-2": store.read_coaching_notes(agent_id="cat-2"),
+        }
+        active_notes = standing_notes.get(cat_id) if cat_id in standing_notes else (standing_notes["cat-1"] or standing_notes["cat-2"] or store.read_coaching_notes())
+
         return JSONResponse({
             "ok": True,
+            "cat_id": cat_id,
             "count": len(memories),
+            "counts": {
+                "all": len(all_for_counts),
+                "cat-1": cat1_count,
+                "cat-2": cat2_count,
+            },
             "memories": memories,
             "active_standing_notes": active_notes,
+            "standing_notes": standing_notes,
         })
 
     async def coach_notes_create_endpoint(request: Request) -> JSONResponse:
@@ -920,45 +984,68 @@ def create_mcp_app(server: Optional[MCPServer] = None):
         tags = body.get("tags")
         tick = body.get("tick")
         linked_ticks = body.get("linked_ticks")
+        cat_id = body.get("cat_id") or body.get("agent_id") or "cat-1"
         record = store.append_coach_memory(
-            note=note, category=category, tags=tags, tick=tick, linked_ticks=linked_ticks
+            note=note, category=category, tags=tags, tick=tick, linked_ticks=linked_ticks, agent_id=cat_id
         )
         return JSONResponse({"ok": True, "memory": record})
 
     async def coach_notes_item_endpoint(request: Request) -> JSONResponse:
         memory_id = request.path_params.get("id", "")
+        cat_id = request.query_params.get("cat_id") or None
         if request.method == "PUT":
             try:
                 body = await request.json()
             except Exception:
                 return JSONResponse({"ok": False, "error": "Invalid JSON body"}, status_code=400)
+            if not cat_id:
+                cat_id = body.get("cat_id") or body.get("agent_id")
             record = store.update_coach_memory(
                 memory_id=memory_id,
                 note=body.get("note"),
                 category=body.get("category"),
                 tags=body.get("tags"),
                 linked_ticks=body.get("linked_ticks"),
+                agent_id=cat_id,
             )
             if record is None:
                 return JSONResponse({"ok": False, "error": "Note not found"}, status_code=404)
             return JSONResponse({"ok": True, "memory": record})
         elif request.method == "DELETE":
-            deleted = store.delete_coach_memory(memory_id=memory_id)
+            deleted = store.delete_coach_memory(memory_id=memory_id, agent_id=cat_id)
             if not deleted:
                 return JSONResponse({"ok": False, "error": "Note not found"}, status_code=404)
             return JSONResponse({"ok": True, "deleted": True, "id": memory_id})
         return JSONResponse({"ok": False, "error": "Method not allowed"}, status_code=405)
 
     async def coach_standing_notes_endpoint(request: Request) -> JSONResponse:
-        if request.method == "POST" or request.method == "PUT":
+        cat_id = request.query_params.get("cat_id") or "cat-1"
+        if request.method in ("POST", "PUT"):
             try:
                 body = await request.json()
             except Exception:
                 return JSONResponse({"ok": False, "error": "Invalid JSON body"}, status_code=400)
             notes_text = body.get("notes", "")
-            store.write_coaching_notes(notes_text)
-            return JSONResponse({"ok": True, "notes": store.read_coaching_notes()})
-        return JSONResponse({"ok": True, "notes": store.read_coaching_notes()})
+            target_cat = body.get("cat_id") or cat_id
+            store.write_coaching_notes(notes_text, agent_id=target_cat)
+            return JSONResponse({
+                "ok": True,
+                "cat_id": target_cat,
+                "notes": store.read_coaching_notes(agent_id=target_cat),
+                "standing_notes": {
+                    "cat-1": store.read_coaching_notes(agent_id="cat-1"),
+                    "cat-2": store.read_coaching_notes(agent_id="cat-2"),
+                },
+            })
+        return JSONResponse({
+            "ok": True,
+            "cat_id": cat_id,
+            "notes": store.read_coaching_notes(agent_id=cat_id),
+            "standing_notes": {
+                "cat-1": store.read_coaching_notes(agent_id="cat-1"),
+                "cat-2": store.read_coaching_notes(agent_id="cat-2"),
+            },
+        })
 
     # 8. Notice Board REST API
     async def notice_board_endpoint(request: Request) -> JSONResponse:
