@@ -1099,14 +1099,16 @@ def build_eval_prompt(
         f"{notebook_block}"
         f"{transcript_block}"
         f"{directive_block}"
-        "As part of your evaluation workflow, use write_coach_note to log any persistent "
-        "tactical hypotheses or discoveries to your private notebook, then write your standing "
-        "orders for the Cat as markdown bullets. "
+        "Follow the three-step Evaluation Execution Protocol:\n"
+        "1. Gather Telemetry: Query your tools (e.g. get_boxscore, get_coverage_map, pull_transcript, read_coach_notes).\n"
+        "2. Private Coach Note: Call write_coach_note to record your private deduction, hypothesis, or spatial pattern (with optional linked_ticks).\n"
+        "3. Published Standing Orders: Return only the markdown bullet directives for the Cat Actor.\n"
         "Relax any 3–4 line condition: it is okay and expected for your dossier to grow "
         "as you make better observations, keeping in mind that the Cat Actor consumes these "
         "notes with high priority. Every directive must be legal and correct under your "
-        "subordinate's manual above. Do not refer to tick numbers; the Cat cannot see them."
+        "subordinate's manual above. Do not refer to tick numbers in the directives; the Cat cannot see them."
     )
+
 
 
 def _is_final_event(event: Any) -> bool:
