@@ -17,31 +17,74 @@ import json
 import logging
 import os
 from pathlib import Path
+import tempfile
 import time
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger("cat_agent")
 
-# Overridable so that a test run cannot share these files with a live workbench
-# server. Both resolve the same module-level constant, so without an override a
-# `pytest` run truncates the running agent's transcript, and the running agent
-# appends records into the middle of a test. Tests point this at a temp dir.
-RUNTIME_DIR = Path(os.environ.get("CAT_AGENT_RUNTIME_DIR") or (Path(__file__).parent / "runtime"))
+def _resolve_runtime_dir(agent_id: Optional[str] = None) -> Path:
+    override = os.environ.get("CAT_AGENT_RUNTIME_DIR")
+    if override:
+        return Path(override)
+    target_id = agent_id or os.environ.get("CAT_ID")
+    tmp_base = Path(tempfile.gettempdir())
+    if not target_id:
+        port = os.environ.get("PORT")
+        if port == "8003":
+            target_id = "cat-2"
+        elif port == "8001":
+            target_id = "cat-1"
+        else:
+            return tmp_base / "cm_runtime"
+    return tmp_base / f"cm_runtime_{target_id}"
+
+
+RUNTIME_DIR = _resolve_runtime_dir()
 TRANSCRIPT_PATH = RUNTIME_DIR / "transcript.jsonl"
 COACHING_NOTES_PATH = RUNTIME_DIR / "coaching_notes.md"
+NOTICE_BOARD_PATH = RUNTIME_DIR / "notice_board.md"
 COACH_MEMORY_PATH = RUNTIME_DIR / "coach_memory.jsonl"
-# Full model inputs, one record per Gemini call, for the workbench's inspector.
 PROMPTS_PATH = RUNTIME_DIR / "prompts.jsonl"
-# The model settings in force for this run. Written once at startup and read by
-# nothing at runtime: it exists so that the game archive can say which
-# configuration produced a given box score. Comparing two runs is meaningless
-# without it, because the settings that matter most -- the thinking budget, the
-# model name -- live in Python and leave no trace in the transcript.
 RUN_CONFIG_PATH = RUNTIME_DIR / "run_config.json"
 
 
-def _ensure_runtime_dir() -> None:
-    RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+def _ensure_runtime_dir(target_dir: Optional[Path] = None) -> None:
+    d = target_dir or RUNTIME_DIR
+    d.mkdir(parents=True, exist_ok=True)
+
+
+def set_agent_id(agent_id: str) -> None:
+    """Dynamically rebinds runtime file paths to the specified agent ID if not overridden by CAT_AGENT_RUNTIME_DIR."""
+    global RUNTIME_DIR, TRANSCRIPT_PATH, COACHING_NOTES_PATH, NOTICE_BOARD_PATH, COACH_MEMORY_PATH, PROMPTS_PATH, RUN_CONFIG_PATH
+    if os.environ.get("CAT_AGENT_RUNTIME_DIR"):
+        return  # explicit env override or test fixture takes precedence
+    RUNTIME_DIR = Path(tempfile.gettempdir()) / f"cm_runtime_{agent_id}"
+    _ensure_runtime_dir()
+    TRANSCRIPT_PATH = RUNTIME_DIR / "transcript.jsonl"
+    COACHING_NOTES_PATH = RUNTIME_DIR / "coaching_notes.md"
+    NOTICE_BOARD_PATH = RUNTIME_DIR / "notice_board.md"
+    COACH_MEMORY_PATH = RUNTIME_DIR / "coach_memory.jsonl"
+    PROMPTS_PATH = RUNTIME_DIR / "prompts.jsonl"
+    RUN_CONFIG_PATH = RUNTIME_DIR / "run_config.json"
+
+
+def get_cat_paths(agent_id: str) -> Dict[str, Path]:
+    """Returns file paths for a specific cat agent."""
+    if os.environ.get("CAT_AGENT_RUNTIME_DIR"):
+        cat_dir = Path(os.environ["CAT_AGENT_RUNTIME_DIR"])
+    else:
+        cat_dir = Path(tempfile.gettempdir()) / f"cm_runtime_{agent_id}"
+    _ensure_runtime_dir(cat_dir)
+    return {
+        "runtime_dir": cat_dir,
+        "transcript": cat_dir / "transcript.jsonl",
+        "coaching_notes": cat_dir / "coaching_notes.md",
+        "notice_board": cat_dir / "notice_board.md",
+        "coach_memory": cat_dir / "coach_memory.jsonl",
+        "prompts": cat_dir / "prompts.jsonl",
+        "run_config": cat_dir / "run_config.json",
+    }
 
 
 def _compact_record(exchange: Dict[str, Any]) -> Dict[str, Any]:
@@ -94,15 +137,9 @@ def _compact_record(exchange: Dict[str, Any]) -> Dict[str, Any]:
         # it can see exactly which attacks converted and which swung at nothing.
         "score": obs.get("score", 0),
         # The live tunables, exactly as the actor received them this tick.
-        #
-        # These are dropped from nothing else and cost ~6 ints per line, but
-        # without them the evaluator was advising blind: actor_skills.md states
-        # that every range and cooldown printed in it is an illustration and the
-        # observation is the only authority, and the evaluator had no
-        # observation. So it guessed, told the cat its reach was 3 when the
-        # engine said 2, and the cat believed it. They are also per-tick rather
-        # than captured once because the operator can retune mid-game.
         "capabilities": obs.get("capabilities") or {},
+        # Preserved observation payload so the full perceptual ground truth is retained.
+        "observation": obs,
     }
 
 
@@ -127,13 +164,14 @@ def reset_transcript() -> None:
         logger.warning("Failed to reset transcript: %s", exc)
 
 
-def read_transcript_records() -> List[Dict[str, Any]]:
+def read_transcript_records(agent_id: Optional[str] = None) -> List[Dict[str, Any]]:
     """Returns every tick recorded for the current game, oldest first."""
-    if not TRANSCRIPT_PATH.exists():
+    target_path = get_cat_paths(agent_id)["transcript"] if agent_id else TRANSCRIPT_PATH
+    if not target_path.exists():
         return []
     records: List[Dict[str, Any]] = []
     try:
-        with TRANSCRIPT_PATH.open("r", encoding="utf-8") as fh:
+        with target_path.open("r", encoding="utf-8") as fh:
             for line in fh:
                 line = line.strip()
                 if not line:
@@ -286,26 +324,28 @@ def write_run_config(config: Dict[str, Any]) -> None:
         logger.warning("Failed to write run config: %s", exc)
 
 
-def write_coaching_notes(notes: str, tick_range: Optional[str] = None) -> None:
+def write_coaching_notes(notes: str, tick_range: Optional[str] = None, agent_id: Optional[str] = None) -> None:
     """Publishes the evaluator's advice for the actor to pick up next tick."""
     try:
-        _ensure_runtime_dir()
+        target_path = get_cat_paths(agent_id)["coaching_notes"] if agent_id else COACHING_NOTES_PATH
+        _ensure_runtime_dir(target_path.parent)
         stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%SZ")
         header = f"<!-- generated {stamp}"
         if tick_range:
             header += f" | ticks {tick_range}"
         header += " -->\n"
-        COACHING_NOTES_PATH.write_text(header + notes.strip() + "\n", encoding="utf-8")
+        target_path.write_text(header + notes.strip() + "\n", encoding="utf-8")
     except Exception as exc:
         logger.warning("Failed to write coaching notes: %s", exc)
 
 
-def read_coaching_notes() -> str:
+def read_coaching_notes(agent_id: Optional[str] = None) -> str:
     """Returns the current coaching notes, or an empty string if none exist yet."""
-    if not COACHING_NOTES_PATH.exists():
+    target_path = get_cat_paths(agent_id)["coaching_notes"] if agent_id else COACHING_NOTES_PATH
+    if not target_path.exists():
         return ""
     try:
-        text = COACHING_NOTES_PATH.read_text(encoding="utf-8")
+        text = target_path.read_text(encoding="utf-8")
     except Exception as exc:
         logger.warning("Failed to read coaching notes: %s", exc)
         return ""
@@ -314,19 +354,51 @@ def read_coaching_notes() -> str:
     return "\n".join(lines).strip()
 
 
-def reset_coaching_notes() -> None:
+def reset_coaching_notes(agent_id: Optional[str] = None) -> None:
     """Clears stale advice so a new game does not inherit the last game's orders."""
     try:
-        if COACHING_NOTES_PATH.exists():
-            COACHING_NOTES_PATH.unlink()
+        target_path = get_cat_paths(agent_id)["coaching_notes"] if agent_id else COACHING_NOTES_PATH
+        if target_path.exists():
+            target_path.unlink()
     except Exception as exc:
         logger.warning("Failed to reset coaching notes: %s", exc)
+
+
+def read_notice_board() -> str:
+    """Returns the current global notice board text, or an empty string."""
+    if not NOTICE_BOARD_PATH.exists():
+        return ""
+    try:
+        text = NOTICE_BOARD_PATH.read_text(encoding="utf-8")
+        lines = [ln for ln in text.splitlines() if not ln.startswith("<!--")]
+        return "\n".join(lines).strip()
+    except Exception as exc:
+        logger.warning("Failed to read notice board: %s", exc)
+        return ""
+
+
+def write_notice_board(content: str) -> None:
+    """Writes global notice board content for all agents."""
+    _ensure_runtime_dir()
+    try:
+        NOTICE_BOARD_PATH.write_text(content.strip(), encoding="utf-8")
+    except Exception as exc:
+        logger.warning("Failed to write notice board: %s", exc)
+
+
+def reset_notice_board() -> None:
+    """Clears the global notice board on reset."""
+    try:
+        if NOTICE_BOARD_PATH.exists():
+            NOTICE_BOARD_PATH.unlink()
+    except Exception as exc:
+        logger.warning("Failed to reset notice board: %s", exc)
 
 
 import uuid
 
 
-def get_transcript_ticks_snapshot(ticks: List[int]) -> List[Dict[str, Any]]:
+def get_transcript_ticks_snapshot(ticks: List[int], agent_id: Optional[str] = None) -> List[Dict[str, Any]]:
     """Retrieves compact transcript records for specific tick numbers.
 
     Extracts timestamped context, actor positions, facing, chosen action,
@@ -335,7 +407,7 @@ def get_transcript_ticks_snapshot(ticks: List[int]) -> List[Dict[str, Any]]:
     if not ticks:
         return []
     tick_set = set(ticks)
-    records = read_transcript_records()
+    records = read_transcript_records(agent_id=agent_id)
     snapshots = []
     for r in records:
         if r.get("tick") in tick_set:
@@ -361,13 +433,15 @@ def append_coach_memory(
     tags: Optional[List[str]] = None,
     tick: Optional[int] = None,
     linked_ticks: Optional[List[int]] = None,
+    agent_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Records a coach memory or observation for future recall, optionally linked to transcript ticks."""
-    _ensure_runtime_dir()
+    target_path = get_cat_paths(agent_id)["coach_memory"] if agent_id else COACH_MEMORY_PATH
+    _ensure_runtime_dir(target_path.parent)
     now_str = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     unique_suffix = uuid.uuid4().hex[:8]
     clean_ticks = [int(t) for t in linked_ticks] if linked_ticks else []
-    tick_snapshots = get_transcript_ticks_snapshot(clean_ticks) if clean_ticks else []
+    tick_snapshots = get_transcript_ticks_snapshot(clean_ticks, agent_id=agent_id) if clean_ticks else []
 
     record = {
         "id": f"mem-{int(time.time() * 1000)}-{unique_suffix}",
@@ -381,7 +455,7 @@ def append_coach_memory(
     }
 
     try:
-        with COACH_MEMORY_PATH.open("a", encoding="utf-8") as fh:
+        with target_path.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(record, separators=(",", ":")) + "\n")
     except Exception as exc:
         logger.warning("Failed to append coach memory: %s", exc)
@@ -392,13 +466,15 @@ def read_coach_memories(
     limit: Optional[int] = 10,
     category: Optional[str] = None,
     search: Optional[str] = None,
+    agent_id: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """Returns stored coach memories, newest first, with optional filtering."""
-    if not COACH_MEMORY_PATH.exists():
+    target_path = get_cat_paths(agent_id)["coach_memory"] if agent_id else COACH_MEMORY_PATH
+    if not target_path.exists():
         return []
     records: List[Dict[str, Any]] = []
     try:
-        with COACH_MEMORY_PATH.open("r", encoding="utf-8") as fh:
+        with target_path.open("r", encoding="utf-8") as fh:
             for line in fh:
                 line = line.strip()
                 if not line:
@@ -434,16 +510,18 @@ def update_coach_memory(
     category: Optional[str] = None,
     tags: Optional[List[str]] = None,
     linked_ticks: Optional[List[int]] = None,
+    agent_id: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
     """Updates an existing coach memory record by ID. Returns updated record or None if not found."""
-    if not COACH_MEMORY_PATH.exists():
+    target_path = get_cat_paths(agent_id)["coach_memory"] if agent_id else COACH_MEMORY_PATH
+    if not target_path.exists():
         return None
     records: List[Dict[str, Any]] = []
     updated_record: Optional[Dict[str, Any]] = None
     clean_ticks = [int(t) for t in linked_ticks] if linked_ticks is not None else None
 
     try:
-        with COACH_MEMORY_PATH.open("r", encoding="utf-8") as fh:
+        with target_path.open("r", encoding="utf-8") as fh:
             for line in fh:
                 line = line.strip()
                 if not line:
@@ -459,14 +537,14 @@ def update_coach_memory(
                             rec["tags"] = tags
                         if clean_ticks is not None:
                             rec["linked_ticks"] = clean_ticks
-                            rec["tick_snapshots"] = get_transcript_ticks_snapshot(clean_ticks)
+                            rec["tick_snapshots"] = get_transcript_ticks_snapshot(clean_ticks, agent_id=agent_id)
                         rec["updated_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
                         updated_record = rec
                     records.append(rec)
                 except json.JSONDecodeError:
                     continue
         if updated_record is not None:
-            with COACH_MEMORY_PATH.open("w", encoding="utf-8") as fh:
+            with target_path.open("w", encoding="utf-8") as fh:
                 for rec in records:
                     fh.write(json.dumps(rec, separators=(",", ":")) + "\n")
         return updated_record
@@ -475,14 +553,15 @@ def update_coach_memory(
         return None
 
 
-def delete_coach_memory(memory_id: str) -> bool:
+def delete_coach_memory(memory_id: str, agent_id: Optional[str] = None) -> bool:
     """Deletes a coach memory record by ID. Returns True if deleted, False otherwise."""
-    if not COACH_MEMORY_PATH.exists():
+    target_path = get_cat_paths(agent_id)["coach_memory"] if agent_id else COACH_MEMORY_PATH
+    if not target_path.exists():
         return False
     records: List[Dict[str, Any]] = []
     found = False
     try:
-        with COACH_MEMORY_PATH.open("r", encoding="utf-8") as fh:
+        with target_path.open("r", encoding="utf-8") as fh:
             for line in fh:
                 line = line.strip()
                 if not line:
@@ -496,7 +575,7 @@ def delete_coach_memory(memory_id: str) -> bool:
                 except json.JSONDecodeError:
                     continue
         if found:
-            with COACH_MEMORY_PATH.open("w", encoding="utf-8") as fh:
+            with target_path.open("w", encoding="utf-8") as fh:
                 for rec in records:
                     fh.write(json.dumps(rec, separators=(",", ":")) + "\n")
         return found
@@ -505,11 +584,12 @@ def delete_coach_memory(memory_id: str) -> bool:
         return False
 
 
-def reset_coach_memories() -> None:
+def reset_coach_memories(agent_id: Optional[str] = None) -> None:
     """Wipes the coach memory store."""
     try:
-        if COACH_MEMORY_PATH.exists():
-            COACH_MEMORY_PATH.unlink()
+        target_path = get_cat_paths(agent_id)["coach_memory"] if agent_id else COACH_MEMORY_PATH
+        if target_path.exists():
+            target_path.unlink()
     except Exception as exc:
         logger.warning("Failed to reset coach memory: %s", exc)
 

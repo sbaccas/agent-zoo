@@ -47,6 +47,8 @@ notes.sh
 
 # Cat agent runtime scratch (per-game transcript & coaching notes)
 actors/cat/runtime/
+actors/cat/runtime_*/
+cm_runtime*/
 
 # Archived games, written automatically when a game resets or the server stops.
 # Local evidence for comparing runs, not source. One game costs ~13 MB, almost

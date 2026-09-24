@@ -725,7 +725,8 @@
       td.style.textAlign = 'center';
       td.style.color = 'var(--text-muted)';
       td.style.padding = '24px';
-      td.textContent = 'No conversation history recorded yet. Connect cat-1 on the Game Server and advance ticks to stream events.';
+      const activeCat = (cachedState && cachedState.agent_id) || (window.location.port === '8003' ? 'cat-2' : 'cat-1');
+      td.textContent = `No conversation history recorded yet. Connect ${activeCat} on the Game Server and advance ticks to stream events.`;
       tr.appendChild(td);
       historyTableBody.replaceChildren(tr);
       return;
@@ -886,6 +887,8 @@
   function renderChatHistory(chatList) {
     if (!chatMessagesContainer) return;
 
+    const activeCat = (cachedState && cachedState.agent_id) || (window.location.port === '8003' ? 'cat-2' : 'cat-1');
+
     if (!chatList || chatList.length === 0) {
       const bubble = document.createElement('div');
       bubble.className = 'chat-bubble cat-bubble';
@@ -894,7 +897,7 @@
       hdr.className = 'chat-bubble-header';
       const sender = document.createElement('span');
       sender.className = 'chat-sender';
-      sender.textContent = '🐱 Cat Agent [cat-1]';
+      sender.textContent = `🐱 Cat Agent [${activeCat}]`;
       const meta = document.createElement('span');
       meta.className = 'chat-meta';
       meta.textContent = (cachedState && cachedState.active_tick) ? `Tick #${cachedState.active_tick}` : 'Standby';
@@ -922,7 +925,7 @@
 
       const sender = document.createElement('span');
       sender.className = 'chat-sender';
-      sender.textContent = isUser ? '👨‍✈️ Commander' : '🐱 Cat Agent [cat-1]';
+      sender.textContent = isUser ? '👨‍✈️ Commander' : `🐱 Cat Agent [${activeCat}]`;
 
       const meta = document.createElement('span');
       meta.className = 'chat-meta';
@@ -1076,6 +1079,8 @@
   function renderGeneralChat(chatList) {
     if (!generalChatMessages) return;
 
+    const activeCat = (cachedState && cachedState.agent_id) || (window.location.port === '8003' ? 'cat-2' : 'cat-1');
+
     if (!chatList || chatList.length === 0) {
       const bubble = document.createElement('div');
       bubble.className = 'chat-bubble general-bubble';
@@ -1083,7 +1088,7 @@
       hdr.className = 'chat-bubble-header';
       const sender = document.createElement('span');
       sender.className = 'chat-sender';
-      sender.textContent = '🎓 Coach [cat_evaluator]';
+      sender.textContent = `🎓 Coach [${activeCat}]`;
       const meta = document.createElement('span');
       meta.className = 'chat-meta';
       meta.textContent = (cachedState && cachedState.active_tick) ? `Tick #${cachedState.active_tick}` : 'Standby';
@@ -1091,7 +1096,7 @@
       hdr.appendChild(meta);
       const body = document.createElement('div');
       body.className = 'chat-bubble-body';
-      body.textContent = 'General, the Coach is on the channel. Ask me why any directive is in the Cat\u2019s dossier, what evidence I based it on, or whether I am coaching toward the right thing. I can pull the live box score if you want numbers.';
+      body.textContent = `General, the Coach is on the channel. Ask me why any directive is in ${activeCat.toUpperCase()}\u2019s dossier, what evidence I based it on, or whether I am coaching toward the right thing. I can pull the live box score if you want numbers.`;
       bubble.appendChild(hdr);
       bubble.appendChild(body);
       generalChatMessages.replaceChildren(bubble);
@@ -1112,7 +1117,7 @@
       hdr.className = 'chat-bubble-header';
       const sender = document.createElement('span');
       sender.className = 'chat-sender';
-      sender.textContent = isUser ? '🎖️ General' : '🎓 Coach [cat_evaluator]';
+      sender.textContent = isUser ? '🎖️ General' : `🎓 Coach [${activeCat}]`;
       const meta = document.createElement('span');
       meta.className = 'chat-meta';
       const tickText = (msg.tick !== undefined && msg.tick !== null && msg.tick > 0) ? `Tick #${msg.tick}` : '';
@@ -2827,6 +2832,12 @@
       }
     });
   }
+
+  // Initialize dynamic port and title
+  const currentPort = window.location.port || '8001';
+  const portPill = document.querySelector('.wb-port-pill');
+  if (portPill) portPill.textContent = `:${currentPort}`;
+  document.title = `Cat Agent Workbench (Port ${currentPort})`;
 
   pollIntervalId = setInterval(pollAgentState, 500);
   pollAgentState();

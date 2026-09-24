@@ -500,6 +500,7 @@ async def write_coach_note(
     category: str = "tactical",
     tags: Optional[List[str]] = None,
     linked_ticks: Optional[List[int]] = None,
+    cat_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Records a private entry to the Coach's tactical notebook (coach_memory.jsonl).
 
@@ -508,6 +509,7 @@ async def write_coach_note(
     specific transcript ticks and their snapshots for memory retrieval. Note: this is separate
     from the actor's published standing orders in coaching_notes.md.
     """
+    target_id = cat_id or os.environ.get("CAT_ID") or ("cat-2" if os.environ.get("PORT") == "8003" else "cat-1")
     mcp_url = os.environ.get("CAT_MCP_SERVER_URL") or os.environ.get("MCP_SERVER_URL") or "http://127.0.0.1:9050"
     if mcp_url:
         try:
@@ -515,7 +517,7 @@ async def write_coach_note(
             client = MCPClient(base_url=mcp_url)
             res = await client.call_tool(
                 "write_coach_note",
-                {"note": note, "category": category, "tags": tags, "linked_ticks": linked_ticks},
+                {"note": note, "category": category, "tags": tags, "linked_ticks": linked_ticks, "cat_id": target_id},
             )
             if res.get("status") == "saved":
                 return res
@@ -523,7 +525,7 @@ async def write_coach_note(
             pass
 
     record = store.append_coach_memory(
-        note=note, category=category, tags=tags, linked_ticks=linked_ticks
+        note=note, category=category, tags=tags, linked_ticks=linked_ticks, agent_id=target_id
     )
     return {"status": "saved", "memory": record}
 
@@ -532,9 +534,10 @@ async def read_coach_notes(
     limit: Optional[int] = 10,
     category: Optional[str] = None,
     search: Optional[str] = None,
+    cat_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Searches and retrieves historical entries from the Coach's tactical notebook across evaluation cycles."""
-
+    target_id = cat_id or os.environ.get("CAT_ID") or ("cat-2" if os.environ.get("PORT") == "8003" else "cat-1")
     mcp_url = os.environ.get("CAT_MCP_SERVER_URL") or os.environ.get("MCP_SERVER_URL") or "http://127.0.0.1:9050"
     if mcp_url:
         try:
@@ -542,14 +545,14 @@ async def read_coach_notes(
             client = MCPClient(base_url=mcp_url)
             res = await client.call_tool(
                 "read_coach_notes",
-                {"limit": limit, "category": category, "search": search},
+                {"limit": limit, "category": category, "search": search, "cat_id": target_id},
             )
             if res.get("available") is not False and "memories" in res:
                 return res
         except Exception:
             pass
 
-    memories = store.read_coach_memories(limit=limit, category=category, search=search)
+    memories = store.read_coach_memories(limit=limit, category=category, search=search, agent_id=target_id)
     return {"available": True, "count": len(memories), "memories": memories}
 
 
@@ -557,11 +560,13 @@ async def pull_transcript(
     last_n: Optional[int] = 50,
     limit: Optional[int] = None,
     offset: Optional[int] = None,
+    cat_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Pulls recent or windowed Cat agent transcript records (positions, facing, visibility, moves, reasoning) on demand.
 
     Deliberately omits absolute tick numbers to prevent the Coach from citing raw tick indices back to the Actor.
     """
+    target_id = cat_id or os.environ.get("CAT_ID") or ("cat-2" if os.environ.get("PORT") == "8003" else "cat-1")
     mcp_url = os.environ.get("CAT_MCP_SERVER_URL") or os.environ.get("MCP_SERVER_URL") or "http://127.0.0.1:9050"
     if mcp_url:
         try:
@@ -569,14 +574,14 @@ async def pull_transcript(
             client = MCPClient(base_url=mcp_url)
             res = await client.call_tool(
                 "pull_transcript",
-                {"last_n": last_n, "limit": limit, "offset": offset},
+                {"last_n": last_n, "limit": limit, "offset": offset, "cat_id": target_id},
             )
             if res.get("available") is not False and "transcript" in res:
                 return res
         except Exception:
             pass
 
-    records = store.read_transcript_records()
+    records = store.read_transcript_records(agent_id=target_id)
     total_ticks = len(records)
     if offset is not None or limit is not None:
         off = offset if offset is not None else 0
@@ -968,6 +973,7 @@ def build_eval_prompt(
     records: List[Dict[str, Any]],
     previous: str,
     coach_directive: Optional[str] = None,
+    agent_id: Optional[str] = None,
 ) -> str:
     """Assembles the full evaluator prompt.
 
@@ -981,6 +987,14 @@ def build_eval_prompt(
     and the transcript is not, so putting it first is also the order that lets a
     provider cache the long prefix.
     """
+    target_cat = agent_id or os.environ.get("CAT_ID") or ("cat-2" if os.environ.get("PORT") == "8003" else "cat-1")
+    coach_identity_block = (
+        f"--- YOUR ASSIGNMENT: DEDICATED COACH FOR {target_cat.upper()} ---\n"
+        f"You are the dedicated tactical coach and evaluator exclusively assigned to {target_cat.upper()}.\n"
+        f"Your role is to monitor {target_cat.upper()}'s performance, analyze its decisions, and provide direct orders to {target_cat.upper()}.\n"
+        f"Do NOT confuse your assigned agent ({target_cat.upper()}) with any other cat or agent on the arena board.\n\n"
+    )
+
     # The coach's model of the game IS the actor's manual -- the same bytes the
     # actor is running on, read through the actor's own loader so the two cannot
     # diverge. eval_skills.md used to carry its own paraphrase of the rules and
@@ -1061,7 +1075,7 @@ def build_eval_prompt(
             "instead, and explain the conflict.\n\n"
         )
 
-    memories = store.read_coach_memories(limit=5)
+    memories = store.read_coach_memories(limit=5, agent_id=target_cat)
     notebook_block = ""
     if memories:
         notes_lines = []
@@ -1093,6 +1107,7 @@ def build_eval_prompt(
     )
 
     return (
+        f"{coach_identity_block}"
         f"{actor_manual_block}"
         f"{format_capabilities(records)}"
         f"{previous_block}"
@@ -1202,7 +1217,10 @@ def _strip_to_directives(text: str) -> str:
     return trimmed
 
 
-async def evaluate(records: List[Dict[str, Any]]) -> Tuple[str, str]:
+async def evaluate(
+    records: List[Dict[str, Any]],
+    agent_id: Optional[str] = None,
+) -> Tuple[str, str]:
     """Runs one evaluation pass over a transcript.
 
     Returns:
@@ -1218,12 +1236,10 @@ async def evaluate(records: List[Dict[str, Any]]) -> Tuple[str, str]:
     if not has_gemini_credentials():
         return _summarise_without_model(records), "offline_fallback"
 
-    # NOTE: no tick bounds are computed here on purpose. They previously fed the
-    # prompt header and were the last route by which an absolute tick index
-    # reached the model. The published `tick_range` is derived separately in
-    # evaluate_and_publish(), which is metadata for the UI, not model input.
-    user_id = "cat_evaluator"
-    session_id = "session_cat_evaluator"
+    target_cat = agent_id or os.environ.get("CAT_ID") or ("cat-2" if os.environ.get("PORT") == "8003" else "cat-1")
+    # Isolated session and user per cat agent to prevent state collision
+    user_id = f"cat_evaluator_{target_cat}"
+    session_id = f"session_cat_evaluator_{target_cat}"
 
     async with _eval_lock:
         # Stamped before the call so a run that times out is still attributed to
@@ -1248,7 +1264,7 @@ async def evaluate(records: List[Dict[str, Any]]) -> Tuple[str, str]:
 
             standing_order = (get_coach_directive() or {}).get("directive")
             prompt = build_eval_prompt(
-                records, store.read_coaching_notes(), standing_order
+                records, store.read_coaching_notes(agent_id=target_cat), standing_order, agent_id=target_cat
             )
 
             msg = types.Content(role="user", parts=[types.Part.from_text(text=prompt)])
@@ -1379,21 +1395,23 @@ async def evaluate(records: List[Dict[str, Any]]) -> Tuple[str, str]:
     return _summarise_without_model(records), "offline_fallback"
 
 
-async def evaluate_and_publish() -> Dict[str, Any]:
+async def evaluate_and_publish(agent_id: Optional[str] = None) -> Dict[str, Any]:
     """Reads the current transcript, evaluates it, and publishes coaching notes.
 
     This is the entry point the API server dispatches to every N ticks. It owns the
     full read-evaluate-write cycle so the caller only has to fire and forget.
     """
-    records = store.read_transcript_records()
-    notes, source = await evaluate(records)
+    target_id = agent_id or os.environ.get("CAT_ID") or ("cat-2" if os.environ.get("PORT") == "8003" else "cat-1")
+    records = store.read_transcript_records(agent_id=target_id)
+    notes, source = await evaluate(records, agent_id=target_id)
 
     tick_range = None
     if records:
         tick_range = f"{records[0].get('tick')}-{records[-1].get('tick')}"
-    store.write_coaching_notes(notes, tick_range=tick_range)
+    store.write_coaching_notes(notes, tick_range=tick_range, agent_id=target_id)
 
     result = {
+        "agent_id": target_id,
         "ticks_evaluated": len(records),
         "tick_range": tick_range,
         "source": source,
@@ -1401,7 +1419,8 @@ async def evaluate_and_publish() -> Dict[str, Any]:
         "notes": notes,
     }
     logger.info(
-        "Evaluation published: %s ticks (%s) via %s",
+        "Evaluation published for %s: %s ticks (%s) via %s",
+        target_id,
         len(records),
         tick_range,
         source,
@@ -1420,7 +1439,7 @@ async def evaluate_and_publish() -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def _general_offline_reply(user_prompt: str, notes: str) -> str:
+def _general_offline_reply(user_prompt: str, notes: str, agent_id: str = "cat-1") -> str:
     """What the Coach says on the General's radio when no model is reachable.
 
     Deliberately says nothing about performance. The offline path on the
@@ -1432,10 +1451,10 @@ def _general_offline_reply(user_prompt: str, notes: str) -> str:
     """
     count = sum(1 for ln in (notes or "").splitlines() if ln.strip().startswith("-"))
     return (
-        "General, the Coach is off the air -- no model backend is reachable "
+        f"General, the Coach for {agent_id.upper()} is off the air -- no model backend is reachable "
         "from the evaluator, so I cannot reason about your question or pull the "
         f"box score. My dossier currently stands at {count} directive(s) and is "
-        "still being delivered to the Cat unchanged. Nothing about the coaching "
+        f"still being delivered to {agent_id.upper()} unchanged. Nothing about the coaching "
         "has been altered by this transmission."
     )
 
@@ -1446,6 +1465,7 @@ async def interrogate_general(
     records: Optional[List[Dict[str, Any]]] = None,
     standing_order: Optional[str] = None,
     tick: Optional[int] = None,
+    agent_id: Optional[str] = None,
 ) -> Tuple[str, str, Optional[str]]:
     """Puts a question to the coach and returns its prose reply.
 
@@ -1458,14 +1478,16 @@ async def interrogate_general(
             already under.
         tick: the game tick, for the log line only. Never shown to the model --
             the coach is held to the same no-tick-citations rule everywhere else.
+        agent_id: target cat ID to scope coaching dossier and session.
 
     Returns:
         (reply_text, engine, error) where engine is 'adk_gemini' or
         'offline_fallback'.
     """
+    target_cat = agent_id or os.environ.get("CAT_ID") or ("cat-2" if os.environ.get("PORT") == "8003" else "cat-1")
     clean = (user_prompt or "").strip()
     if notes is None:
-        notes = store.read_coaching_notes()
+        notes = store.read_coaching_notes(agent_id=target_cat)
 
     if not clean:
         return (
@@ -1477,13 +1499,13 @@ async def interrogate_general(
     # Same guard the evaluation path uses: no live network calls under pytest
     # unless explicitly enabled.
     if "PYTEST_CURRENT_TEST" in os.environ and not os.environ.get("ENABLE_LIVE_LLM_TESTS"):
-        return _general_offline_reply(clean, notes), "offline_fallback", None
+        return _general_offline_reply(clean, notes, agent_id=target_cat), "offline_fallback", None
 
     if not has_gemini_credentials():
-        return _general_offline_reply(clean, notes), "offline_fallback", None
+        return _general_offline_reply(clean, notes, agent_id=target_cat), "offline_fallback", None
 
-    user_id = "cat_coach"
-    session_id = "session_cat_coach"
+    user_id = f"cat_coach_{target_cat}"
+    session_id = f"session_cat_coach_{target_cat}"
 
     async with _general_lock:
         try:
@@ -1506,11 +1528,16 @@ async def interrogate_general(
                 session_id=session_id,
             )
 
+            coach_identity_block = (
+                f"--- YOUR ASSIGNMENT: COACH FOR {target_cat.upper()} ---\n"
+                f"You are the dedicated tactical coach exclusively assigned to {target_cat.upper()}.\n\n"
+            )
+
             dossier_block = (
                 "--- YOUR DOSSIER, CURRENTLY IN FORCE ---\n"
                 f"{notes.strip()}\n\n"
-                "These are your own directives. They are being delivered to the "
-                "Cat verbatim, every tick, right now.\n\n"
+                f"These are your own directives. They are being delivered to "
+                f"{target_cat.upper()} verbatim, every tick, right now.\n\n"
                 if (notes or "").strip()
                 else
                 "--- YOUR DOSSIER, CURRENTLY IN FORCE ---\n"
@@ -1534,6 +1561,7 @@ async def interrogate_general(
                 )
 
             prompt = (
+                f"{coach_identity_block}"
                 f"{dossier_block}"
                 f"{order_block}"
                 f"{transcript_block}"

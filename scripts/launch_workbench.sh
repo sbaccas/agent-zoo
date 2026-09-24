@@ -49,11 +49,25 @@ else
   fi
 fi
 
-# 4. Determine host, port, and game server URL
+# 4. Determine host, port, agent ID, and game server URL
 CAT_PORT="${PORT:-${CAT_AGENT_PORT:-8001}}"
 CAT_HOST="${HOST:-127.0.0.1}"
 GAME_URL="${GAME_SERVER_URL:-http://127.0.0.1:8000}"
 export CAT_MCP_SERVER_URL="${CAT_MCP_SERVER_URL:-http://127.0.0.1:9050}"
+
+if [ -z "${CAT_ID}" ]; then
+  if [ "${CAT_PORT}" = "8003" ]; then
+    export CAT_ID="cat-2"
+  else
+    export CAT_ID="cat-1"
+  fi
+fi
+
+if [ -z "${CAT_AGENT_RUNTIME_DIR}" ]; then
+  TMP_BASE="${TMPDIR:-/tmp}"
+  export CAT_AGENT_RUNTIME_DIR="${TMP_BASE%/}/cm_runtime_${CAT_ID}"
+fi
+mkdir -p "${CAT_AGENT_RUNTIME_DIR}"
 
 # Check if target port is already running and terminate existing listeners
 PIDS_PORT=$(lsof -ti "tcp:${CAT_PORT}" -sTCP:LISTEN 2>/dev/null || true)
@@ -68,7 +82,9 @@ fi
 
 echo ""
 echo "🚀 Starting Cat Agent & Workbench on port ${CAT_PORT}..."
+echo "   • Agent Identity:             ${CAT_ID}"
 echo "   • Workbench Dashboard:        http://${CAT_HOST}:${CAT_PORT}"
+echo "   • Runtime Store Directory:    ${CAT_AGENT_RUNTIME_DIR}"
 echo "   • Authoritative Game Server:  ${GAME_URL}"
 echo "================================================================="
 echo ""

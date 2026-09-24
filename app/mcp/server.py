@@ -43,9 +43,12 @@ def get_game_server_url() -> str:
 
 
 async def _fetch_from_game_server(
-    endpoint: str, params: Optional[Dict[str, Any]] = None
+    endpoint: str,
+    params: Optional[Dict[str, Any]] = None,
+    method: str = "GET",
+    json_body: Optional[Dict[str, Any]] = None,
 ) -> Tuple[bool, Any, Optional[str]]:
-    """Helper to query the authoritative game server over HTTP."""
+    """Helper to query or mutate the authoritative game server over HTTP."""
     base = get_game_server_url()
     url = f"{base}{endpoint}"
     token = get_gcp_id_token()
@@ -56,14 +59,79 @@ async def _fetch_from_game_server(
 
     try:
         async with httpx.AsyncClient(headers=headers, timeout=HTTP_TIMEOUT_SECONDS) as client:
-            resp = await client.get(url, params=query_params)
+            m = method.upper()
+            if m == "PATCH":
+                resp = await client.patch(url, params=query_params, json=json_body)
+            elif m == "POST":
+                resp = await client.post(url, params=query_params, json=json_body)
+            else:
+                resp = await client.get(url, params=query_params)
+
             if resp.status_code == 403:
                 return False, None, "feature or resource disclosure is disabled (HTTP 403)"
-            if resp.status_code != 200:
+            if resp.status_code not in (200, 201, 204):
                 return False, None, f"game server returned HTTP {resp.status_code}"
-            return True, resp.json(), None
+            return True, resp.json() if resp.content else {}, None
     except Exception as exc:
         return False, None, f"{type(exc).__name__}: {exc}"
+
+
+async def _build_notice_board_data(sim_id: str = "active") -> Tuple[Dict[str, Any], str]:
+    """Queries game server species and state, generates bulletin text, and syncs notice_board.md."""
+    ok_species, species_data, err_species = await _fetch_from_game_server(f"/api/simulations/{sim_id}/species")
+    ok_state, state_data, err_state = await _fetch_from_game_server(f"/api/simulations/{sim_id}/state")
+
+    tick = state_data.get("tick", 0) if ok_state and isinstance(state_data, dict) else 0
+    cat_species = species_data.get("cat", {}) if ok_species and isinstance(species_data, dict) else {}
+
+    absorption_active = bool(cat_species.get("absorption", False))
+    aim_assist_active = bool(cat_species.get("aim_assist", False))
+
+    # Format bulletin
+    bulletin_lines = [
+        f"# 📢 GLOBAL ARENA NOTICE BOARD (Tick {tick})",
+        "",
+        "### ⚔️ Active Arena Rules & Modifiers:",
+    ]
+    if absorption_active:
+        bulletin_lines.append(
+            "- **KILL ABSORPTION**: **ACTIVE**. When a cat knocks out a rival cat, the victor absorbs ALL accumulated prey kills into their score! Rival cats carrying kills are prime high-value targets."
+        )
+    else:
+        bulletin_lines.append(
+            "- **KILL ABSORPTION**: INACTIVE. Takedowns award standard elimination points (+1)."
+        )
+
+    if aim_assist_active:
+        bulletin_lines.append(
+            "- **AIM ASSIST**: ACTIVE. Observation contains authoritative pre-computed forward, offaxis, and in_strike_zone tags."
+        )
+
+    bulletin_text = "\n".join(bulletin_lines)
+
+    # Sync with on-disk store so all agents pick it up in their next prompt turn
+    store.write_notice_board(bulletin_text)
+
+    notice_data = {
+        "available": ok_species,
+        "tick": tick,
+        "active_modifiers": {
+            "absorption": {
+                "name": "Kill Absorption",
+                "status": "ACTIVE" if absorption_active else "INACTIVE",
+                "enabled": absorption_active,
+                "description": "Knocking out a rival predator absorbs their entire kill count into your score.",
+            },
+            "aim_assist": {
+                "name": "Aim Assist",
+                "status": "ACTIVE" if aim_assist_active else "INACTIVE",
+                "enabled": aim_assist_active,
+                "description": "Pre-computes relative strike geometry in observer coordinates.",
+            },
+        },
+        "bulletin": bulletin_text,
+    }
+    return notice_data, bulletin_text
 
 
 def create_mcp_server(name: str = "cat-and-mouse-mcp", version: str = "0.1.0") -> MCPServer:
@@ -277,11 +345,12 @@ def create_mcp_server(name: str = "cat-and-mouse-mcp", version: str = "0.1.0") -
         tags: Optional[List[str]] = None,
         tick: Optional[int] = None,
         linked_ticks: Optional[List[int]] = None,
+        cat_id: Optional[str] = "cat-1",
     ) -> Dict[str, Any]:
         """Save a coach memory note to disk with optional linked transcript ticks."""
         start = time.perf_counter()
         record = store.append_coach_memory(
-            note=note, category=category, tags=tags, tick=tick, linked_ticks=linked_ticks
+            note=note, category=category, tags=tags, tick=tick, linked_ticks=linked_ticks, agent_id=cat_id
         )
         dur = round((time.perf_counter() - start) * 1000, 2)
         res = {"status": "saved", "memory": record}
@@ -290,11 +359,11 @@ def create_mcp_server(name: str = "cat-and-mouse-mcp", version: str = "0.1.0") -
             event_type="tool_call",
             level="success",
             tool="write_coach_note",
-            arguments={"note": note, "category": category, "tags": tags, "tick": tick, "linked_ticks": linked_ticks},
+            arguments={"note": note, "category": category, "tags": tags, "tick": tick, "linked_ticks": linked_ticks, "cat_id": cat_id},
             duration_ms=dur,
             status="ok",
-            summary=f"write_coach_note ({dur}ms) [{category}] \"{preview}\"",
-            details={"arguments": {"note": note, "category": category, "tags": tags, "tick": tick, "linked_ticks": linked_ticks}, "result": res},
+            summary=f"write_coach_note ({dur}ms) [{category}] [{cat_id or 'cat-1'}] \"{preview}\"",
+            details={"arguments": {"note": note, "category": category, "tags": tags, "tick": tick, "linked_ticks": linked_ticks, "cat_id": cat_id}, "result": res},
         )
         return res
 
@@ -306,11 +375,12 @@ def create_mcp_server(name: str = "cat-and-mouse-mcp", version: str = "0.1.0") -
         limit: Optional[int] = 10,
         category: Optional[str] = None,
         search: Optional[str] = None,
+        cat_id: Optional[str] = "cat-1",
     ) -> Dict[str, Any]:
         """Recall saved coach memories with optional filtering."""
         start = time.perf_counter()
         memories = store.read_coach_memories(
-            limit=limit, category=category, search=search
+            limit=limit, category=category, search=search, agent_id=cat_id
         )
         dur = round((time.perf_counter() - start) * 1000, 2)
         res = {
@@ -323,11 +393,11 @@ def create_mcp_server(name: str = "cat-and-mouse-mcp", version: str = "0.1.0") -
             event_type="tool_call",
             level="success",
             tool="read_coach_notes",
-            arguments={"limit": limit, "category": category, "search": search},
+            arguments={"limit": limit, "category": category, "search": search, "cat_id": cat_id},
             duration_ms=dur,
             status="ok",
-            summary=f"read_coach_notes ({dur}ms) -> {len(memories)} notes (category={cat_str})",
-            details={"arguments": {"limit": limit, "category": category, "search": search}, "result": res},
+            summary=f"read_coach_notes ({dur}ms) [{cat_id or 'cat-1'}] -> {len(memories)} notes (category={cat_str})",
+            details={"arguments": {"limit": limit, "category": category, "search": search, "cat_id": cat_id}, "result": res},
         )
         return res
 
@@ -341,6 +411,7 @@ def create_mcp_server(name: str = "cat-and-mouse-mcp", version: str = "0.1.0") -
         category: Optional[str] = None,
         tags: Optional[List[str]] = None,
         linked_ticks: Optional[List[int]] = None,
+        cat_id: Optional[str] = "cat-1",
     ) -> Dict[str, Any]:
         """Modify an existing coach memory note."""
         start = time.perf_counter()
@@ -350,6 +421,7 @@ def create_mcp_server(name: str = "cat-and-mouse-mcp", version: str = "0.1.0") -
             category=category,
             tags=tags,
             linked_ticks=linked_ticks,
+            agent_id=cat_id,
         )
         dur = round((time.perf_counter() - start) * 1000, 2)
         if record is None:
@@ -358,11 +430,11 @@ def create_mcp_server(name: str = "cat-and-mouse-mcp", version: str = "0.1.0") -
                 event_type="tool_call",
                 level="warn",
                 tool="update_coach_note",
-                arguments={"memory_id": memory_id, "note": note, "category": category, "tags": tags},
+                arguments={"memory_id": memory_id, "note": note, "category": category, "tags": tags, "cat_id": cat_id},
                 duration_ms=dur,
                 status="warning",
                 summary=f"update_coach_note ({dur}ms) -> memory_id {memory_id} not found",
-                details={"arguments": {"memory_id": memory_id, "note": note, "category": category, "tags": tags}, "result": res},
+                details={"arguments": {"memory_id": memory_id, "note": note, "category": category, "tags": tags, "cat_id": cat_id}, "result": res},
             )
             return res
 
@@ -372,11 +444,11 @@ def create_mcp_server(name: str = "cat-and-mouse-mcp", version: str = "0.1.0") -
             event_type="tool_call",
             level="success",
             tool="update_coach_note",
-            arguments={"memory_id": memory_id, "note": note, "category": category, "tags": tags},
+            arguments={"memory_id": memory_id, "note": note, "category": category, "tags": tags, "cat_id": cat_id},
             duration_ms=dur,
             status="ok",
-            summary=f"update_coach_note ({dur}ms) [{memory_id}] \"{preview}\"",
-            details={"arguments": {"memory_id": memory_id, "note": note, "category": category, "tags": tags}, "result": res},
+            summary=f"update_coach_note ({dur}ms) [{memory_id}] [{cat_id or 'cat-1'}] \"{preview}\"",
+            details={"arguments": {"memory_id": memory_id, "note": note, "category": category, "tags": tags, "cat_id": cat_id}, "result": res},
         )
         return res
 
@@ -384,10 +456,10 @@ def create_mcp_server(name: str = "cat-and-mouse-mcp", version: str = "0.1.0") -
         name="delete_coach_note",
         description="Deletes a coach tactical memory note by memory ID.",
     )
-    async def delete_coach_note(memory_id: str) -> Dict[str, Any]:
+    async def delete_coach_note(memory_id: str, cat_id: Optional[str] = "cat-1") -> Dict[str, Any]:
         """Delete an existing coach memory note."""
         start = time.perf_counter()
-        deleted = store.delete_coach_memory(memory_id=memory_id)
+        deleted = store.delete_coach_memory(memory_id=memory_id, agent_id=cat_id)
         dur = round((time.perf_counter() - start) * 1000, 2)
         res = {"status": "deleted" if deleted else "not_found", "memory_id": memory_id}
         level = "success" if deleted else "warn"
@@ -396,11 +468,11 @@ def create_mcp_server(name: str = "cat-and-mouse-mcp", version: str = "0.1.0") -
             event_type="tool_call",
             level=level,
             tool="delete_coach_note",
-            arguments={"memory_id": memory_id},
+            arguments={"memory_id": memory_id, "cat_id": cat_id},
             duration_ms=dur,
             status=status_str,
-            summary=f"delete_coach_note ({dur}ms) -> {memory_id} ({'deleted' if deleted else 'not found'})",
-            details={"arguments": {"memory_id": memory_id}, "result": res},
+            summary=f"delete_coach_note ({dur}ms) [{cat_id or 'cat-1'}] -> {memory_id} ({'deleted' if deleted else 'not found'})",
+            details={"arguments": {"memory_id": memory_id, "cat_id": cat_id}, "result": res},
         )
         return res
 
@@ -412,10 +484,11 @@ def create_mcp_server(name: str = "cat-and-mouse-mcp", version: str = "0.1.0") -
         last_n: Optional[int] = 50,
         limit: Optional[int] = None,
         offset: Optional[int] = None,
+        cat_id: Optional[str] = "cat-1",
     ) -> Dict[str, Any]:
         """Fetches windowed transcript records formatted without absolute tick indices."""
         start = time.perf_counter()
-        records = store.read_transcript_records()
+        records = store.read_transcript_records(agent_id=cat_id)
         total_ticks = len(records)
 
         # Slice records according to parameters
@@ -440,13 +513,69 @@ def create_mcp_server(name: str = "cat-and-mouse-mcp", version: str = "0.1.0") -
             event_type="tool_call",
             level="success",
             tool="pull_transcript",
-            arguments={"last_n": last_n, "limit": limit, "offset": offset},
+            arguments={"last_n": last_n, "limit": limit, "offset": offset, "cat_id": cat_id},
             duration_ms=dur,
             status="ok",
-            summary=f"pull_transcript ({dur}ms) -> {len(sliced)}/{total_ticks} ticks",
-            details={"arguments": {"last_n": last_n, "limit": limit, "offset": offset}, "result": res},
+            summary=f"pull_transcript ({dur}ms) [{cat_id or 'cat-1'}] -> {len(sliced)}/{total_ticks} ticks",
+            details={"arguments": {"last_n": last_n, "limit": limit, "offset": offset, "cat_id": cat_id}, "result": res},
         )
         return res
+
+    @server.tool(
+        name="get_notice_board",
+        description="Reads the global Arena Notice Board, active game rules (including Kill Absorption), and system announcements broadcast to all agents.",
+    )
+    async def get_notice_board(sim_id: str = "active") -> Dict[str, Any]:
+        """Fetch notice board and active rules for the simulation."""
+        start = time.perf_counter()
+        notice_data, bulletin = await _build_notice_board_data(sim_id=sim_id)
+        dur = round((time.perf_counter() - start) * 1000, 2)
+        get_telemetry().record_event(
+            event_type="tool_call",
+            level="success" if notice_data["available"] else "warn",
+            tool="get_notice_board",
+            arguments={"sim_id": sim_id},
+            duration_ms=dur,
+            status="ok" if notice_data["available"] else "warning",
+            summary=f"get_notice_board ({dur}ms) -> absorption={'ACTIVE' if notice_data['active_modifiers']['absorption']['enabled'] else 'INACTIVE'} (tick {notice_data['tick']})",
+            details={"arguments": {"sim_id": sim_id}, "result": notice_data},
+        )
+        return notice_data
+
+    @server.tool(
+        name="toggle_game_rule",
+        description="Toggles or updates an authoritative game rule on the game server (e.g. 'absorption') and automatically updates the global notice board for all agents.",
+    )
+    async def toggle_game_rule(
+        rule: str = "absorption",
+        enabled: bool = True,
+        sim_id: str = "active",
+    ) -> Dict[str, Any]:
+        """Toggle an active game rule on the game server and broadcast notice."""
+        start = time.perf_counter()
+        payload = {rule: enabled}
+        ok, res, err = await _fetch_from_game_server(
+            f"/api/simulations/{sim_id}/species/cat",
+            method="PATCH",
+            json_body=payload,
+        )
+        dur = round((time.perf_counter() - start) * 1000, 2)
+        if not ok:
+            return {"status": "error", "reason": err}
+
+        notice_data, bulletin = await _build_notice_board_data(sim_id=sim_id)
+        summary_msg = f"📢 ARENA RULE CHANGED: {rule} set to {enabled} (Tick {notice_data['tick']})"
+        get_telemetry().record_event(
+            event_type="notice_board",
+            level="info",
+            tool="toggle_game_rule",
+            arguments={"rule": rule, "enabled": enabled, "sim_id": sim_id},
+            duration_ms=dur,
+            status="ok",
+            summary=summary_msg,
+            details={"rule": rule, "enabled": enabled, "notice_board": notice_data},
+        )
+        return {"status": "updated", "rule": rule, "enabled": enabled, "notice_board": notice_data}
 
 
     # --------------------------------------------------------------------------
@@ -536,6 +665,48 @@ def create_mcp_server(name: str = "cat-and-mouse-mcp", version: str = "0.1.0") -
             details={"uri": "cm://coach/notes", "count": len(memories)},
         )
         return json.dumps({"count": len(memories), "memories": memories})
+
+    @server.resource(
+        "cm://game/notice_board",
+        name="Global Arena Notice Board",
+        description="Active arena rules, modifiers, and global bulletins broadcast to all agents.",
+        mime_type="application/json",
+    )
+    async def notice_board_resource() -> str:
+        start = time.perf_counter()
+        notice_data, _ = await _build_notice_board_data(sim_id="active")
+        dur = round((time.perf_counter() - start) * 1000, 2)
+        get_telemetry().record_event(
+            event_type="resource_read",
+            level="info",
+            resource="cm://game/notice_board",
+            duration_ms=dur,
+            status="ok",
+            summary=f"Resource read cm://game/notice_board in {dur}ms",
+            details={"uri": "cm://game/notice_board"},
+        )
+        return json.dumps(notice_data)
+
+    @server.resource(
+        "cm://game/rules",
+        name="Active Game Rules",
+        description="Active game rules and parameters from the authoritative game server.",
+        mime_type="application/json",
+    )
+    async def rules_resource() -> str:
+        start = time.perf_counter()
+        notice_data, _ = await _build_notice_board_data(sim_id="active")
+        dur = round((time.perf_counter() - start) * 1000, 2)
+        get_telemetry().record_event(
+            event_type="resource_read",
+            level="info",
+            resource="cm://game/rules",
+            duration_ms=dur,
+            status="ok",
+            summary=f"Resource read cm://game/rules in {dur}ms",
+            details={"uri": "cm://game/rules"},
+        )
+        return json.dumps(notice_data.get("active_modifiers", {}))
 
     return server
 
@@ -789,6 +960,39 @@ def create_mcp_app(server: Optional[MCPServer] = None):
             return JSONResponse({"ok": True, "notes": store.read_coaching_notes()})
         return JSONResponse({"ok": True, "notes": store.read_coaching_notes()})
 
+    # 8. Notice Board REST API
+    async def notice_board_endpoint(request: Request) -> JSONResponse:
+        sim_id = request.query_params.get("sim_id", "active")
+        notice_data, bulletin = await _build_notice_board_data(sim_id=sim_id)
+        return JSONResponse({"ok": True, "notice_board": notice_data})
+
+    async def notice_board_toggle_endpoint(request: Request) -> JSONResponse:
+        try:
+            body = await request.json()
+        except Exception:
+            return JSONResponse({"ok": False, "error": "Invalid JSON body"}, status_code=400)
+        rule = body.get("rule", "absorption")
+        enabled = bool(body.get("enabled", True))
+        sim_id = body.get("sim_id", "active")
+
+        ok, res, err = await _fetch_from_game_server(
+            f"/api/simulations/{sim_id}/species/cat",
+            method="PATCH",
+            json_body={rule: enabled},
+        )
+        if not ok:
+            return JSONResponse({"ok": False, "error": err}, status_code=500)
+
+        notice_data, bulletin = await _build_notice_board_data(sim_id=sim_id)
+        get_telemetry().record_event(
+            event_type="notice_board",
+            level="info",
+            status="ok",
+            summary=f"📢 NOTICE BOARD TOGGLE: {rule} -> {enabled} (Tick {notice_data['tick']})",
+            details={"rule": rule, "enabled": enabled, "notice_board": notice_data},
+        )
+        return JSONResponse({"ok": True, "notice_board": notice_data})
+
     # Register additional HTTP routes
     app.add_route("/", dashboard_endpoint, methods=["GET"])
     app.add_route("/api/mcp/stream", stream_endpoint, methods=["GET"])
@@ -796,6 +1000,8 @@ def create_mcp_app(server: Optional[MCPServer] = None):
     app.add_route("/api/mcp/history", history_endpoint, methods=["GET"])
     app.add_route("/api/mcp/execute-tool", execute_tool_endpoint, methods=["POST"])
     app.add_route("/api/mcp/clear-logs", clear_logs_endpoint, methods=["POST"])
+    app.add_route("/api/mcp/notice-board", notice_board_endpoint, methods=["GET"])
+    app.add_route("/api/mcp/notice-board/toggle", notice_board_toggle_endpoint, methods=["POST"])
     app.add_route("/api/mcp/coach-notes", coach_notes_list_endpoint, methods=["GET"])
     app.add_route("/api/mcp/coach-notes", coach_notes_create_endpoint, methods=["POST"])
     app.add_route("/api/mcp/coach-notes/{id}", coach_notes_item_endpoint, methods=["PUT", "DELETE"])

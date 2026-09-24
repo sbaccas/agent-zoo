@@ -53,6 +53,7 @@ SECTION_KEYS = [
     "commander_directive",
     "history_window",
     "current_observation",
+    "notice_board",
 ]
 
 
@@ -369,6 +370,63 @@ def test_history_records_the_action_posture_and_perception_reasoning():
     assert "(1, 1) [NORTH] ➔ (2, 1) [EAST]" in prompt
     assert "Target: mouse-54" in prompt
     assert "mouse-54 at (3, 1)" in prompt
+
+
+def test_history_records_preserve_observation_payloads_health_deltas_and_combat():
+    """Verify history window preserves health deltas, entity coordinates/types/geometry, hazards, and combat events."""
+    capture = {}
+    history = [
+        {
+            "tick": 10,
+            "observation": {
+                "self": {"position": {"x": 5, "y": 5}, "facing": "north", "hp": 100, "max_hp": 100},
+                "visible_entities": [
+                    {
+                        "id": "cat-2",
+                        "type": "cat",
+                        "position": {"x": 8, "y": 5},
+                        "hp": 100,
+                        "facing": "west",
+                        "forward": -3,
+                        "offaxis": 0,
+                        "in_strike_zone": False,
+                    }
+                ],
+                "score": 0,
+            },
+            "response": {"action": "north", "thought": "patrolling north"},
+        },
+        {
+            "tick": 11,
+            "observation": {
+                "self": {"position": {"x": 5, "y": 4}, "facing": "north", "hp": 66, "max_hp": 100},
+                "visible_entities": [],
+                "events": [{"type": "damage_taken", "source_id": "cat-2", "amount": 34, "remaining_hp": 66}],
+                "hazard_zones": [{"owner_id": "cat-2", "kind": "slash_zone"}],
+                "score": 0,
+            },
+            "response": {"action": "stay", "thought": "evaluating surprise impact"},
+        },
+    ]
+    prompt = build_decision_prompt(_observation(tick=12), history=history, capture=capture)
+
+    # 1. Health deltas preserved
+    assert "HP: 100/100" in prompt
+    assert "HP: 66/100 (-34 damage taken)" in prompt
+
+    # 2. Full entity details preserved
+    assert "cat-2 at (8, 5) [cat, HP 100, facing west, fwd:-3, off:0, strike_zone:False]" in prompt
+
+    # 3. Combat events and hazards preserved
+    assert "Struck by cat-2 for -34 HP (66 remaining)" in prompt
+    assert "Hazards: [1 active zone(s)]" in prompt
+
+    # 4. Captured under the payload inspector sections
+    hist_section = capture["sections"]["history_window"]
+    assert hist_section["delivered"] is True
+    assert "HP: 66/100 (-34 damage taken)" in hist_section["text"]
+    assert "cat-2 at (8, 5)" in hist_section["text"]
+    assert "Struck by cat-2 for -34 HP" in hist_section["text"]
 
 
 def test_capture_is_optional_and_prompt_building_is_unaffected():

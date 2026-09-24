@@ -43,6 +43,7 @@ import logging
 import os
 import shutil
 import subprocess
+import tempfile
 from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -70,6 +71,8 @@ RUNTIME_ARTEFACTS = (
     ("prompts.jsonl", True),
     # The coaching notes as they stood when the game ended.
     ("coaching_notes.md", False),
+    # Notice board bulletin active during this run.
+    ("notice_board.md", False),
     # Coach tactical memories and hypotheses log written via MCP / evaluator.
     ("coach_memory.jsonl", False),
     # Written by the actor process, if it writes one: the live model settings
@@ -112,7 +115,7 @@ def archive_root() -> Path:
     return Path(os.environ.get("CAT_GAME_ARCHIVE_DIR") or (REPO_ROOT / "archive"))
 
 
-def cat_runtime_dir() -> Path:
+def cat_runtime_dir(agent_id: Optional[str] = None) -> Path:
     """The cat actor's runtime directory.
 
     Deliberately resolved here rather than imported from ``actors.cat.store``:
@@ -122,9 +125,48 @@ def cat_runtime_dir() -> Path:
     archiving an empty directory.
     """
     override = os.environ.get("CAT_AGENT_RUNTIME_DIR")
+    tmp_base = Path(tempfile.gettempdir())
+
+    if agent_id:
+        if override:
+            override_path = Path(override)
+            if override_path.name in (agent_id, f"cm_runtime_{agent_id}", f"runtime_{agent_id}"):
+                return override_path
+            for sub in (agent_id, f"cm_runtime_{agent_id}", f"runtime_{agent_id}"):
+                cand = override_path / sub
+                if cand.is_dir():
+                    return cand
+            agent_tmp = tmp_base / f"cm_runtime_{agent_id}"
+            if agent_tmp.is_dir():
+                return agent_tmp
+            agent_legacy_tmp = tmp_base / f"runtime_{agent_id}"
+            if agent_legacy_tmp.is_dir():
+                return agent_legacy_tmp
+            repo_agent = REPO_ROOT / "actors" / "cat" / f"runtime_{agent_id}"
+            if repo_agent.is_dir():
+                return repo_agent
+            if agent_id == "cat-1" and override_path.is_dir():
+                return override_path
+            return agent_tmp
+
+        agent_tmp = tmp_base / f"cm_runtime_{agent_id}"
+        if agent_tmp.is_dir():
+            return agent_tmp
+        agent_legacy_tmp = tmp_base / f"runtime_{agent_id}"
+        if agent_legacy_tmp.is_dir():
+            return agent_legacy_tmp
+        repo_agent = REPO_ROOT / "actors" / "cat" / f"runtime_{agent_id}"
+        if repo_agent.is_dir():
+            return repo_agent
+        if agent_id == "cat-1":
+            cm_runtime = tmp_base / "cm_runtime"
+            if cm_runtime.is_dir():
+                return cm_runtime
+        return agent_tmp
+
     if override:
         return Path(override)
-    return REPO_ROOT / "actors" / "cat" / "runtime"
+    return tmp_base / "cm_runtime"
 
 
 def _jsonable(value: Any) -> Any:
@@ -229,10 +271,30 @@ def capture(sim: Any, reason: str) -> Optional[Dict[str, Any]]:
 
     agents: Dict[str, str] = {}
     try:
-        for entity in sim.entity_manager.entities.values():
-            etype = getattr(entity.type, "value", entity.type)
-            if str(etype).lower() == "cat":
-                agents[entity.id] = sim.entity_manager.get_agent_mode(entity.id)
+        if hasattr(sim, "entity_manager"):
+            for entity in sim.entity_manager.entities.values():
+                etype = getattr(entity.type, "value", entity.type)
+                if str(etype).lower() == "cat":
+                    agents[entity.id] = sim.entity_manager.get_agent_mode(entity.id)
+            for em_id in getattr(sim.entity_manager, "agent_modes", {}):
+                if str(em_id).startswith("cat-") and em_id not in agents:
+                    agents[em_id] = sim.entity_manager.get_agent_mode(em_id)
+            cat_count = getattr(sim.entity_manager, "_next_id", {}).get("cat", 1)
+            for i in range(1, cat_count):
+                cid = f"cat-{i}"
+                if cid not in agents:
+                    agents[cid] = sim.entity_manager.get_agent_mode(cid)
+        if hasattr(sim, "stats"):
+            cats_dict = getattr(sim.stats, "cats", {}) or {}
+            for cat_id in cats_dict.keys():
+                if cat_id not in agents:
+                    mode = "unknown"
+                    if hasattr(sim, "entity_manager") and hasattr(sim.entity_manager, "get_agent_mode"):
+                        try:
+                            mode = sim.entity_manager.get_agent_mode(cat_id)
+                        except Exception:
+                            pass
+                    agents[cat_id] = mode
     except Exception as exc:
         logger.warning("Archive: agent modes unavailable: %s", exc)
 
@@ -283,6 +345,42 @@ def capture(sim: Any, reason: str) -> Optional[Dict[str, Any]]:
     }
 
 
+def _archive_runtime_files(
+    src_dir: Path,
+    target_dir: Path,
+) -> Dict[str, Any]:
+    """Copies or compresses runtime artefacts from a source directory into target_dir."""
+    target_dir.mkdir(parents=True, exist_ok=True)
+    file_records: Dict[str, Any] = {}
+    for name, may_compress in RUNTIME_ARTEFACTS:
+        src = src_dir / name
+        if not src.exists():
+            # Recorded rather than omitted: "the actor never wrote one" and
+            # "the archiver forgot to look" must not look the same later.
+            file_records[name] = {"present": False}
+            continue
+        try:
+            raw_bytes = src.stat().st_size
+            if may_compress and raw_bytes >= GZIP_THRESHOLD_BYTES:
+                out = target_dir / f"{name}.gz"
+                with src.open("rb") as fh_in, gzip.open(out, "wb", compresslevel=6) as fh_out:
+                    shutil.copyfileobj(fh_in, fh_out, length=1024 * 1024)
+            else:
+                out = target_dir / name
+                shutil.copyfile(src, out)
+            file_records[name] = {
+                "present": True,
+                "stored_as": out.name,
+                "bytes": raw_bytes,
+                "stored_bytes": out.stat().st_size,
+                "sha256": _sha256(src),
+            }
+        except Exception as exc:
+            logger.warning("Archive: failed to copy %s: %s", name, exc)
+            file_records[name] = {"present": True, "error": str(exc)}
+    return file_records
+
+
 def write(captured: Dict[str, Any]) -> Path:
     """Writes the archive to disk. Slow, blocking, safe to run in a thread."""
     dest = archive_root() / captured["dir_name"]
@@ -297,33 +395,35 @@ def write(captured: Dict[str, Any]) -> Path:
         )
         files["boxscore.json"] = {"source": "memory"}
 
-    runtime = cat_runtime_dir()
-    for name, may_compress in RUNTIME_ARTEFACTS:
-        src = runtime / name
-        if not src.exists():
-            # Recorded rather than omitted: "the actor never wrote one" and
-            # "the archiver forgot to look" must not look the same later.
-            files[name] = {"present": False}
-            continue
-        try:
-            raw_bytes = src.stat().st_size
-            if may_compress and raw_bytes >= GZIP_THRESHOLD_BYTES:
-                out = dest / f"{name}.gz"
-                with src.open("rb") as fh_in, gzip.open(out, "wb", compresslevel=6) as fh_out:
-                    shutil.copyfileobj(fh_in, fh_out, length=1024 * 1024)
-            else:
-                out = dest / name
-                shutil.copyfile(src, out)
-            files[name] = {
-                "present": True,
-                "stored_as": out.name,
-                "bytes": raw_bytes,
-                "stored_bytes": out.stat().st_size,
-                "sha256": _sha256(src),
-            }
-        except Exception as exc:
-            logger.warning("Archive: failed to copy %s: %s", name, exc)
-            files[name] = {"present": True, "error": str(exc)}
+    agents = manifest.get("agents") or {}
+    agent_ids = sorted(agents.keys()) if agents else []
+    agent_files: Dict[str, Dict[str, Any]] = {}
+
+    if agent_ids:
+        for cat_id in agent_ids:
+            cat_dir = cat_runtime_dir(cat_id)
+            cat_dest = dest / cat_id
+            records = _archive_runtime_files(cat_dir, cat_dest)
+            agent_files[cat_id] = records
+
+        # Maintain root copies for backwards compatibility
+        primary_id = "cat-1" if "cat-1" in agent_ids else agent_ids[0]
+        primary_records = agent_files.get(primary_id, {})
+        for name, rec in primary_records.items():
+            if rec.get("present"):
+                stored_as = rec.get("stored_as", name)
+                cat_file = dest / primary_id / stored_as
+                root_file = dest / stored_as
+                if cat_file.exists() and not root_file.exists():
+                    try:
+                        os.link(cat_file, root_file)
+                    except Exception:
+                        shutil.copyfile(cat_file, root_file)
+            files[name] = dict(rec)
+    else:
+        runtime = cat_runtime_dir()
+        root_records = _archive_runtime_files(runtime, dest)
+        files.update(root_records)
 
     prompts_dir = dest / "prompt_sources"
     prompt_files: Dict[str, Any] = {}
@@ -341,6 +441,8 @@ def write(captured: Dict[str, Any]) -> Path:
             logger.warning("Archive: failed to copy prompt source %s: %s", src, exc)
 
     manifest["files"] = files
+    if agent_files:
+        manifest["agent_files"] = agent_files
     manifest["prompt_sources"] = prompt_files
     (dest / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
@@ -431,6 +533,16 @@ def list_archives() -> List[Dict[str, Any]]:
             mtime = datetime.fromtimestamp(entry.stat().st_mtime, tz=timezone.utc)
             archived_at = mtime.isoformat().replace("+00:00", "Z")
 
+        has_notes = (entry / "coaching_notes.md").exists() or any(
+            (p / "coaching_notes.md").exists() for p in entry.iterdir() if p.is_dir()
+        )
+        has_coach_memory = (entry / "coach_memory.jsonl").exists() or any(
+            (p / "coach_memory.jsonl").exists() for p in entry.iterdir() if p.is_dir()
+        )
+        has_run_config = (entry / "run_config.json").exists() or any(
+            (p / "run_config.json").exists() for p in entry.iterdir() if p.is_dir()
+        )
+
         results.append({
             "id": folder_name,
             "dir_name": folder_name,
@@ -444,9 +556,9 @@ def list_archives() -> List[Dict[str, Any]]:
             "mice_remaining": final_info.get("mice_remaining", 0),
             "agents": (manifest_data or {}).get("agents", {}),
             "has_boxscore": (entry / "boxscore.json").exists(),
-            "has_notes": (entry / "coaching_notes.md").exists(),
-            "has_coach_memory": (entry / "coach_memory.jsonl").exists(),
-            "has_run_config": (entry / "run_config.json").exists(),
+            "has_notes": has_notes,
+            "has_coach_memory": has_coach_memory,
+            "has_run_config": has_run_config,
             "total_size_bytes": total_bytes,
             "files_count": file_count,
             "is_latest": folder_name == latest_name,
@@ -507,6 +619,47 @@ def get_archive_detail(archive_id: str) -> Optional[Dict[str, Any]]:
         except Exception:
             pass
 
+    agents_data: Dict[str, Any] = {}
+    for agent_dir in sorted(p for p in dest.iterdir() if p.is_dir() and not p.is_symlink() and p.name.startswith("cat-")):
+        agent_id = agent_dir.name
+        a_notes = None
+        a_notes_file = agent_dir / "coaching_notes.md"
+        if a_notes_file.exists():
+            try:
+                a_notes = a_notes_file.read_text(encoding="utf-8")
+            except Exception:
+                pass
+        a_memories = None
+        a_mem_file = agent_dir / "coach_memory.jsonl"
+        if a_mem_file.exists():
+            try:
+                a_memories = [json.loads(l) for l in a_mem_file.read_text(encoding="utf-8").splitlines() if l.strip()]
+            except Exception:
+                pass
+        a_run_config = None
+        a_rc_file = agent_dir / "run_config.json"
+        if a_rc_file.exists():
+            try:
+                a_run_config = json.loads(a_rc_file.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+        agents_data[agent_id] = {
+            "coaching_notes": a_notes,
+            "coach_memories": a_memories,
+            "run_config": a_run_config,
+            "has_transcript": (agent_dir / "transcript.jsonl").exists(),
+            "has_prompts": (agent_dir / "prompts.jsonl").exists() or (agent_dir / "prompts.jsonl.gz").exists(),
+        }
+
+    # If multiple agents have coaching notes, provide unified view
+    if agents_data and len(agents_data) > 1:
+        notes_parts = []
+        for aid, adata in agents_data.items():
+            if adata.get("coaching_notes"):
+                notes_parts.append(f"### {aid} Coaching Notes\n\n{adata['coaching_notes']}")
+        if notes_parts:
+            coaching_notes = "\n\n---\n\n".join(notes_parts)
+
     files = []
     total_bytes = 0
     for f in sorted(dest.rglob("*")):
@@ -535,6 +688,7 @@ def get_archive_detail(archive_id: str) -> Optional[Dict[str, Any]]:
         "run_config": run_config,
         "coaching_notes": coaching_notes,
         "coach_memories": coach_memories,
+        "agent_details": agents_data,
         "files": files,
         "total_size_bytes": total_bytes,
         "is_latest": archive_id == latest_name,

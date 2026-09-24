@@ -121,7 +121,7 @@ than last."
 
 You have tools that close these gaps:
 
-1. **`get_boxscore`** — the game engine's own counters, measured independently of
+1. **`get_boxscore`** — call it before you write your notes: the game engine's own counters, measured independently of
 the transcript, for **every cat on the board**, along with overall population counters
 (`mice_alive`, `mice_initial`, `captures`). Mice never respawn: every capture permanently
 depletes that sector's population.

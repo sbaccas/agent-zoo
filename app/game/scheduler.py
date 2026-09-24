@@ -209,6 +209,7 @@ class Scheduler:
             # nothing at all, and getting that backwards in either direction is
             # worse than the problem the feature exists to solve.
             "aim_assist": bool(spec_cfg.aim_assist) if spec_cfg else False,
+            "absorption": bool(getattr(spec_cfg, "absorption", False)) if spec_cfg else False,
             "hp": entity.hp,
             "max_hp": entity.max_hp,
             "attack_power": spec_cfg.attack_power if spec_cfg else (34 if entity.type == EntityType.CAT else 0),
@@ -274,7 +275,16 @@ class Scheduler:
         self.deaths.append(death_record)
 
         self.captures += 1
-        self.scores[owner_id] = self.scores.get(owner_id, 0) + 1
+        absorbed_score = 0
+        if is_cat:
+            cat_cfg = self.entity_manager.species_config.get("cat")
+            if cat_cfg and getattr(cat_cfg, "absorption", False):
+                victim_score = self.scores.get(victim.id, 0)
+                if victim_score > 0:
+                    absorbed_score = victim_score
+
+        self.scores[owner_id] = self.scores.get(owner_id, 0) + 1 + absorbed_score
+        death_record["absorbed_score"] = absorbed_score
         if self.stats is not None:
             self.stats.record_kill(owner_id, zone_id)
 
@@ -288,6 +298,7 @@ class Scheduler:
                 "target": victim.id,
                 "target_type": "cat",
                 "source": source,
+                "absorbed_score": absorbed_score,
             })
         else:
             self.entity_events[owner_id].append({
@@ -310,9 +321,10 @@ class Scheduler:
         owner = self.entity_manager.entities.get(owner_id)
         o_pos = f"({owner.position.x}, {owner.position.y})" if owner else "?"
         if is_cat:
+            absorb_suffix = f" (Absorbed +{absorbed_score} kills! Total score: {self.scores[owner_id]})" if absorbed_score > 0 else ""
             msg = (
                 f"⚡ [TICK {self.tick} | R{self.round}] GLORIOUS CONQUEST: {owner_id} at {o_pos} "
-                f"eliminated rival predator {victim.id} via {source}! ({victim.id} is out of the game!)"
+                f"eliminated rival predator {victim.id} via {source}! ({victim.id} is out of the game!){absorb_suffix}"
             )
             event_type = "elimination"
         else:

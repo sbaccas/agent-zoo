@@ -16,6 +16,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const settingCatVisionRear = document.getElementById('settingCatVisionRear');
   const settingCatVisionHalfWidth = document.getElementById('settingCatVisionHalfWidth');
   const settingCatAimAssist = document.getElementById('settingCatAimAssist');
+  const settingCatAbsorption = document.getElementById('settingCatAbsorption');
   const settingCatWeight = document.getElementById('settingCatWeight');
 
   // Mouse inputs
@@ -78,6 +79,7 @@ document.addEventListener('DOMContentLoaded', () => {
         // the control would silently render unticked no matter what the server
         // said, and the first save would then turn the feature off.
         if (settingCatAimAssist) settingCatAimAssist.checked = !!data.cat.aim_assist;
+        if (settingCatAbsorption) settingCatAbsorption.checked = !!data.cat.absorption;
         updateCatVisionBoxReadout();
         updateAimAssistReadout();
       }
@@ -126,6 +128,7 @@ document.addEventListener('DOMContentLoaded', () => {
       // Sent as a real boolean. The endpoint's field is Optional[bool] and
       // pydantic would reject the string "on" a form submission would produce.
       aim_assist: !!settingCatAimAssist?.checked,
+      absorption: !!settingCatAbsorption?.checked,
     };
 
     const mousePayload = {

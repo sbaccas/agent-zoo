@@ -976,6 +976,7 @@
     <div class="panel">
       <div class="sidebar-tabs">
         <button class="sidebar-tab-btn active" data-tab="tabTester">🛠️ Test Tool</button>
+        <button class="sidebar-tab-btn" data-tab="tabNoticeBoard">📢 Notice Board</button>
         <button class="sidebar-tab-btn" data-tab="tabCoachNotes">📓 Coach Private Notes</button>
         <button class="sidebar-tab-btn" data-tab="tabCatalog">📚 Catalog</button>
 
@@ -988,6 +989,8 @@
           <label class="form-label" for="toolSelect">Select MCP Tool</label>
           <select id="toolSelect" class="form-select">
             <option value="get_boxscore">get_boxscore (Simulation KPIs)</option>
+            <option value="get_notice_board">get_notice_board (Global Notice Board)</option>
+            <option value="toggle_game_rule">toggle_game_rule (Toggle Game Rule/Modifier)</option>
             <option value="get_coverage_map">get_coverage_map (Spatial Heatmap)</option>
             <option value="get_event_reel">get_event_reel (Combat Events)</option>
             <option value="write_coach_note">write_coach_note (Save Coach Memory)</option>
@@ -1009,6 +1012,47 @@
         <div class="form-group">
           <label class="form-label">Tool Result</label>
           <pre class="test-result-box" id="toolResultBox">// Results will appear here...</pre>
+        </div>
+      </div>
+
+      <!-- Tab: Notice Board -->
+      <div class="sidebar-content" id="tabNoticeBoard" style="display: none; flex-direction: column; height: 100%;">
+        <div class="notes-toolbar">
+          <div class="form-label" style="display:flex; justify-content:space-between; align-items:center;">
+            <span>📢 Global Arena Notice Board</span>
+            <span class="badge" id="noticeTickBadge">Tick 0</span>
+          </div>
+          <div style="font-size:0.72rem; color:var(--text-dim); margin-bottom:10px;">
+            Authoritative broadcast hub for all autonomous agents. Rules configured on the game server (or toggled via MCP) are broadcast here directly into agent prompts.
+          </div>
+        </div>
+
+        <!-- Rule Modifiers Card -->
+        <div style="padding: 12px; margin-bottom: 12px; background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 8px;">
+          <div style="display:flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+            <strong style="font-size: 0.85rem; color: var(--text);">⚔️ Kill Absorption</strong>
+            <span id="badgeAbsorption" class="badge" style="background:#fee2e2; color:#991b1b;">INACTIVE</span>
+          </div>
+          <p style="font-size: 0.75rem; color: var(--text-muted); margin: 0 0 10px 0; line-height: 1.4;">
+            When enabled, eliminating a rival cat absorbs all of their accumulated prey kills into the victor's score.
+          </p>
+          <div style="display: flex; gap: 8px;">
+            <button id="btnToggleAbsorption" class="ext-btn" style="cursor: pointer;">
+              🔄 Toggle Absorption
+            </button>
+            <button id="btnRefreshNoticeBoard" class="ext-btn" style="cursor: pointer;">
+              📡 Refresh
+            </button>
+          </div>
+        </div>
+
+        <!-- Live Bulletin Preview -->
+        <div class="form-group" style="flex: 1; display: flex; flex-direction: column;">
+          <label class="form-label" style="display: flex; justify-content: space-between;">
+            <span>Active Bulletin Broadcast</span>
+            <span style="font-size: 0.7rem; color: var(--accent);">cm://game/notice_board</span>
+          </label>
+          <pre id="noticeBoardBulletinBox" class="test-result-box" style="flex: 1; min-height: 200px; white-space: pre-wrap; font-family: var(--font-mono); font-size: 0.78rem;">Loading notice board...</pre>
         </div>
       </div>
 
@@ -1258,6 +1302,14 @@
     // Tool params definition
     const toolParamSchemas = {
       get_boxscore: [
+        { name: 'sim_id', label: 'Simulation ID', type: 'text', default: 'active' }
+      ],
+      get_notice_board: [
+        { name: 'sim_id', label: 'Simulation ID', type: 'text', default: 'active' }
+      ],
+      toggle_game_rule: [
+        { name: 'rule', label: 'Rule Identifier', type: 'select', options: ['absorption', 'aim_assist'], default: 'absorption' },
+        { name: 'enabled', label: 'State (true/false)', type: 'select', options: ['true', 'false'], default: 'true' },
         { name: 'sim_id', label: 'Simulation ID', type: 'text', default: 'active' }
       ],
       get_coverage_map: [
@@ -1906,9 +1958,76 @@
       loadCoachNotes();
     });
 
+    // Notice Board logic
+    const noticeTickBadge = document.getElementById('noticeTickBadge');
+    const badgeAbsorption = document.getElementById('badgeAbsorption');
+    const noticeBoardBulletinBox = document.getElementById('noticeBoardBulletinBox');
+    const btnToggleAbsorption = document.getElementById('btnToggleAbsorption');
+    const btnRefreshNoticeBoard = document.getElementById('btnRefreshNoticeBoard');
+    let currentAbsorptionState = false;
+
+    async function loadNoticeBoard() {
+      try {
+        const resp = await fetch('/api/mcp/notice-board');
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const data = await resp.json();
+        const nb = data.notice_board || {};
+        if (noticeTickBadge) noticeTickBadge.textContent = `Tick ${nb.tick ?? 0}`;
+        if (noticeBoardBulletinBox) noticeBoardBulletinBox.textContent = nb.bulletin || '(No bulletin broadcast)';
+
+        const mods = nb.active_modifiers || {};
+        const abs = mods.absorption || {};
+        currentAbsorptionState = !!abs.enabled;
+        if (badgeAbsorption) {
+          if (currentAbsorptionState) {
+            badgeAbsorption.textContent = 'ACTIVE';
+            badgeAbsorption.style.background = '#dcfce7';
+            badgeAbsorption.style.color = '#166534';
+          } else {
+            badgeAbsorption.textContent = 'INACTIVE';
+            badgeAbsorption.style.background = '#fee2e2';
+            badgeAbsorption.style.color = '#991b1b';
+          }
+        }
+      } catch (err) {
+        console.warn('Failed to load notice board:', err);
+        if (noticeBoardBulletinBox) noticeBoardBulletinBox.textContent = `Failed to load notice board: ${err.message}`;
+      }
+    }
+
+    if (btnToggleAbsorption) {
+      btnToggleAbsorption.addEventListener('click', async () => {
+        btnToggleAbsorption.disabled = true;
+        btnToggleAbsorption.innerText = 'Toggling…';
+        try {
+          const resp = await fetch('/api/mcp/notice-board/toggle', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ rule: 'absorption', enabled: !currentAbsorptionState })
+          });
+          if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+          await loadNoticeBoard();
+        } catch (err) {
+          alert(`Failed to toggle rule: ${err.message}`);
+        } finally {
+          btnToggleAbsorption.disabled = false;
+          btnToggleAbsorption.innerText = '🔄 Toggle Absorption';
+        }
+      });
+    }
+
+    if (btnRefreshNoticeBoard) {
+      btnRefreshNoticeBoard.addEventListener('click', () => loadNoticeBoard());
+    }
+
+    document.querySelector('[data-tab="tabNoticeBoard"]').addEventListener('click', () => {
+      loadNoticeBoard();
+    });
+
     // Initialize
     connectEventStream();
     loadCoachNotes();
+    loadNoticeBoard();
   </script>
 </body>
 </html>

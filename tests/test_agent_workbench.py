@@ -559,6 +559,7 @@ def test_transcript_records_are_compact():
         # observation of its own, so without these it cannot know the cat's
         # actual reach and has historically guessed it wrong.
         "capabilities",
+        "observation",
     }
     assert rec["tick"] == 1
     assert rec["action"] in ("stay", "north", "south", "east", "west", "lunge", "attack")

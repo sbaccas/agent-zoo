@@ -133,7 +133,8 @@ class AgentWorkbenchState:
     def __init__(self, max_history: int = 50):
         self.max_history = max_history
         self.history_window_size: int = 25
-        self.agent_id: str = "cat-1"
+        initial_id = os.environ.get("CAT_ID") or ("cat-2" if os.environ.get("PORT") == "8003" else "cat-1")
+        self.agent_id: str = initial_id
         self.simulation_id: Optional[str] = None
         self.active_tick: int = 0
         self.total_ticks_processed: int = 0
@@ -221,6 +222,7 @@ class AgentWorkbenchState:
 
 # Singleton in-memory state
 state = AgentWorkbenchState()
+store.set_agent_id(state.agent_id)
 
 
 def _record_prompt(
@@ -344,7 +346,7 @@ async def _run_evaluation_cycle():
     """
     try:
         state.is_evaluating = True
-        result = await evaluate_and_publish()
+        result = await evaluate_and_publish(agent_id=state.agent_id)
         state.last_eval_result = result
     except Exception as exc:
         logger.warning("Evaluation cycle failed: %s", exc)
@@ -696,7 +698,7 @@ class WsClientManager:
             default_url = default_url.rstrip("/") + "/ws/agents"
 
         self.server_url: str = default_url
-        self.requested_cat_id: Optional[str] = None
+        self.requested_cat_id: Optional[str] = state.agent_id
         self.connected: bool = False
         self.connecting: bool = False
         self.assigned_id: Optional[str] = None
@@ -938,6 +940,7 @@ class WsClientManager:
                             self.assigned_id = data.get("agent_id", "cat-1")
                             state.agent_id = self.assigned_id
                             state.simulation_id = data.get("simulation_id")
+                            store.set_agent_id(self.assigned_id)
                             print(f"🐾 [WS CLIENT] Handshake complete! Bound to entity '{self.assigned_id}'", flush=True)
                             init_obs = data.get("initial_observation")
                             if init_obs and isinstance(init_obs, dict) and "self" in init_obs:
@@ -1883,7 +1886,7 @@ async def interrogate_general_agent(
 ) -> GeneralInterrogateResponse:
     """Put a question to the coach, and optionally leave it under a standing order."""
     clean_prompt = req.prompt.strip()
-    notes = store.read_coaching_notes()
+    notes = store.read_coaching_notes(agent_id=state.agent_id)
     notes_count = sum(
         1 for ln in (notes or "").splitlines() if ln.strip().startswith("-")
     )
@@ -1904,7 +1907,7 @@ async def interrogate_general_agent(
     # answerable from the evidence that produced those notes -- and the file is
     # tens of megabytes by mid-game, so the slice is not optional.
     try:
-        all_records = store.read_transcript_records()
+        all_records = store.read_transcript_records(agent_id=state.agent_id)
         window = max(1, int(state.eval_interval or 1))
         records = all_records[-window:] if all_records else None
     except Exception:
@@ -1918,6 +1921,7 @@ async def interrogate_general_agent(
         records=records,
         standing_order=existing.get("directive"),
         tick=state.active_tick,
+        agent_id=state.agent_id,
     )
 
     adopted = None

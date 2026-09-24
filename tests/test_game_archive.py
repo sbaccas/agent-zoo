@@ -447,3 +447,126 @@ def test_agent_summary_survives_an_agent_missing_every_field():
     assert summary["thinking_budget"] is None
     assert summary["tools"] == []
 
+
+# --- multi-agent archiving ---------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_archiving_captures_all_participating_cat_agents(tmp_path, monkeypatch):
+    """Ensures all cat agents participating in a game are archived into per-agent subdirectories."""
+    archive_dir = tmp_path / "archive"
+    archive_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("CAT_GAME_ARCHIVE", "1")
+    monkeypatch.setenv("CAT_GAME_ARCHIVE_DIR", str(archive_dir))
+    monkeypatch.delenv("CAT_AGENT_RUNTIME_DIR", raising=False)
+
+    import tempfile
+    import shutil
+    tmp_base = Path(tempfile.gettempdir())
+    cat1_runtime = tmp_base / "cm_runtime_cat-1"
+    cat2_runtime = tmp_base / "cm_runtime_cat-2"
+    cat1_runtime.mkdir(parents=True, exist_ok=True)
+    cat2_runtime.mkdir(parents=True, exist_ok=True)
+
+    try:
+        (cat1_runtime / "transcript.jsonl").write_text('{"tick":1,"cat":"cat-1"}\n')
+        (cat1_runtime / "coaching_notes.md").write_text("Orders for cat-1: attack\n")
+        (cat1_runtime / "coach_memory.jsonl").write_text('{"cat":"cat-1","memory":"pincer"}\n')
+
+        (cat2_runtime / "transcript.jsonl").write_text('{"tick":1,"cat":"cat-2"}\n')
+        (cat2_runtime / "coaching_notes.md").write_text("Orders for cat-2: flank\n")
+        (cat2_runtime / "coach_memory.jsonl").write_text('{"cat":"cat-2","memory":"ambush"}\n')
+
+        sim = _played(_sim(), tick=25, captures=2)
+        c1 = sim.entity_manager.spawn_entity(EntityType.CAT, pos=Position(x=2, y=2), facing=Direction.NORTH)
+        c2 = sim.entity_manager.spawn_entity(EntityType.CAT, pos=Position(x=8, y=8), facing=Direction.SOUTH)
+        assert c1.id == "cat-1"
+        assert c2.id == "cat-2"
+
+        await sim.reset()
+
+        dest = _only_archive(archive_dir)
+        # Check per-agent directories
+        assert (dest / "cat-1" / "transcript.jsonl").read_text() == '{"tick":1,"cat":"cat-1"}\n'
+        assert "Orders for cat-1" in (dest / "cat-1" / "coaching_notes.md").read_text()
+        assert (dest / "cat-2" / "transcript.jsonl").read_text() == '{"tick":1,"cat":"cat-2"}\n'
+        assert "Orders for cat-2" in (dest / "cat-2" / "coaching_notes.md").read_text()
+
+        # Check root backwards-compatibility copy (cat-1 as primary)
+        assert (dest / "transcript.jsonl").read_text() == '{"tick":1,"cat":"cat-1"}\n'
+
+        # Check manifest
+        manifest = _manifest(dest)
+        assert "cat-1" in manifest["agents"]
+        assert "cat-2" in manifest["agents"]
+        assert "cat-1" in manifest["agent_files"]
+        assert "cat-2" in manifest["agent_files"]
+        assert manifest["agent_files"]["cat-1"]["transcript.jsonl"]["present"] is True
+        assert manifest["agent_files"]["cat-2"]["transcript.jsonl"]["present"] is True
+
+        # Check detail loader
+        detail = archive.get_archive_detail(dest.name)
+        assert detail is not None
+        assert "agent_details" in detail
+        assert "cat-1" in detail["agent_details"]
+        assert "cat-2" in detail["agent_details"]
+        assert detail["agent_details"]["cat-1"]["coaching_notes"] == "Orders for cat-1: attack\n"
+        assert detail["agent_details"]["cat-2"]["coaching_notes"] == "Orders for cat-2: flank\n"
+        assert "cat-1 Coaching Notes" in detail["coaching_notes"]
+        assert "cat-2 Coaching Notes" in detail["coaching_notes"]
+
+        # Check list archives
+        archives_list = archive.list_archives()
+        assert len(archives_list) == 1
+        assert archives_list[0]["has_notes"] is True
+        assert archives_list[0]["has_coach_memory"] is True
+    finally:
+        shutil.rmtree(cat1_runtime, ignore_errors=True)
+        shutil.rmtree(cat2_runtime, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_archiving_includes_dead_or_removed_cat_agents(tmp_path, monkeypatch):
+    """Cats eliminated during combat are still archived because they participated in the run."""
+    archive_dir = tmp_path / "archive"
+    archive_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("CAT_GAME_ARCHIVE", "1")
+    monkeypatch.setenv("CAT_GAME_ARCHIVE_DIR", str(archive_dir))
+    monkeypatch.delenv("CAT_AGENT_RUNTIME_DIR", raising=False)
+
+    import tempfile
+    import shutil
+    tmp_base = Path(tempfile.gettempdir())
+    cat1_runtime = tmp_base / "cm_runtime_cat-1"
+    cat2_runtime = tmp_base / "cm_runtime_cat-2"
+    cat1_runtime.mkdir(parents=True, exist_ok=True)
+    cat2_runtime.mkdir(parents=True, exist_ok=True)
+
+    try:
+        (cat1_runtime / "transcript.jsonl").write_text('{"tick":10,"cat":"cat-1"}\n')
+        (cat2_runtime / "transcript.jsonl").write_text('{"tick":8,"cat":"cat-2"}\n')
+
+        sim = _played(_sim(), tick=30, captures=1)
+        c1 = sim.entity_manager.spawn_entity(EntityType.CAT, pos=Position(x=2, y=2), facing=Direction.NORTH)
+        c2 = sim.entity_manager.spawn_entity(EntityType.CAT, pos=Position(x=8, y=8), facing=Direction.SOUTH)
+        # Record cat-2 in stats then remove entity (simulating combat death)
+        sim.stats.get(c2.id).kills = 1
+        sim.entity_manager.remove_entity(c2.id)
+
+        # c2 is no longer in sim.entity_manager.entities, but was in stats
+        assert c2.id not in sim.entity_manager.entities
+        assert c2.id in sim.stats.cats
+
+        await sim.reset()
+
+        dest = _only_archive(archive_dir)
+        assert (dest / "cat-1" / "transcript.jsonl").exists()
+        assert (dest / "cat-2" / "transcript.jsonl").exists()
+        manifest = _manifest(dest)
+        assert "cat-1" in manifest["agents"]
+        assert "cat-2" in manifest["agents"]
+    finally:
+        shutil.rmtree(cat1_runtime, ignore_errors=True)
+        shutil.rmtree(cat2_runtime, ignore_errors=True)
+
+

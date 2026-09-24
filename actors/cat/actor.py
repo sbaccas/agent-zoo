@@ -871,6 +871,7 @@ def build_decision_prompt(
     window_size = max(1, history_window_size)
     recent_slice = history[-window_size:] if history else []
     history_lines = []
+    prev_hp = None
     for h in recent_slice:
         h_obs = h.get("observation", {})
         h_tick = h.get("tick", "?")
@@ -881,18 +882,83 @@ def build_decision_prompt(
         h_score = h_obs.get("score", 0)
         h_resp = h.get("response", {})
         h_act = (h_resp.get("action") or "stay").upper()
+
+        # Health tracking and deltas across ticks
+        h_hp = h_self.get("hp")
+        h_max_hp = h_self.get("max_hp", 100)
+        hp_info = ""
+        if h_hp is not None:
+            if prev_hp is not None and h_hp < prev_hp:
+                delta = prev_hp - h_hp
+                hp_info = f" | HP: {h_hp}/{h_max_hp} (-{delta} damage taken)"
+            elif prev_hp is not None and h_hp > prev_hp:
+                delta = h_hp - prev_hp
+                hp_info = f" | HP: {h_hp}/{h_max_hp} (+{delta} healed)"
+            else:
+                hp_info = f" | HP: {h_hp}/{h_max_hp}"
+            prev_hp = h_hp
+        elif prev_hp is not None:
+            hp_info = f" | HP: {prev_hp}/{h_max_hp}"
+
+        # Preserve full entity observation details (coordinates, type, facing, HP, aim-assist geometry)
         if h_vis:
             vis_items = []
-            for m in h_vis:
-                mid = m.get("id") or m.get("type", "entity")
-                mpos = m.get("position")
-                if isinstance(mpos, dict) and "x" in mpos and "y" in mpos:
-                    vis_items.append(f"{mid} at ({mpos['x']}, {mpos['y']})")
-                else:
-                    vis_items.append(str(mid))
+            for ent in h_vis:
+                eid = ent.get("id") or "entity"
+                epos = ent.get("position")
+                pos_str = f"({epos['x']}, {epos['y']})" if isinstance(epos, dict) and "x" in epos and "y" in epos else str(epos)
+                extra = []
+                if "type" in ent and ent["type"] != "entity":
+                    extra.append(ent["type"])
+                ehp = ent.get("hp")
+                if ehp is not None:
+                    extra.append(f"HP {ehp}")
+                efacing = ent.get("facing")
+                if efacing:
+                    extra.append(f"facing {efacing}")
+                if "forward" in ent and "offaxis" in ent:
+                    extra.append(f"fwd:{ent['forward']}, off:{ent['offaxis']}")
+                if ent.get("in_strike_zone") is not None:
+                    extra.append(f"strike_zone:{ent.get('in_strike_zone')}")
+                extra_str = f" [{', '.join(extra)}]" if extra else ""
+                vis_items.append(f"{eid} at {pos_str}{extra_str}")
             vis_info = f"{len(h_vis)} visible ({', '.join(vis_items)})"
         else:
             vis_info = "0 visible"
+
+        # Combat events recorded this tick
+        h_events = h_obs.get("events") or h.get("events") or []
+        events_str = ""
+        if h_events:
+            ev_parts = []
+            for ev in h_events:
+                ev_type = ev.get("type")
+                if ev_type == "damage_taken":
+                    src = ev.get("source_id", "rival")
+                    amt = ev.get("amount", 34)
+                    rem = ev.get("remaining_hp", 0)
+                    ev_parts.append(f"Struck by {src} for -{amt} HP ({rem} remaining)")
+                elif ev_type == "damage_dealt":
+                    tgt = ev.get("target", "target")
+                    amt = ev.get("amount", 34)
+                    ev_parts.append(f"Slashed {tgt} for {amt} dmg")
+                elif ev_type == "elimination":
+                    tgt = ev.get("target", "entity")
+                    ev_parts.append(f"Eliminated {tgt}")
+                elif ev_type == "eliminated":
+                    by_who = ev.get("by", "rival")
+                    ev_parts.append(f"Eliminated by {by_who}")
+                elif ev_type == "bump":
+                    ev_parts.append(f"Collision with {ev.get('target', 'obstacle')}")
+            if ev_parts:
+                events_str = f" Combat: [{', '.join(ev_parts)}]."
+
+        # Active hazard zones this tick
+        h_hazards = h_obs.get("hazard_zones") or []
+        hazards_str = ""
+        if h_hazards:
+            hazards_str = f" Hazards: [{len(h_hazards)} active zone(s)]."
+
         # Whether this past tick actually ran. A locked tick's action was thrown
         # away by the engine, and rendering it identically to a real move is what
         # made the trajectory look inexplicable -- the model saw itself issue the
@@ -926,7 +992,7 @@ def build_decision_prompt(
         target_str = f" Target: {h_target}." if h_target else ""
         thought_str = f" Thought: \"{h_thought}\"" if h_thought else ""
         history_lines.append(
-            f"  • Tick {h_tick}: {posture_str}. SCORE: {h_score}. Context: {vis_info}. "
+            f"  • Tick {h_tick}: {posture_str}{hp_info}. SCORE: {h_score}. Context: {vis_info}.{hazards_str}{events_str} "
             f"Move: {h_act} [{outcome}].{target_str}{thought_str}"
         )
 
@@ -949,7 +1015,21 @@ def build_decision_prompt(
             f"{coaching_notes}\n\n"
         )
 
+    # Global Arena Notice Board (broadcast from MCP / game engine)
+    notice_board = store.read_notice_board()
+    notice_context = ""
+    if notice_board:
+        notice_context = (
+            f"--- GLOBAL ARENA NOTICE BOARD ---\n"
+            f"{notice_board}\n\n"
+        )
+
     caps = obs.capabilities or {}
+    if not notice_context and caps.get("absorption"):
+        notice_context = (
+            "--- GLOBAL ARENA NOTICE BOARD ---\n"
+            "📢 ACTIVE RULE MODIFIER: KILL ABSORPTION ENABLED. Eliminating a rival predator absorbs their entire kill count into your score! Rival cats are prime high-value targets.\n\n"
+        )
     atk_range = caps.get("attack_range", 2)
     vision_rad = caps.get("vision_radius", 4)
     # The other two viewport dimensions are operator-tunable at runtime, so the
@@ -1040,7 +1120,16 @@ def build_decision_prompt(
             f"    true, ATTACK connects; if it is false, ATTACK cannot connect.\n"
         )
 
+    absorption_line = ""
+    if caps.get("absorption"):
+        absorption_line = (
+            "  • kill_absorption: ACTIVE. Eliminating a rival predator transfers their entire kill score to you.\n"
+        )
+
+    events_heraldry = format_event_heraldry(obs.events, obs.tick) if obs.events else ""
+
     observation_context = (
+        f"{events_heraldry}"
         f"--- CURRENT OBSERVATION (Tick {obs.tick}, Round {obs.round}) ---\n"
         f"Agent ID: {obs.self.get('id', agent_id)}\n"
         f"Action State: {lock_text}\n"
@@ -1059,6 +1148,7 @@ def build_decision_prompt(
         f"  • attack_cooldown: {atk_cd} tick(s)\n"
         f"  • lunge_cooldown: {lunge_cd} tick(s)\n"
         f"{aim_line}"
+        f"{absorption_line}"
         f"Visible Entities in Viewport: {entities}\n"
         f"Legal Actions this tick: {legal}"
     )
@@ -1089,23 +1179,11 @@ def build_decision_prompt(
     # the only lever the prompt has: the model answers immediately after the
     # final token, so the last block read is the one nearest the decision.
     #
-    # history -> coach -> observation -> commander
-    #
-    # The coach used to lead, which put ~10,400 characters between its
-    # directives and the answer while the history window -- five times its size
-    # and made of worked examples of the behaviour being corrected -- sat
-    # closer. Swapping the two costs nothing and reverses that.
-    #
-    # A stale order decays by *position* rather than being dropped or labelled
-    # stale. Suppressing it would destroy information the commander chose to
-    # send, and stamping a "this is stale" verdict on it would be precisely the
-    # pre-chewed conclusion this prompt refuses to draw -- the age in ticks is
-    # already stated, and judging it is the model's job. Sliding it from the
-    # most salient slot to the least lets it fade without either.
+    # history -> notice_board -> coach -> observation -> commander
     if commander_is_fresh:
-        prompt = f"{history_context}{coaching_context}{observation_context}{commander_context}"
+        prompt = f"{history_context}{notice_context}{coaching_context}{observation_context}{commander_context}"
     else:
-        prompt = f"{commander_context}{history_context}{coaching_context}{observation_context}"
+        prompt = f"{commander_context}{history_context}{notice_context}{coaching_context}{observation_context}"
 
 
     if capture is not None:
@@ -1128,6 +1206,11 @@ def build_decision_prompt(
                     "label": "Skills manual (actor_skills.md)",
                     "delivered": True,
                     "text": get_skills_instruction(),
+                },
+                "notice_board": {
+                    "label": "Notice board: global rules and bulletins",
+                    "delivered": bool(notice_context),
+                    "text": notice_context or "(no notice board bulletin posted)",
                 },
                 "coaching_notes": {
                     "label": "Coach: standing orders from the evaluator",

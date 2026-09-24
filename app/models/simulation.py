@@ -99,6 +99,10 @@ class SpeciesConfig(BaseModel):
             "agent to derive it from absolute coordinates"
         ),
     )
+    absorption: bool = Field(
+        default=False,
+        description="When enabled on predator, eliminating a rival cat absorbs their accumulated score",
+    )
 
 
 class HazardZone(BaseModel):
@@ -265,6 +269,7 @@ class UpdateSpeciesConfigRequest(BaseModel):
     # `model_dump(exclude_unset=True)`, so a field absent from this model is a
     # field the PATCH endpoint silently drops.
     aim_assist: Optional[bool] = Field(default=None)
+    absorption: Optional[bool] = Field(default=None)
 
 
 class UpdateDisclosureConfigRequest(BaseModel):

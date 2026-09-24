@@ -21,10 +21,15 @@ def clean_memory_store(tmp_path, monkeypatch):
     """Ensure tests run against an isolated runtime directory."""
     monkeypatch.setenv("CAT_AGENT_RUNTIME_DIR", str(tmp_path))
     monkeypatch.setattr(store, "RUNTIME_DIR", tmp_path)
+    monkeypatch.setattr(store, "TRANSCRIPT_PATH", tmp_path / "transcript.jsonl")
     monkeypatch.setattr(store, "COACH_MEMORY_PATH", tmp_path / "coach_memory.jsonl")
+    monkeypatch.setattr(store, "COACHING_NOTES_PATH", tmp_path / "coaching_notes.md")
+    monkeypatch.setattr(store, "NOTICE_BOARD_PATH", tmp_path / "notice_board.md")
     store.reset_coach_memories()
+    store.reset_notice_board()
     yield
     store.reset_coach_memories()
+    store.reset_notice_board()
 
 
 @pytest.mark.asyncio
@@ -36,6 +41,8 @@ async def test_mcp_server_registers_expected_tools():
 
     expected = [
         "get_boxscore",
+        "get_notice_board",
+        "toggle_game_rule",
         "get_coverage_map",
         "get_event_reel",
         "pull_transcript",
@@ -58,6 +65,8 @@ async def test_mcp_server_registers_expected_resources():
         "cm://sim/active/events",
         "cm://sim/active/coverage_map",
         "cm://coach/notes",
+        "cm://game/notice_board",
+        "cm://game/rules",
     ]
     for exp in expected:
         assert exp in uris, f"Missing expected resource {exp} in {uris}"
