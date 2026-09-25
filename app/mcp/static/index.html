@@ -1186,6 +1186,7 @@
       <div class="sidebar-tabs">
         <button class="sidebar-tab-btn active" data-tab="tabTester">🛠️ Test Tool</button>
         <button class="sidebar-tab-btn" data-tab="tabNoticeBoard">📢 Notice Board</button>
+        <button class="sidebar-tab-btn" data-tab="tabComms">📻 Radio Comms</button>
         <button class="sidebar-tab-btn" data-tab="tabCoachNotes">📓 Coach Private Notes</button>
         <button class="sidebar-tab-btn" data-tab="tabCatalog">📚 Catalog</button>
 
@@ -1198,6 +1199,7 @@
           <label class="form-label" for="toolSelect">Select MCP Tool</label>
           <select id="toolSelect" class="form-select">
             <option value="get_boxscore">get_boxscore (Simulation KPIs)</option>
+            <option value="get_comms_log">get_comms_log (Inter-Cat Radio Transmissions)</option>
             <option value="get_notice_board">get_notice_board (Global Notice Board)</option>
             <option value="toggle_game_rule">toggle_game_rule (Toggle Game Rule/Modifier)</option>
             <option value="get_coverage_map">get_coverage_map (Spatial Heatmap)</option>
@@ -1262,6 +1264,51 @@
             <span style="font-size: 0.7rem; color: var(--accent);">cm://game/notice_board</span>
           </label>
           <pre id="noticeBoardBulletinBox" class="test-result-box" style="flex: 1; min-height: 200px; white-space: pre-wrap; font-family: var(--font-mono); font-size: 0.78rem;">Loading notice board...</pre>
+        </div>
+      </div>
+
+      <!-- Tab: Inter-Cat Radio Comms -->
+      <div class="sidebar-content" id="tabComms" style="display: none; flex-direction: column; height: 100%;">
+        <div class="notes-toolbar">
+          <div class="form-label" style="display:flex; justify-content:space-between; align-items:center;">
+            <span>📻 Inter-Cat Radio / A2A Comms</span>
+            <span class="badge" id="commsCountBadge">0 chirps</span>
+          </div>
+          <div style="font-size:0.72rem; color:var(--text-dim); margin-bottom:8px;">
+            Audible peer-to-peer radio transmissions and tactical chirps broadcast across cats on the game grid.
+          </div>
+
+          <!-- Multi-Agent Filter Bar -->
+          <div class="agent-filter-bar">
+            <button class="agent-filter-btn active" data-comms-agent="all" id="btnFilterCommsAll">
+              <span>🐱 All Cats</span>
+              <span class="count-pill" id="commsCountAll">0</span>
+            </button>
+            <button class="agent-filter-btn btn-cat-1" data-comms-agent="cat-1" id="btnFilterCommsCat1">
+              <span>🐱 Cat 1</span>
+              <span class="count-pill" id="commsCountCat1">0</span>
+            </button>
+            <button class="agent-filter-btn btn-cat-2" data-comms-agent="cat-2" id="btnFilterCommsCat2">
+              <span>🐱 Cat 2</span>
+              <span class="count-pill" id="commsCountCat2">0</span>
+            </button>
+          </div>
+
+          <!-- Controls: Search + Live Poll Checkbox -->
+          <div class="notes-controls-row" style="margin-top:6px;">
+            <input type="text" id="commsSearch" class="search-input" placeholder="Search transmissions, sender, or tick…" style="flex:1;">
+            <label class="live-poll-toggle" title="Live stream radio chirps every 2s">
+              <input type="checkbox" id="commsAutoRefresh" checked>
+              <span class="pulse-indicator"></span>
+              <span>Live (2s)</span>
+            </label>
+            <button class="btn-icon" id="btnRefreshComms" title="Refresh radio comms">🔄</button>
+          </div>
+        </div>
+
+        <!-- Transmissions List -->
+        <div class="notes-list" id="commsList" style="flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding-right: 4px;">
+          <div style="text-align:center; padding:30px 10px; color:var(--text-dim); font-size:0.8rem;">Loading radio transmissions…</div>
         </div>
       </div>
 
@@ -1436,11 +1483,23 @@
           <div class="catalog-desc">Pulls windowed or recent Cat agent transcript records (positions, facing, visibility, moves, rationale).</div>
         </div>
 
-        <div class="form-label" style="margin-top: 10px;">Registered Resources (4)</div>
+        <div class="catalog-item">
+          <div class="catalog-title">
+            <span>get_comms_log</span>
+            <span class="catalog-badge" onclick="selectAndSwitchTool('get_comms_log')">Test ↗</span>
+          </div>
+          <div class="catalog-desc">Retrieves the rolling inter-cat radio communications and tactical chirps broadcast between cats.</div>
+        </div>
+
+        <div class="form-label" style="margin-top: 10px;">Registered Resources (5)</div>
 
         <div class="catalog-item">
           <div class="catalog-title" style="color: var(--warning);">cm://sim/active/boxscore</div>
           <div class="catalog-desc">Live JSON resource of current game box score KPIs.</div>
+        </div>
+        <div class="catalog-item">
+          <div class="catalog-title" style="color: var(--warning);">cm://sim/active/comms</div>
+          <div class="catalog-desc">Rolling inter-cat radio transmissions and peer tactical chirps for the active game.</div>
         </div>
         <div class="catalog-item">
           <div class="catalog-title" style="color: var(--warning);">cm://sim/active/events</div>
@@ -1552,6 +1611,10 @@
     // Tool params definition
     const toolParamSchemas = {
       get_boxscore: [
+        { name: 'sim_id', label: 'Simulation ID', type: 'text', default: 'active' }
+      ],
+      get_comms_log: [
+        { name: 'limit', label: 'Limit (recent transmissions)', type: 'number', default: '50' },
         { name: 'sim_id', label: 'Simulation ID', type: 'text', default: 'active' }
       ],
       get_notice_board: [
@@ -2452,10 +2515,180 @@
       loadNoticeBoard();
     });
 
+    // ==========================================
+    // Inter-Cat Radio Comms Logic
+    // ==========================================
+    let allComms = [];
+    let currentCommsAgentFilter = 'all';
+    const commsCountBadge = document.getElementById('commsCountBadge');
+    const commsCountAll = document.getElementById('commsCountAll');
+    const commsCountCat1 = document.getElementById('commsCountCat1');
+    const commsCountCat2 = document.getElementById('commsCountCat2');
+    const commsSearch = document.getElementById('commsSearch');
+    const commsAutoRefresh = document.getElementById('commsAutoRefresh');
+    const btnRefreshComms = document.getElementById('btnRefreshComms');
+    const commsList = document.getElementById('commsList');
+
+    async function loadComms(isSilent = false) {
+      try {
+        const resp = await fetch('/api/mcp/comms?limit=100');
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const data = await resp.json();
+        allComms = data.transmissions || [];
+        renderComms();
+      } catch (err) {
+        if (!isSilent) {
+          console.warn('Failed to load radio comms:', err);
+          if (commsList) {
+            commsList.innerHTML = `<div style="text-align:center; padding:20px; color:var(--danger); font-size:0.8rem;">Failed to load transmissions: ${err.message}</div>`;
+          }
+        }
+      }
+    }
+
+    function renderComms() {
+      if (!commsList) return;
+      const q = commsSearch ? commsSearch.value.trim().toLowerCase() : '';
+
+      // Update badge counts
+      const countAll = allComms.length;
+      const countCat1 = allComms.filter(t => t.sender_id === 'cat-1').length;
+      const countCat2 = allComms.filter(t => t.sender_id === 'cat-2').length;
+      if (commsCountAll) commsCountAll.innerText = countAll;
+      if (commsCountCat1) commsCountCat1.innerText = countCat1;
+      if (commsCountCat2) commsCountCat2.innerText = countCat2;
+
+      // Filter by agent and search text
+      let filtered = allComms;
+      if (currentCommsAgentFilter !== 'all') {
+        filtered = filtered.filter(t => t.sender_id === currentCommsAgentFilter);
+      }
+      if (q) {
+        filtered = filtered.filter(t =>
+          (t.message && t.message.toLowerCase().includes(q)) ||
+          (t.sender_id && t.sender_id.toLowerCase().includes(q)) ||
+          String(t.tick).includes(q)
+        );
+      }
+
+      if (commsCountBadge) {
+        commsCountBadge.innerText = `${filtered.length} chirps`;
+      }
+
+      commsList.innerHTML = '';
+      if (filtered.length === 0) {
+        const who = currentCommsAgentFilter === 'all' ? 'any cat' : currentCommsAgentFilter;
+        commsList.innerHTML = `<div style="text-align:center; padding:35px 10px; color:var(--text-dim); font-size:0.8rem;">No radio transmissions for <strong>${who}</strong>.<br><span style="font-size:0.72rem; color:var(--text-dim);">Cats will broadcast tactical chirps and spotted prey coordinates as the simulation advances.</span></div>`;
+        return;
+      }
+
+      // Show newest first
+      const reversed = [...filtered].reverse();
+      reversed.forEach(t => {
+        const card = document.createElement('div');
+        const sId = t.sender_id || 'cat';
+        card.className = `note-card card-${sId}`;
+        card.style.display = 'flex';
+        card.style.flexDirection = 'column';
+        card.style.gap = '6px';
+
+        const header = document.createElement('div');
+        header.className = 'note-header';
+
+        const meta = document.createElement('div');
+        meta.className = 'note-meta';
+
+        // Sender badge
+        const senderBadge = document.createElement('span');
+        senderBadge.className = `badge-cat-id ${sId}`;
+        senderBadge.innerText = `📻 ${sId.toUpperCase()}`;
+        meta.appendChild(senderBadge);
+
+        // Tick badge
+        const tickBadge = document.createElement('span');
+        tickBadge.className = 'badge-tick';
+        tickBadge.innerText = `Tick ${t.tick ?? '?'}${t.round !== undefined ? ' (R' + t.round + ')' : ''}`;
+        meta.appendChild(tickBadge);
+
+        // Position pill
+        if (t.position && t.position.x !== undefined) {
+          const posBadge = document.createElement('span');
+          posBadge.className = 'note-tag-pill';
+          posBadge.innerText = `📍 (${t.position.x}, ${t.position.y})`;
+          meta.appendChild(posBadge);
+        }
+
+        // A2A DM vs Broadcast indicator
+        const isDm = t.recipient_id && t.recipient_id !== '*' && t.recipient_id !== 'broadcast' && t.recipient_id !== 'all';
+        const typeBadge = document.createElement('span');
+        typeBadge.className = 'note-tag-pill';
+        if (isDm) {
+          typeBadge.style.color = '#e11d48';
+          typeBadge.style.borderColor = 'rgba(225, 29, 72, 0.4)';
+          typeBadge.innerText = `🔒 DM ➔ ${t.recipient_id.toUpperCase()}`;
+        } else {
+          typeBadge.style.color = '#6366f1';
+          typeBadge.innerText = `📢 BROADCAST`;
+        }
+        meta.appendChild(typeBadge);
+
+        header.appendChild(meta);
+        card.appendChild(header);
+
+        // Message body
+        const body = document.createElement('div');
+        body.className = 'note-content-text';
+        body.style.fontStyle = 'italic';
+        body.style.padding = '6px 10px';
+        body.style.background = 'var(--feed-bg)';
+        body.style.borderRadius = '6px';
+        body.style.borderLeft = sId === 'cat-1' ? '3px solid var(--accent)' : '3px solid var(--purple)';
+        body.innerText = `"${t.message}"`;
+        card.appendChild(body);
+
+        commsList.appendChild(card);
+      });
+    }
+
+    // Comms Filter Buttons
+    document.querySelectorAll('[data-comms-agent]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('[data-comms-agent]').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        currentCommsAgentFilter = btn.dataset.commsAgent;
+        renderComms();
+      });
+    });
+
+    if (commsSearch) {
+      commsSearch.addEventListener('input', () => renderComms());
+    }
+    if (btnRefreshComms) {
+      btnRefreshComms.addEventListener('click', () => loadComms());
+    }
+
+    const tabCommsBtn = document.querySelector('[data-tab="tabComms"]');
+    if (tabCommsBtn) {
+      tabCommsBtn.addEventListener('click', () => {
+        loadComms();
+      });
+    }
+
+    // Auto-refresh interval (every 2s when live poll checked)
+    setInterval(() => {
+      if (commsAutoRefresh && commsAutoRefresh.checked) {
+        const tab = document.getElementById('tabComms');
+        if (tab && tab.style.display !== 'none') {
+          loadComms(true);
+        }
+      }
+    }, 2000);
+
     // Initialize
     connectEventStream();
     loadCoachNotes();
     loadNoticeBoard();
+    loadComms();
   </script>
 </body>
 </html>

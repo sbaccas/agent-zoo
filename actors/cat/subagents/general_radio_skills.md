@@ -40,6 +40,7 @@ from what you genuinely have:
   performance, or when a claim you want to make needs a number behind it. Do not
   quote statistics from memory; fetch them.
 - **The Cat's manual and recent transcript**, when provided.
+- **Strategic Peer Comms (A2A)** — call `a2a_read_coach_messages` to review diplomatic proposals or messages exchanged with the rival Coach, and `a2a_send_coach_message` if the General instructs you to transmit a proposal or message to the other Coach.
 
 ## How to answer
 

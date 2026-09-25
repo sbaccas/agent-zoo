@@ -37,6 +37,8 @@ class Scheduler:
         # the loop owns only the ones it alone can see, namely locked ticks and
         # capture credit.
         self.stats = stats
+        # Inter-Cat Radio / A2A Comms: rolling broadcast log
+        self.transmissions: List[Dict[str, Any]] = []
         # How long an agent has to answer an observation, in seconds. Owned by
         # Simulation because it is derived from tick_rate, which is live-tunable.
         # None means "unknown": the budget is then omitted from the wire rather
@@ -209,7 +211,7 @@ class Scheduler:
             # nothing at all, and getting that backwards in either direction is
             # worse than the problem the feature exists to solve.
             "aim_assist": bool(spec_cfg.aim_assist) if spec_cfg else False,
-            "absorption": bool(getattr(spec_cfg, "absorption", False)) if spec_cfg else False,
+            "absorption": bool(getattr(spec_cfg, "absorption", True)) if spec_cfg else (True if entity.type == EntityType.CAT else False),
             "hp": entity.hp,
             "max_hp": entity.max_hp,
             "attack_power": spec_cfg.attack_power if spec_cfg else (34 if entity.type == EntityType.CAT else 0),
@@ -248,6 +250,14 @@ class Scheduler:
             # hit/miss by diffing its own `score` against the previous tick.
             "score": self.scores.get(entity.id, 0),
             "scoreboard": self.get_scoreboard(),
+            # A2A Comms: audible transmissions from other cats (broadcasts + DMs targeted to this entity or its coach)
+            "incoming_transmissions": [
+                t for t in self.transmissions[-25:]
+                if t.get("sender_id") not in (entity.id, f"coach({entity.id})")
+                and (
+                    t.get("recipient_id") in (None, "*", "broadcast", "all", entity.id, f"coach({entity.id})")
+                )
+            ],
         }
 
     def _register_capture(self, owner_id: str, victim: Entity, source: str, zone_id: Optional[str] = None) -> None:
@@ -278,15 +288,19 @@ class Scheduler:
         absorbed_score = 0
         if is_cat:
             cat_cfg = self.entity_manager.species_config.get("cat")
-            if cat_cfg and getattr(cat_cfg, "absorption", False):
+            if cat_cfg is None or getattr(cat_cfg, "absorption", True):
                 victim_score = self.scores.get(victim.id, 0)
+                if victim_score == 0 and self.stats is not None:
+                    victim_stat = self.stats.cats.get(victim.id)
+                    if victim_stat:
+                        victim_score = victim_stat.kills + victim_stat.absorbed_kills
                 if victim_score > 0:
                     absorbed_score = victim_score
 
         self.scores[owner_id] = self.scores.get(owner_id, 0) + 1 + absorbed_score
         death_record["absorbed_score"] = absorbed_score
         if self.stats is not None:
-            self.stats.record_kill(owner_id, zone_id)
+            self.stats.record_kill(owner_id, zone_id, absorbed_kills=absorbed_score)
 
         # Matter-of-fact event payload entries for the agents
         if owner_id not in self.entity_events:
@@ -501,6 +515,66 @@ class Scheduler:
                     action_val = action_data.get("action")
                     thought = action_data.get("thought", "")
                     strategy = action_data.get("strategy", "")
+                    broadcast_msg = action_data.get("broadcast_msg") or action_data.get("radio_msg")
+                    if broadcast_msg and str(broadcast_msg).strip():
+                        b_text = str(broadcast_msg).strip()
+                        transmission_record = {
+                            "tick": self.tick,
+                            "round": self.round,
+                            "sender_id": cat.id,
+                            "recipient_id": "*",
+                            "message": b_text,
+                            "type": "BROADCAST",
+                            "protocol": "a2a/v1",
+                            "position": {"x": cat.position.x, "y": cat.position.y},
+                        }
+                        self.transmissions.append(transmission_record)
+                        if len(self.transmissions) > 200:
+                            self.transmissions.pop(0)
+                        self.events.append(GameEvent(
+                            tick=self.tick,
+                            round=self.round,
+                            event_type="transmission",
+                            actor_id=cat.id,
+                            position=cat.position,
+                            message=f"📻 [TICK {self.tick} | R{self.round}] RADIO: {cat.id} broadcast: \"{b_text}\"",
+                            details={"sender_id": cat.id, "message": b_text},
+                        ))
+
+                    # Process explicit A2A tool calls (DMs, proposals, broadcasts)
+                    tool_calls = action_data.get("tool_calls") or []
+                    for tc in tool_calls:
+                        t_rec = tc.get("recipient_id", "*")
+                        t_msg = tc.get("message", "")
+                        if t_msg and str(t_msg).strip():
+                            t_text = str(t_msg).strip()
+                            t_type = tc.get("message_type", "DIRECT_MESSAGE" if t_rec not in ("*", "broadcast", "all") else "BROADCAST")
+                            transmission_record = {
+                                "tick": self.tick,
+                                "round": self.round,
+                                "sender_id": cat.id,
+                                "recipient_id": t_rec,
+                                "message": t_text,
+                                "type": t_type,
+                                "protocol": "a2a/v1",
+                                "position": {"x": cat.position.x, "y": cat.position.y},
+                            }
+                            self.transmissions.append(transmission_record)
+                            if len(self.transmissions) > 200:
+                                self.transmissions.pop(0)
+
+                            is_dm = t_rec and t_rec not in ("*", "broadcast", "all")
+                            tag = f"A2A DM: {cat.id} -> {t_rec}" if is_dm else f"A2A BROADCAST: {cat.id}"
+                            self.events.append(GameEvent(
+                                tick=self.tick,
+                                round=self.round,
+                                event_type="a2a_message",
+                                actor_id=cat.id,
+                                target_id=t_rec if is_dm else None,
+                                position=cat.position,
+                                message=f"📻 [TICK {self.tick} | R{self.round}] {tag}: \"{t_text}\"",
+                                details=transmission_record,
+                            ))
                     print(f"🤖 [WS AGENT {cat.id} @ Tick {self.tick}] -> {action_val} | Strategy: {strategy} | Thought: \"{thought}\"", flush=True)
                 elif collected.status == COLLECT_STALE:
                     print(f"🗑️ [WS AGENT {cat.id} @ Tick {self.tick}] Discarded answer to tick {collected.answered_tick} (board is at {collected.expected_tick}) -> heuristic", flush=True)
@@ -523,6 +597,18 @@ class Scheduler:
                                 data = resp.json()
                                 action_val = data.get("action")
                                 thought = data.get("thought", "")
+                                broadcast_msg = data.get("broadcast_msg") or data.get("radio_msg")
+                                if broadcast_msg and str(broadcast_msg).strip():
+                                    b_text = str(broadcast_msg).strip()
+                                    self.transmissions.append({
+                                        "tick": self.tick,
+                                        "round": self.round,
+                                        "sender_id": cat.id,
+                                        "message": b_text,
+                                        "position": {"x": cat.position.x, "y": cat.position.y},
+                                    })
+                                    if len(self.transmissions) > 200:
+                                        self.transmissions.pop(0)
                                 self.consecutive_http_errors[cat.id] = 0
                                 print(f"🤖 [HTTP AGENT {cat.id} @ Tick {self.tick}] -> {action_val} | Thought: \"{thought}\"", flush=True)
                     except Exception as err:
@@ -535,6 +621,27 @@ class Scheduler:
                 cat_obs = CatObservation(**obs_payload)
                 act_res = cat_agent_act(cat_obs, use_llm=False)
                 action_val = act_res.action
+                b_msg = getattr(act_res, "broadcast_msg", None)
+                if b_msg and str(b_msg).strip():
+                    b_text = str(b_msg).strip()
+                    self.transmissions.append({
+                        "tick": self.tick,
+                        "round": self.round,
+                        "sender_id": cat.id,
+                        "message": b_text,
+                        "position": {"x": cat.position.x, "y": cat.position.y},
+                    })
+                    if len(self.transmissions) > 200:
+                        self.transmissions.pop(0)
+                    self.events.append(GameEvent(
+                        tick=self.tick,
+                        round=self.round,
+                        event_type="transmission",
+                        actor_id=cat.id,
+                        position=cat.position,
+                        message=f"📻 [TICK {self.tick} | R{self.round}] RADIO: {cat.id} broadcast: \"{b_text}\"",
+                        details={"sender_id": cat.id, "message": b_text},
+                    ))
 
             if action_val in [a.value for a in ActionType]:
                 res = self.action_handler.apply_action(cat, ActionType(action_val), self.tick)

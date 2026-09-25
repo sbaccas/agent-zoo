@@ -23,6 +23,9 @@
   // DOM Elements - Server Connection & Selection
   const selectCatEntity = document.getElementById('selectCatEntity');
   const modalSelectCatEntity = document.getElementById('modalSelectCatEntity');
+  const headerAgentCardId = document.getElementById('headerAgentCardId');
+  const headerAgentCardLink = document.getElementById('headerAgentCardLink');
+  const headerA2AInboxCount = document.getElementById('headerA2AInboxCount');
   const btnConnectServer = document.getElementById('btnConnectServer');
   const connectBtnIcon = document.getElementById('connectBtnIcon');
   const connectBtnText = document.getElementById('connectBtnText');
@@ -847,6 +850,41 @@
       senseRow.textContent = `${postureTransition} | ${mice.length} mouse seen`;
       descContainer.appendChild(senseRow);
 
+      // A2A Tool Calls indicator
+      const toolCalls = (item.decision && item.decision.tool_calls) ||
+                        (item.response && item.response.tool_calls) || [];
+      if (toolCalls && toolCalls.length > 0) {
+        const toolRow = document.createElement('div');
+        toolRow.style.display = 'flex';
+        toolRow.style.gap = '4px';
+        toolRow.style.flexWrap = 'wrap';
+        toolRow.style.margin = '2px 0';
+        toolCalls.forEach(tc => {
+          const tcBadge = document.createElement('span');
+          tcBadge.className = 'chip';
+          tcBadge.style.fontSize = '0.7rem';
+          tcBadge.style.padding = '1px 6px';
+          tcBadge.style.background = 'rgba(99, 102, 241, 0.15)';
+          tcBadge.style.color = '#4338ca';
+          tcBadge.style.border = '1px solid rgba(99, 102, 241, 0.35)';
+          tcBadge.style.borderRadius = '4px';
+          const tcArgs = tc.args || {};
+          if (tc.name === 'a2a_send_message') {
+            const preview = String(tcArgs.message || '').substring(0, 32);
+            tcBadge.textContent = `⚡ A2A DM ➔ ${tcArgs.recipient_id || 'peer'}: "${preview}${preview.length >= 32 ? '…' : ''}"`;
+          } else if (tc.name === 'a2a_broadcast') {
+            const preview = String(tcArgs.message || '').substring(0, 32);
+            tcBadge.textContent = `📢 A2A Broadcast: "${preview}${preview.length >= 32 ? '…' : ''}"`;
+          } else if (tc.name === 'a2a_get_agent_card') {
+            tcBadge.textContent = `🪪 A2A Inspect: ${tcArgs.agent_id}`;
+          } else {
+            tcBadge.textContent = `⚡ Tool: ${tc.name}`;
+          }
+          toolRow.appendChild(tcBadge);
+        });
+        descContainer.appendChild(toolRow);
+      }
+
       const thoughtRow = document.createElement('span');
       thoughtRow.style.fontWeight = '500';
       thoughtRow.textContent = (item.response && item.response.thought) || '';
@@ -1339,6 +1377,25 @@
 
       blocks.push(details);
     });
+
+    if (rec.tool_calls && rec.tool_calls.length > 0) {
+      const details = document.createElement('details');
+      details.className = 'prompt-section';
+      details.open = true;
+
+      const summary = document.createElement('summary');
+      summary.textContent = `⚡ A2A Tool Calls Executed (${rec.tool_calls.length})`;
+      details.appendChild(summary);
+
+      const pre = document.createElement('pre');
+      pre.className = 'prompt-section-body';
+      pre.style.color = '#312e81';
+      pre.style.background = '#eef2ff';
+      pre.textContent = JSON.stringify(rec.tool_calls, null, 2);
+      details.appendChild(pre);
+
+      blocks.push(details);
+    }
 
     promptModalSections.replaceChildren(...blocks);
   }
@@ -1974,6 +2031,22 @@
       if (modalSelectCatEntity && document.activeElement !== modalSelectCatEntity && modalSelectCatEntity.value !== activeCatId) {
         modalSelectCatEntity.value = activeCatId;
       }
+    }
+
+    // Update A2A Protocol & Identity in header
+    if (state.agent_card) {
+      const card = state.agent_card;
+      if (headerAgentCardId) {
+        headerAgentCardId.textContent = `${card.id} (${card.protocol_version || 'a2a/v1'})`;
+      }
+      if (headerAgentCardLink && card.card_url) {
+        headerAgentCardLink.href = card.card_url;
+      }
+    } else if (headerAgentCardId && activeCatId) {
+      headerAgentCardId.textContent = `${activeCatId} (a2a/v1)`;
+    }
+    if (headerA2AInboxCount) {
+      headerA2AInboxCount.textContent = `📥 ${state.a2a_inbox_count || 0}`;
     }
 
     // If currently inspecting a past tick, don't overwrite boxes 1-3 with live data

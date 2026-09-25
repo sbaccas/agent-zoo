@@ -100,7 +100,7 @@ class SpeciesConfig(BaseModel):
         ),
     )
     absorption: bool = Field(
-        default=False,
+        default=True,
         description="When enabled on predator, eliminating a rival cat absorbs their accumulated score",
     )
 

@@ -17,11 +17,14 @@ class Observation(BaseModel):
     deaths: List[Dict[str, Any]] = Field(default_factory=list)
     recent_deaths: List[Dict[str, Any]] = Field(default_factory=list)
     events: List[Dict[str, Any]] = Field(default_factory=list)
+    incoming_transmissions: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 class ActionResponse(BaseModel):
     action: str
     thought: str = ""
+    broadcast_msg: Optional[str] = ""
+    tool_calls: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 class OverrideRequest(BaseModel):
@@ -72,6 +75,14 @@ class CatTacticalDecision(BaseModel):
     action: str = Field(description="The chosen action strictly from legal_actions")
     target_mouse_id: Optional[str] = Field(default="", description="ID of targeted mouse or empty string if none")
     strategy: str = Field(default="ROAMING", description="Tactical phase: ATTACK, LUNGE, STALKING, or ROAMING")
+    broadcast_msg: Optional[str] = Field(
+        default="",
+        description="Optional radio broadcast message transmitted to other cats in the arena",
+    )
+    tool_calls: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description="A2A tool calls invoked during deliberation",
+    )
 
 
 class HistoryWindowRequest(BaseModel):

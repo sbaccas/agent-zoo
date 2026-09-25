@@ -414,3 +414,68 @@ async def test_boxscore_includes_population_when_disclosure_enabled():
     assert "mice_initial" not in bs_hidden
     assert "captures" not in bs_hidden
 
+
+@pytest.mark.asyncio
+async def test_boxscore_tracks_absorbed_kills():
+    sim = _empty_sim()
+    cat1 = sim.entity_manager.spawn_entity(EntityType.CAT, pos=Position(x=10, y=10), facing=Direction.EAST)
+    cat2 = sim.entity_manager.spawn_entity(EntityType.CAT, pos=Position(x=12, y=10), facing=Direction.WEST)
+    cat1.hp = 100
+    cat2.hp = 34
+
+    # Give cat2 10 prior kills
+    sim.scheduler.scores[cat2.id] = 10
+    sim.stats.get(cat2.id).kills = 10
+    sim.entity_manager.species_config["cat"].absorption = True
+
+    # cat1 eliminates cat2
+    await _attack_once(sim, cat1, [cat2.id])
+
+    bs = sim.get_boxscore()
+    row1 = next(c for c in bs["cats"] if c["id"] == cat1.id)
+    assert row1["kills"] == 1
+    assert row1["absorbed_kills"] == 10
+    assert row1["score"] == 11
+    assert bs["leader"] == cat1.id
+
+
+@pytest.mark.asyncio
+async def test_boxscore_reconciles_uncredited_absorbed_kills():
+    sim = _empty_sim()
+    cat1 = sim.entity_manager.spawn_entity(EntityType.CAT, pos=Position(x=10, y=10), facing=Direction.EAST)
+    cat2 = sim.entity_manager.spawn_entity(EntityType.CAT, pos=Position(x=12, y=10), facing=Direction.WEST)
+    cat3 = sim.entity_manager.spawn_entity(EntityType.CAT, pos=Position(x=13, y=10), facing=Direction.WEST)
+
+    sim.stats.get(cat2.id).kills = 11
+    sim.stats.get(cat3.id).kills = 37
+    sim.scheduler.scores[cat1.id] = 50
+    sim.stats.get(cat1.id).kills = 50
+
+    # Simulate deaths where absorbed_score was uncredited (0)
+    sim.scheduler.deaths.append({
+        "id": cat2.id,
+        "type": "cat",
+        "tick": 249,
+        "round": 2,
+        "killed_by": cat1.id,
+        "source": "slash impact",
+        "position": {"x": 12, "y": 10},
+        "absorbed_score": 0,
+    })
+    sim.scheduler.deaths.append({
+        "id": cat3.id,
+        "type": "cat",
+        "tick": 1352,
+        "round": 20,
+        "killed_by": cat1.id,
+        "source": "slash impact",
+        "position": {"x": 13, "y": 10},
+        "absorbed_score": 0,
+    })
+
+    bs = sim.get_boxscore()
+    row1 = next(c for c in bs["cats"] if c["id"] == cat1.id)
+    assert row1["absorbed_kills"] == 48
+    assert row1["score"] == 98
+
+

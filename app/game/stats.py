@@ -53,6 +53,7 @@ class CatStats:
 
         # Scoring
         self.kills = 0
+        self.absorbed_kills = 0
 
         # Slashing. `landed_slashes` counts slashes that killed at least one
         # mouse at any point in their lethal window, which is why slash
@@ -109,7 +110,7 @@ class CatStats:
     # -- rewind support -------------------------------------------------
 
     _COUNTERS = (
-        "kills", "slash_attempts", "landed_slashes", "multi_kills",
+        "kills", "absorbed_kills", "slash_attempts", "landed_slashes", "multi_kills",
         "zone_chances", "zone_attempts", "tiles_run", "moves", "lunges",
         "wall_bonks", "ticks_free", "ticks_locked", "prey_in_sight_ticks",
         "decisions_by_model", "decisions_by_agent_reflex",
@@ -260,9 +261,12 @@ class StatsTracker:
         else:
             stats.moves += 1
 
-    def record_kill(self, cat_id: str, zone_id: Optional[str] = None) -> None:
+    def record_kill(
+        self, cat_id: str, zone_id: Optional[str] = None, absorbed_kills: int = 0
+    ) -> None:
         stats = self.get(cat_id)
         stats.kills += 1
+        stats.absorbed_kills += max(0, absorbed_kills)
         if zone_id is None:
             return
         # A kill from a lingering blade retroactively promotes its slash out of
@@ -327,6 +331,8 @@ class StatsTracker:
                 "position": {"x": cat.position.x, "y": cat.position.y},
 
                 "kills": s.kills,
+                "absorbed_kills": s.absorbed_kills,
+                "score": s.kills + s.absorbed_kills,
                 "kills_per_100_ticks": _rate(s.kills * 100, elapsed),
                 "tiles_per_kill": _rate(s.tiles_run, s.kills),
 

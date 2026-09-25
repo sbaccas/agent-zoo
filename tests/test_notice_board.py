@@ -31,13 +31,13 @@ def clean_runtime_store(tmp_path, monkeypatch):
 
 
 def test_species_config_absorption_field():
-    """Verify absorption field on SpeciesConfig defaults to False."""
+    """Verify absorption field on SpeciesConfig defaults to True."""
     cfg = SpeciesConfig()
     assert hasattr(cfg, "absorption")
-    assert cfg.absorption is False
+    assert cfg.absorption is True
 
-    cfg_active = SpeciesConfig(absorption=True)
-    assert cfg_active.absorption is True
+    cfg_disabled = SpeciesConfig(absorption=False)
+    assert cfg_disabled.absorption is False
 
 
 @pytest.mark.asyncio

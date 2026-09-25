@@ -23,7 +23,8 @@ logger = logging.getLogger("simulation")
 class SimulationSnapshot:
     def __init__(self, tick: int, round: int, captures: int, entities: list, events: list,
                  scores: Optional[dict] = None, hazard_zones: Optional[list] = None,
-                 stats: Optional[dict] = None, entity_events: Optional[dict] = None):
+                 stats: Optional[dict] = None, entity_events: Optional[dict] = None,
+                 transmissions: Optional[list] = None):
         self.tick = tick
         self.round = round
         self.captures = captures
@@ -42,6 +43,7 @@ class SimulationSnapshot:
         # standing in for the visited-tile set.
         self.stats = dict(stats or {})
         self.entity_events = {k: list(v) for k, v in (entity_events or {}).items()}
+        self.transmissions = [dict(t) for t in (transmissions or [])]
 
 
 class Simulation:
@@ -99,6 +101,7 @@ class Simulation:
             hazard_zones=[z.model_copy(deep=True) for z in self.action_handler.hazard_zones],
             stats=self.stats.snapshot(),
             entity_events={k: [dict(ev) for ev in v] for k, v in self.scheduler.entity_events.items()},
+            transmissions=list(self.scheduler.transmissions),
         )
         self.history.append(snapshot)
         if len(self.history) > self.max_history:
@@ -132,12 +135,38 @@ class Simulation:
         `leader` is decided on kills alone and left None on a tie, so the UI
         never has to invent a tie-break the game does not define.
         """
+        # Reconcile any uncredited absorbed kills from predator death records
+        if hasattr(self.scheduler, "deaths") and self.stats:
+            cat_cfg = self.entity_manager.species_config.get("cat")
+            if cat_cfg is None or getattr(cat_cfg, "absorption", True):
+                for d in self.scheduler.deaths:
+                    if d.get("type") == "cat":
+                        killer_id = d.get("killed_by")
+                        victim_id = d.get("id")
+                        if killer_id and victim_id and killer_id != victim_id:
+                            if d.get("absorbed_score", 0) == 0:
+                                victim_stat = self.stats.cats.get(victim_id)
+                                v_score = victim_stat.kills if victim_stat else self.scheduler.scores.get(victim_id, 0)
+                                if v_score > 0:
+                                    d["absorbed_score"] = v_score
+
+                for cat_id, cat_stat in self.stats.cats.items():
+                    total_absorbed = sum(
+                        d.get("absorbed_score", 0)
+                        for d in self.scheduler.deaths
+                        if d.get("type") == "cat" and d.get("killed_by") == cat_id
+                    )
+                    if total_absorbed > cat_stat.absorbed_kills:
+                        diff = total_absorbed - cat_stat.absorbed_kills
+                        cat_stat.absorbed_kills = total_absorbed
+                        self.scheduler.scores[cat_id] = self.scheduler.scores.get(cat_id, 0) + diff
+
         cats = self.stats.build_boxscore(self.entity_manager, self.scheduler.tick)
 
         leader = None
         if cats:
-            best = max(c["kills"] for c in cats)
-            leaders = [c["id"] for c in cats if c["kills"] == best]
+            best = max(c.get("score", c["kills"]) for c in cats)
+            leaders = [c["id"] for c in cats if c.get("score", c["kills"]) == best]
             if len(leaders) == 1:
                 leader = leaders[0]
 
@@ -253,6 +282,7 @@ class Simulation:
             self.scheduler.scores = dict(snapshot.scores)
             self.scheduler.events = list(snapshot.events)
             self.scheduler.entity_events = {k: list(v) for k, v in snapshot.entity_events.items()}
+            self.scheduler.transmissions = [dict(t) for t in snapshot.transmissions]
             self.entity_manager.entities = {
                 e.id: e.model_copy(deep=True) for e in snapshot.entities
             }
@@ -291,6 +321,7 @@ class Simulation:
                 self.scheduler.scores = dict(target_snapshot.scores)
                 self.scheduler.events = list(target_snapshot.events)
                 self.scheduler.entity_events = {k: list(v) for k, v in target_snapshot.entity_events.items()}
+                self.scheduler.transmissions = [dict(t) for t in target_snapshot.transmissions]
                 self.entity_manager.entities = {
                     e.id: e.model_copy(deep=True) for e in target_snapshot.entities
                 }
@@ -332,6 +363,7 @@ class Simulation:
             self.scheduler.scores.clear()
             self.scheduler.events.clear()
             self.scheduler.entity_events.clear()
+            self.scheduler.transmissions.clear()
             self.stats.reset()
             self.status = SimulationStatus.CREATED
 
@@ -371,3 +403,7 @@ class Simulation:
             self.entity_manager.remove_population(entity_type, abs(delta))
 
         return self.entity_manager.count_by_type(entity_type)
+
+    def get_comms_log(self, limit: int = 100) -> list[dict]:
+        """Returns the rolling inter-cat radio transmission log."""
+        return list(self.scheduler.transmissions[-limit:])

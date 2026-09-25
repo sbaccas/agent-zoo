@@ -172,7 +172,9 @@ document.addEventListener('DOMContentLoaded', () => {
     {
       title: 'Scoring',
       rows: [
-        { label: 'Kills', key: 'kills', dir: 'high', format: (v) => fmtInt(v), tip: 'mice captured by this cat since tracking began' },
+        { label: 'Score (Total)', key: 'score', dir: 'high', format: (v) => fmtInt(v), tip: 'total match score (direct prey kills + absorbed kills from eliminated rival cats)' },
+        { label: 'Direct Kills', key: 'kills', dir: 'high', format: (v) => fmtInt(v), tip: 'prey captured directly by this cat since tracking began' },
+        { label: 'Absorbed Kills', key: 'absorbed_kills', dir: 'high', format: (v) => fmtInt(v), tip: 'kills absorbed from rival predators eliminated by this cat' },
         { label: 'Kills / 100 ticks', key: 'kills_per_100_ticks', dir: 'high', format: (v) => fmtFloat(v, 2), tip: 'kills x 100 / ticks elapsed since tracking began' },
         { label: 'Tiles per kill', key: 'tiles_per_kill', dir: 'low', format: (v) => fmtFloat(v, 1), tip: 'tiles run / kills — fewer tiles per kill is more efficient (dash while kills = 0)' },
       ],

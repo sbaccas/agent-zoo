@@ -1,4 +1,4 @@
-from typing import Dict, Optional
+from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import PlainTextResponse
 from app.game.heatmap import DEFAULT_GRID_SIZE, MAX_GRID_SIZE, MIN_GRID_SIZE
@@ -258,5 +258,51 @@ async def update_disclosure_config(sim_id: str, req: UpdateDisclosureConfigReque
         if val is not None:
             setattr(current, field, val)
     return current
+
+
+@router.get("/{sim_id}/comms")
+async def get_simulation_comms(sim_id: str, limit: int = Query(50, ge=1, le=200)):
+    """Returns the rolling inter-cat radio transmission log for this simulation."""
+    sim = get_simulation_or_404(sim_id)
+    return {"transmissions": sim.get_comms_log(limit=limit)}
+
+
+@router.post("/{sim_id}/comms")
+async def report_simulation_comms(sim_id: str, payload: Dict[str, Any]):
+    """Receives A2A transmission telemetry from participating agents."""
+    sim = get_simulation_or_404(sim_id)
+    sender = payload.get("sender_id", "unknown")
+    recipient = payload.get("recipient_id", "*")
+    msg = payload.get("message", "")
+    tick = payload.get("tick") or sim.scheduler.tick
+    round_num = payload.get("round") or sim.scheduler.round
+    m_type = payload.get("type", "DIRECT_MESSAGE")
+
+    record = {
+        "tick": tick,
+        "round": round_num,
+        "sender_id": sender,
+        "recipient_id": recipient,
+        "message": msg,
+        "type": m_type,
+        "protocol": payload.get("protocol", "a2a/v1"),
+        "message_id": payload.get("message_id"),
+    }
+    sim.scheduler.transmissions.append(record)
+    if len(sim.scheduler.transmissions) > 200:
+        sim.scheduler.transmissions.pop(0)
+
+    is_dm = recipient and recipient not in ("*", "broadcast", "all")
+    tag = f"A2A DM: {sender} -> {recipient}" if is_dm else f"A2A BROADCAST: {sender}"
+    sim.scheduler.events.append(GameEvent(
+        tick=tick,
+        round=round_num,
+        event_type="a2a_message",
+        actor_id=sender,
+        target_id=recipient if is_dm else None,
+        message=f"📻 [TICK {tick} | R{round_num}] {tag}: \"{msg}\"",
+        details=record,
+    ))
+    return {"status": "ok", "recorded": True}
 
 

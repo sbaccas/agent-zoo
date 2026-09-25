@@ -20,6 +20,8 @@ from google.genai import types
 
 from actors.models import CatTacticalDecision, Observation
 from actors.cat import store
+from actors.a2a.tools import A2A_TOOLS, set_deliberation_context
+from actors.a2a import store as a2a_store
 
 # Skills manual path and loader
 SKILLS_PATH = Path(__file__).parent / "actor_skills.md"
@@ -350,6 +352,7 @@ adk_agent = LlmAgent(
     name="cat_tactician",
     model=ACTOR_MODEL,
     instruction=_actor_instruction_provider,
+    tools=A2A_TOOLS,
     output_schema=CatTacticalDecision,
     output_key="decision",
     generate_content_config=types.GenerateContentConfig(
@@ -1175,15 +1178,55 @@ def build_decision_prompt(
             f'COMMANDER: "{directive_text.strip()}"\n'
         )
 
+    transmissions_context = ""
+    incoming = list(getattr(obs, "incoming_transmissions", []) or [])
+    # Also incorporate A2A protocol messages delivered to this agent's inbox
+    a2a_msgs = a2a_store.get_inbox(agent_id, limit=8)
+    for m in a2a_msgs:
+        m_id = m.get("message_id")
+        s = str(m.get("sender_id", "")).lower()
+        r = str(m.get("recipient_id", "")).lower()
+        # Inter-coach diplomacy is consumed by the Coach subagent, not the reflexive actor
+        if s.startswith("coach") or r.startswith("coach"):
+            continue
+        if not any(t.get("message_id") == m_id for t in incoming):
+            incoming.append({
+                "tick": m.get("tick", "?"),
+                "sender_id": m.get("sender_id", "peer"),
+                "recipient_id": m.get("recipient_id"),
+                "message": m.get("content", ""),
+                "message_type": m.get("message_type", "DIRECT_MESSAGE"),
+                "protocol": "a2a/v1",
+                "message_id": m_id,
+            })
+
+    if incoming:
+        t_lines = []
+        for t in incoming[-8:]:
+            t_tick = t.get("tick", "?")
+            t_sender = t.get("sender_id", "cat")
+            t_msg = t.get("message", "")
+            t_rec = t.get("recipient_id")
+            if t_rec and t_rec not in ("*", "broadcast", "all"):
+                type_tag = f"[A2A DM from {t_sender}]"
+            else:
+                type_tag = f"[A2A BROADCAST from {t_sender}]"
+            t_lines.append(f'  • [Tick {t_tick}] {type_tag}: "{t_msg}"')
+        transmissions_context = (
+            "--- INTER-CAT RADIO (Incoming Transmissions) ---\n"
+            + "\n".join(t_lines)
+            + "\n\n"
+        )
+
     # Blocks are emitted in ascending order of influence, because position is
     # the only lever the prompt has: the model answers immediately after the
     # final token, so the last block read is the one nearest the decision.
     #
-    # history -> notice_board -> coach -> observation -> commander
+    # history -> notice_board -> inter_cat_radio -> coach -> observation -> commander
     if commander_is_fresh:
-        prompt = f"{history_context}{notice_context}{coaching_context}{observation_context}{commander_context}"
+        prompt = f"{history_context}{notice_context}{transmissions_context}{coaching_context}{observation_context}{commander_context}"
     else:
-        prompt = f"{commander_context}{history_context}{notice_context}{coaching_context}{observation_context}"
+        prompt = f"{commander_context}{history_context}{notice_context}{transmissions_context}{coaching_context}{observation_context}"
 
 
     if capture is not None:
@@ -1211,6 +1254,11 @@ def build_decision_prompt(
                     "label": "Notice board: global rules and bulletins",
                     "delivered": bool(notice_context),
                     "text": notice_context or "(no notice board bulletin posted)",
+                },
+                "inter_cat_radio": {
+                    "label": "Inter-cat radio: audible chirps and reports from peer cats",
+                    "delivered": bool(transmissions_context),
+                    "text": transmissions_context or "(no recent incoming transmissions)",
                 },
                 "coaching_notes": {
                     "label": "Coach: standing orders from the evaluator",
@@ -1289,6 +1337,7 @@ async def query_adk_gemini(
             )
 
             legal = obs.legal_actions or ["stay", "north", "south", "east", "west"]
+            tool_trace = set_deliberation_context(agent_id=agent_id, tick=obs.tick, round_num=obs.round)
             prompt = build_decision_prompt(
                 obs,
                 history=history,
@@ -1333,6 +1382,9 @@ async def query_adk_gemini(
             if isinstance(decision, dict):
                 decision = CatTacticalDecision(**decision)
 
+            if tool_trace and decision:
+                decision.tool_calls = list(tool_trace)
+
             if capture is not None:
                 capture["latency_ms"] = round((time.monotonic() - _started) * 1000)
                 # None means the response carried no usage metadata, which is
@@ -1340,6 +1392,8 @@ async def query_adk_gemini(
                 # purpose: "we did not measure" must not read as "it did not
                 # think" in an experiment about exactly that.
                 capture["thoughts_token_count"] = thoughts_tokens
+                if tool_trace:
+                    capture["tool_calls"] = list(tool_trace)
 
             # Every exit below reports *why* it gave up. Returning a bare None here
             # was what made fallbacks undiagnosable: the UI could only say "not
@@ -1354,6 +1408,8 @@ async def query_adk_gemini(
                             "thought": decision.thought,
                             "strategy": decision.strategy,
                             "target_mouse_id": decision.target_mouse_id,
+                            "broadcast_msg": getattr(decision, "broadcast_msg", "") or "",
+                            "tool_calls": getattr(decision, "tool_calls", []) or [],
                         }
                     return decision, "adk_gemini", None
                 else:

@@ -54,6 +54,7 @@ SECTION_KEYS = [
     "history_window",
     "current_observation",
     "notice_board",
+    "inter_cat_radio",
 ]
 
 

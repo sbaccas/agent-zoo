@@ -581,6 +581,53 @@ def create_mcp_server(name: str = "cat-and-mouse-mcp", version: str = "0.1.0") -
         )
         return {"status": "updated", "rule": rule, "enabled": enabled, "notice_board": notice_data}
 
+    @server.tool(
+        name="get_comms_log",
+        description="Retrieve the rolling inter-cat radio communications and tactical chirps broadcast between cats.",
+    )
+    async def get_comms_log(limit: int = 50, sim_id: str = "active") -> Dict[str, Any]:
+        start = time.perf_counter()
+        ok, res, err = await _fetch_from_game_server(
+            f"/api/simulations/{sim_id}/comms",
+            params={"limit": limit},
+        )
+        dur = round((time.perf_counter() - start) * 1000, 2)
+        if not ok:
+            get_telemetry().record_event(
+                event_type="tool_call",
+                level="error",
+                tool="get_comms_log",
+                arguments={"limit": limit, "sim_id": sim_id},
+                duration_ms=dur,
+                status="error",
+                summary=f"Failed to fetch comms log: {err}",
+            )
+            return {"status": "error", "reason": err, "transmissions": []}
+
+        transmissions = res.get("transmissions", []) if isinstance(res, dict) else []
+        get_telemetry().record_event(
+            event_type="tool_call",
+            level="info",
+            tool="get_comms_log",
+            arguments={"limit": limit, "sim_id": sim_id},
+            duration_ms=dur,
+            status="ok",
+            summary=f"Retrieved {len(transmissions)} radio transmissions in {dur}ms",
+            details={"count": len(transmissions)},
+        )
+        return {"status": "ok", "count": len(transmissions), "transmissions": transmissions}
+
+    @server.tool(
+        name="get_agent_card",
+        description="Retrieve the authoritative Agent-to-Agent (A2A) Agent Card and declared capabilities for an agent.",
+    )
+    async def get_agent_card_tool(agent_id: str = "cat-1") -> Dict[str, Any]:
+        from actors.a2a import client as a2a_client
+        card = await a2a_client.fetch_agent_card(agent_id)
+        if card:
+            return {"status": "ok", "agent_card": card.model_dump()}
+        return {"status": "error", "reason": f"Agent Card for {agent_id} could not be retrieved"}
+
 
     # --------------------------------------------------------------------------
     # Resources
@@ -646,6 +693,27 @@ def create_mcp_server(name: str = "cat-and-mouse-mcp", version: str = "0.1.0") -
             status="ok",
             summary=f"Resource read cm://sim/active/coverage_map in {dur}ms",
             details={"uri": "cm://sim/active/coverage_map"},
+        )
+        return json.dumps(data)
+
+    @server.resource(
+        "cm://sim/active/comms",
+        name="Active Inter-Cat Radio Comms",
+        description="Rolling inter-cat radio transmissions and peer tactical chirps for the active game.",
+        mime_type="application/json",
+    )
+    async def comms_resource() -> str:
+        start = time.perf_counter()
+        data = await get_comms_log(limit=50, sim_id="active")
+        dur = round((time.perf_counter() - start) * 1000, 2)
+        get_telemetry().record_event(
+            event_type="resource_read",
+            level="info",
+            resource="cm://sim/active/comms",
+            duration_ms=dur,
+            status="ok",
+            summary=f"Resource read cm://sim/active/comms in {dur}ms",
+            details={"uri": "cm://sim/active/comms"},
         )
         return json.dumps(data)
 
@@ -1080,6 +1148,19 @@ def create_mcp_app(server: Optional[MCPServer] = None):
         )
         return JSONResponse({"ok": True, "notice_board": notice_data})
 
+    # 9. Inter-Cat Radio Comms REST API
+    async def comms_endpoint(request: Request) -> JSONResponse:
+        sim_id = request.query_params.get("sim_id", "active")
+        limit_val = int(request.query_params.get("limit", 50))
+        ok, res, err = await _fetch_from_game_server(
+            f"/api/simulations/{sim_id}/comms",
+            params={"limit": limit_val},
+        )
+        if not ok:
+            return JSONResponse({"ok": False, "transmissions": [], "error": err})
+        transmissions = res.get("transmissions", []) if isinstance(res, dict) else []
+        return JSONResponse({"ok": True, "transmissions": transmissions})
+
     # Register additional HTTP routes
     app.add_route("/", dashboard_endpoint, methods=["GET"])
     app.add_route("/api/mcp/stream", stream_endpoint, methods=["GET"])
@@ -1089,6 +1170,7 @@ def create_mcp_app(server: Optional[MCPServer] = None):
     app.add_route("/api/mcp/clear-logs", clear_logs_endpoint, methods=["POST"])
     app.add_route("/api/mcp/notice-board", notice_board_endpoint, methods=["GET"])
     app.add_route("/api/mcp/notice-board/toggle", notice_board_toggle_endpoint, methods=["POST"])
+    app.add_route("/api/mcp/comms", comms_endpoint, methods=["GET"])
     app.add_route("/api/mcp/coach-notes", coach_notes_list_endpoint, methods=["GET"])
     app.add_route("/api/mcp/coach-notes", coach_notes_create_endpoint, methods=["POST"])
     app.add_route("/api/mcp/coach-notes/{id}", coach_notes_item_endpoint, methods=["PUT", "DELETE"])

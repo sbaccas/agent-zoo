@@ -601,6 +601,96 @@ async def pull_transcript(
     }
 
 
+async def a2a_send_coach_message(
+    recipient_coach: str,
+    message: str,
+    message_type: str = "DIRECT_MESSAGE",
+    cat_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Sends an Agent-to-Agent (A2A) strategic message from this Coach (Long-Term Consciousness) to a peer Coach.
+
+    Use this tool to communicate directly with the other team's Coach (e.g. 'coach(cat-2)').
+    Ideal for strategic diplomacy: proposing territorial division, non-aggression pacts,
+    or coordinated hunting boundaries.
+
+    Args:
+        recipient_coach: Target coach identifier (e.g. 'coach(cat-2)' or 'coach(cat-1)').
+        message: The strategic proposition or message content.
+        message_type: 'DIRECT_MESSAGE', 'PROPOSAL', or 'PACT'. Default is 'DIRECT_MESSAGE'.
+        cat_id: Optional explicit sender cat id (defaults to current active cat).
+
+    Returns:
+        Status dictionary confirming dispatch and message ID.
+    """
+    target_cat = cat_id or os.environ.get("CAT_ID") or ("cat-2" if os.environ.get("PORT") == "8003" else "cat-1")
+    sender_coach_id = f"coach({target_cat})"
+
+    recip = recipient_coach.strip()
+    if recip not in ("*", "broadcast", "all") and not recip.startswith("coach"):
+        recip = f"coach({recip})"
+
+    try:
+        from actors.a2a import client
+        resp = await client.send_a2a_message(
+            sender_id=sender_coach_id,
+            recipient_id=recip,
+            content=message,
+            message_type=message_type,
+            metadata={"source": "long_term_consciousness", "layer": "coach"},
+        )
+        return {
+            "status": resp.status,
+            "message_id": resp.message_id,
+            "sender": sender_coach_id,
+            "recipient": recip,
+            "message": message,
+            "error": resp.error,
+        }
+    except Exception as exc:
+        return {"status": "error", "error": str(exc), "sender": sender_coach_id, "recipient": recip}
+
+
+async def a2a_read_coach_messages(
+    limit: Optional[int] = 10,
+    cat_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Reads incoming A2A strategic messages and proposals sent by peer Coaches.
+
+    Returns the latest incoming diplomatic messages from other coaches on the board.
+    """
+    target_cat = cat_id or os.environ.get("CAT_ID") or ("cat-2" if os.environ.get("PORT") == "8003" else "cat-1")
+    from actors.a2a import store as a2a_store
+    coach_msgs = a2a_store.get_coach_inbox(target_cat, limit=limit or 10)
+    formatted = [
+        {
+            "sender": m.get("sender_id"),
+            "recipient": m.get("recipient_id"),
+            "type": m.get("message_type"),
+            "content": m.get("content"),
+            "timestamp": m.get("timestamp"),
+        }
+        for m in coach_msgs
+    ]
+    return {"available": True, "count": len(formatted), "messages": formatted}
+
+
+async def a2a_get_peer_coach_card(
+    peer_id: Optional[str] = None,
+    cat_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Inspects the peer agent's official A2A Agent Card to check its declared long-term consciousness and strategic skills."""
+    target_cat = cat_id or os.environ.get("CAT_ID") or ("cat-2" if os.environ.get("PORT") == "8003" else "cat-1")
+    peer = peer_id or ("cat-1" if target_cat == "cat-2" else "cat-2")
+    try:
+        from actors.a2a import client
+        card = await client.fetch_agent_card(agent_id=peer)
+        if card:
+            return {"status": "ok", "agent_card": card.model_dump()}
+        return {"status": "error", "error": f"Could not retrieve card for peer {peer}"}
+    except Exception as exc:
+        return {"status": "error", "error": str(exc)}
+
+
 # The budget the coach starts on, and it is deliberately ~16x the actor's.
 #
 # The two agents are the same model doing opposite jobs, and the shape of the
@@ -637,7 +727,17 @@ eval_agent = LlmAgent(
     name="cat_evaluator",
     model=EVAL_MODEL,
     instruction=_eval_instruction_provider,
-    tools=[get_boxscore, get_coverage_map, get_event_reel, pull_transcript, write_coach_note, read_coach_notes],
+    tools=[
+        get_boxscore,
+        get_coverage_map,
+        get_event_reel,
+        pull_transcript,
+        write_coach_note,
+        read_coach_notes,
+        a2a_send_coach_message,
+        a2a_read_coach_messages,
+        a2a_get_peer_coach_card,
+    ],
     generate_content_config=types.GenerateContentConfig(
         thinking_config=types.ThinkingConfig(thinking_budget=_initial_eval_budget)
     ),
@@ -672,7 +772,14 @@ general_agent = LlmAgent(
     name="cat_coach",
     model=EVAL_MODEL,
     instruction=_general_instruction_provider,
-    tools=[get_boxscore, get_event_reel, pull_transcript, read_coach_notes],
+    tools=[
+        get_boxscore,
+        get_event_reel,
+        pull_transcript,
+        read_coach_notes,
+        a2a_read_coach_messages,
+        a2a_send_coach_message,
+    ],
     generate_content_config=types.GenerateContentConfig(
         thinking_config=types.ThinkingConfig(thinking_budget=0)
     ),
@@ -989,9 +1096,10 @@ def build_eval_prompt(
     """
     target_cat = agent_id or os.environ.get("CAT_ID") or ("cat-2" if os.environ.get("PORT") == "8003" else "cat-1")
     coach_identity_block = (
-        f"--- YOUR ASSIGNMENT: DEDICATED COACH FOR {target_cat.upper()} ---\n"
-        f"You are the dedicated tactical coach and evaluator exclusively assigned to {target_cat.upper()}.\n"
-        f"Your role is to monitor {target_cat.upper()}'s performance, analyze its decisions, and provide direct orders to {target_cat.upper()}.\n"
+        f"--- YOUR ASSIGNMENT: DEDICATED COACH FOR {target_cat.upper()} (LONG-TERM CONSCIOUSNESS) ---\n"
+        f"You are the dedicated tactical coach and long-term consciousness exclusively assigned to {target_cat.upper()} (identity: coach({target_cat})).\n"
+        f"Your role is macro strategy, long-horizon evaluation, and strategic diplomacy with peer coaches.\n"
+        f"Your subordinate is the Tactical Cat Actor ({target_cat}), who acts as the short-term consciousness executing immediate movement and combat.\n"
         f"Do NOT confuse your assigned agent ({target_cat.upper()}) with any other cat or agent on the arena board.\n\n"
     )
 
@@ -1106,6 +1214,32 @@ def build_eval_prompt(
         "chosen actions, and reasoning (e.g. pull_transcript(last_n=50)).\n\n"
     )
 
+    # A2A Strategic Peer Comms block
+    from actors.a2a import store as a2a_store
+    coach_comms = a2a_store.get_coach_inbox(target_cat, limit=10)
+    if coach_comms:
+        comms_lines = []
+        for m in coach_comms:
+            sender = m.get("sender_id", "peer_coach")
+            m_type = m.get("message_type", "MSG")
+            content = m.get("content", "")
+            comms_lines.append(f"  • [{m_type} from {sender}]: \"{content}\"")
+        comms_block = (
+            "--- A2A STRATEGIC DIPLOMACY (PEER COACH COMMS) ---\n"
+            "Incoming communications from the rival team's Coach (Long-Term Consciousness):\n"
+            + "\n".join(comms_lines)
+            + "\n\nYou can deliberate with the peer coach using tool `a2a_send_coach_message` "
+            "to negotiate territory, hunting pacts, or non-aggression. Reflect any agreed strategy in your directives.\n\n"
+        )
+    else:
+        peer_name = "coach(cat-2)" if target_cat == "cat-1" else "coach(cat-1)"
+        comms_block = (
+            "--- A2A STRATEGIC DIPLOMACY (PEER COACH COMMS) ---\n"
+            f"(No incoming messages from peer coach {peer_name} yet. "
+            f"You can use tool `a2a_send_coach_message` to initiate diplomacy, suggest territorial divisions, "
+            "or propose hunting pacts.)\n\n"
+        )
+
     return (
         f"{coach_identity_block}"
         f"{actor_manual_block}"
@@ -1113,9 +1247,10 @@ def build_eval_prompt(
         f"{previous_block}"
         f"{notebook_block}"
         f"{transcript_block}"
+        f"{comms_block}"
         f"{directive_block}"
         "Follow the three-step Evaluation Execution Protocol:\n"
-        "1. Gather Telemetry: Query your tools (e.g. get_boxscore, get_coverage_map, pull_transcript, read_coach_notes).\n"
+        "1. Gather Telemetry & Strategic Comms: Query your tools (e.g. get_boxscore, get_coverage_map, pull_transcript, read_coach_notes, a2a_read_coach_messages, a2a_send_coach_message).\n"
         "2. Private Coach Note: Call write_coach_note to record your private deduction, hypothesis, or spatial pattern (with optional linked_ticks).\n"
         "3. Published Standing Orders: Return only the markdown bullet directives for the Cat Actor.\n"
         "Relax any 3–4 line condition: it is okay and expected for your dossier to grow "

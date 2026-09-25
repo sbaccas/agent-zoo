@@ -18,6 +18,8 @@ import httpx
 from actors.auth import get_gcp_id_token
 
 # Shared models
+from actors.a2a.models import AgentCard, A2AMessage, A2AResponse
+from actors.a2a import store as a2a_store, client as a2a_client
 from actors.models import (
     ActionResponse,
     ApiKeyRequest,
@@ -504,6 +506,8 @@ async def act_async(obs: Observation, decoupled: bool = False) -> ActionResponse
                 "engine": "adk_gemini",
                 "strategy": llm_decision.strategy,
                 "target_mouse_id": llm_decision.target_mouse_id,
+                "broadcast_msg": getattr(llm_decision, "broadcast_msg", "") or "",
+                "tool_calls": getattr(llm_decision, "tool_calls", []) or [],
                 "phase": llm_decision.strategy,
             }
             state.last_engine_source = "adk_gemini"
@@ -542,6 +546,8 @@ async def act_async(obs: Observation, decoupled: bool = False) -> ActionResponse
                 auto_meta["engine"] = "adk_gemini"
                 auto_meta["strategy"] = llm_decision.strategy
                 auto_meta["target_mouse_id"] = llm_decision.target_mouse_id
+                auto_meta["broadcast_msg"] = getattr(llm_decision, "broadcast_msg", "") or ""
+                auto_meta["tool_calls"] = getattr(llm_decision, "tool_calls", []) or []
                 auto_meta["phase"] = llm_decision.strategy
                 state.last_engine_source = "adk_gemini"
                 state.active_directive = {
@@ -667,14 +673,22 @@ async def act_async(obs: Observation, decoupled: bool = False) -> ActionResponse
     store.append_tick(exchange)
     maybe_dispatch_evaluation(obs.tick)
 
-    return ActionResponse(action=chosen_action, thought=chosen_thought)
+    broadcast_msg = auto_meta.get("broadcast_msg") or ""
+    tool_calls = auto_meta.get("tool_calls") or []
+    return ActionResponse(
+        action=chosen_action,
+        thought=chosen_thought,
+        broadcast_msg=broadcast_msg,
+        tool_calls=tool_calls,
+    )
 
 
 def act(obs: Observation, use_llm: bool = True) -> ActionResponse:
     """Synchronous interface for scheduler fallback or direct testing."""
     if not use_llm:
-        action, thought, _ = compute_heuristic_decision(obs)
-        return ActionResponse(action=action, thought=thought)
+        action, thought, meta = compute_heuristic_decision(obs)
+        b_msg = (meta or {}).get("broadcast_msg") or ""
+        return ActionResponse(action=action, thought=thought, broadcast_msg=b_msg)
     return run_sync(act_async(obs))
 
 
@@ -878,6 +892,8 @@ class WsClientManager:
             return
 
         meta = state.latest_autonomous.get("meta", {}) if state.latest_autonomous else {}
+        broadcast_msg = getattr(action_resp, "broadcast_msg", "") or meta.get("broadcast_msg", "") or ""
+        tool_calls = getattr(action_resp, "tool_calls", []) or meta.get("tool_calls", []) or []
         try:
             await ws.send(json.dumps({
                 "type": "action",
@@ -886,12 +902,8 @@ class WsClientManager:
                 "thought": action_resp.thought,
                 "strategy": meta.get("strategy", "ROAMING"),
                 "target_mouse_id": meta.get("target_mouse_id", ""),
-                # Which system actually chose this. `act_async(decoupled=True)`
-                # never waits for Gemini: it serves a completed deliberation if
-                # one is ready and otherwise answers from the System-1 reflex.
-                # Both arrive at the server equally promptly, so arrival time
-                # cannot distinguish them and the server would credit the model
-                # for every tick the reflex played.
+                "broadcast_msg": broadcast_msg,
+                "tool_calls": tool_calls,
                 "engine": meta.get("engine"),
             }))
         except Exception as err:
@@ -1275,6 +1287,85 @@ async def act_endpoint(obs: Observation) -> ActionResponse:
     return await act_async(obs)
 
 
+# --- Agent-to-Agent (A2A) Protocol Endpoints ---
+
+@app.get("/.well-known/agent.json", response_model=AgentCard)
+@app.get("/a2a/agent-card", response_model=AgentCard)
+async def get_agent_card() -> AgentCard:
+    """Returns this agent's authoritative A2A Agent Card."""
+    active_id = state.agent_id or os.environ.get("CAT_ID")
+    if not active_id:
+        port_str = os.environ.get("PORT", "8001")
+        active_id = "cat-2" if port_str == "8003" else "cat-1"
+    port_val = int(os.environ.get("PORT", "8001"))
+    return a2a_store.build_default_agent_card(active_id, port_val)
+
+
+@app.post("/a2a/messages", response_model=A2AResponse)
+async def receive_a2a_message(msg: A2AMessage) -> A2AResponse:
+    """Incoming A2A message receiver from peer agents."""
+    active_id = state.agent_id or os.environ.get("CAT_ID")
+    if not active_id:
+        port_str = os.environ.get("PORT", "8001")
+        active_id = "cat-2" if port_str == "8003" else "cat-1"
+
+    # Store in this agent's A2A inbox
+    a2a_store.append_inbox(active_id, msg)
+
+    # Telemetry logging to Game Server
+    game_server_url = os.environ.get("GAME_SERVER_URL", "http://127.0.0.1:8000")
+    asyncio.create_task(a2a_client._report_transmission_to_engine(game_server_url, msg))
+
+    return A2AResponse(
+        status="delivered",
+        message_id=msg.message_id,
+        sender_id=msg.sender_id,
+        recipient_id=active_id,
+    )
+
+
+@app.get("/a2a/inbox")
+async def get_a2a_inbox(limit: int = 50) -> Dict[str, Any]:
+    """Returns this agent's recent incoming A2A messages."""
+    active_id = state.agent_id or os.environ.get("CAT_ID")
+    if not active_id:
+        port_str = os.environ.get("PORT", "8001")
+        active_id = "cat-2" if port_str == "8003" else "cat-1"
+    return {
+        "agent_id": active_id,
+        "inbox": a2a_store.get_inbox(active_id, limit=limit),
+    }
+
+
+@app.get("/a2a/outbox")
+async def get_a2a_outbox(limit: int = 50) -> Dict[str, Any]:
+    """Returns this agent's recent dispatched A2A messages."""
+    active_id = state.agent_id or os.environ.get("CAT_ID")
+    if not active_id:
+        port_str = os.environ.get("PORT", "8001")
+        active_id = "cat-2" if port_str == "8003" else "cat-1"
+    return {
+        "agent_id": active_id,
+        "outbox": a2a_store.get_outbox(active_id, limit=limit),
+    }
+
+
+@app.get("/a2a/peers")
+async def get_a2a_peers() -> Dict[str, Any]:
+    """Returns known peer agent registry and fetched Agent Cards."""
+    registry = a2a_client.get_peer_registry()
+    cards = {}
+    for peer_id in registry:
+        card = await a2a_client.fetch_agent_card(peer_id)
+        if card:
+            cards[peer_id] = card.model_dump()
+        else:
+            cards[peer_id] = {"id": peer_id, "url": registry[peer_id], "status": "offline"}
+    return {
+        "peers": cards,
+    }
+
+
 @app.get("/api/agent/state")
 async def get_agent_state(sync: bool = False, agent_id: Optional[str] = None) -> Dict[str, Any]:
     if sync:
@@ -1326,9 +1417,14 @@ async def get_agent_state(sync: bool = False, agent_id: Optional[str] = None) ->
         # The workbench polls this endpoint and only this endpoint, so Box 6 is
         # rendered from here. Built by the shared helper rather than restated:
         # the previous inline copy was missing the coach's `thinking` block,
-        # which left the slider with no bounds to move between.
         "evaluator": evaluator_status(),
         "chat_history": state.chat_history[-50:],
+        "agent_card": a2a_store.build_default_agent_card(
+            state.agent_id or ("cat-2" if os.environ.get("PORT") == "8003" else "cat-1"),
+            int(os.environ.get("PORT", "8001")),
+        ).model_dump(),
+        "a2a_inbox_count": len(a2a_store.get_inbox(state.agent_id or ("cat-2" if os.environ.get("PORT") == "8003" else "cat-1"))),
+        "a2a_outbox_count": len(a2a_store.get_outbox(state.agent_id or ("cat-2" if os.environ.get("PORT") == "8003" else "cat-1"))),
     }
 
 
