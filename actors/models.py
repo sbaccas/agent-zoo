@@ -42,35 +42,15 @@ class ConnectServerRequest(BaseModel):
     cat_id: Optional[str] = None
 
 
+# The cat's per-tick answer sheet, filled in top to bottom.
+# Field order is load-bearing: structured output is generated one token at a
+# time in declaration order, and the actor runs with thinking_budget=0 by default.
+# Whichever field is declared first is decided with nothing in context.
+# ``thought`` therefore precedes ``action`` so the model writes its geometry
+# before choosing, and selects the action while conditioned on the numbers it
+# just produced (avoids post-hoc rationalizations).
 class CatTacticalDecision(BaseModel):
-    """The cat's per-tick answer sheet, filled in top to bottom.
-
-    Field order is load-bearing. Structured output is generated one token at a
-    time in declaration order, and the actor runs with ``thinking_budget=0`` by
-    default, so there is no scratchpad anywhere else. Whichever field is
-    declared first is decided with nothing in context.
-
-    ``thought`` therefore precedes ``action`` so the model writes its geometry
-    before choosing, and selects the action while conditioned on the numbers it
-    just produced.
-
-    This used to be the other way round. Measured over 211 recorded attacks,
-    the cat's forward/offaxis arithmetic was correct 94.7% of the time, yet
-    only 19% of its swings had a mouse in the strike zone: it named the action
-    before computing anything, so ``thought`` became a post-hoc justification
-    it could not retract. Transcripts show the contradiction plainly, e.g.
-    tick 134 - "A mouse is in the strike zone; attacking to score. forward: 8,
-    offaxis: 2. Not in strike zone, repositioning for a better shot." - while
-    ``action`` said attack. Re-running one fixed position 10 times per schema,
-    action-first chose an out-of-range attack 10/10; thought-first, 1/10.
-
-    That 10/10 vs 1/10 was measured at ``thinking_budget=0``, which is now a
-    default rather than a fixed property of the actor (see
-    ``actor.set_thinking_budget``). Raising the budget gives the model a real
-    scratchpad and should weaken the effect this ordering compensates for -- it
-    does not invalidate the ordering, but it does mean the margin cannot be
-    assumed to hold at other budgets without re-measuring.
-    """
+    """Structured decision schema for cat agent turn."""
 
     thought: str = Field(description="Concise tactical reasoning based on game skills and rules")
     action: str = Field(description="The chosen action strictly from legal_actions")

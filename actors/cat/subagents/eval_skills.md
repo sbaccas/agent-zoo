@@ -344,6 +344,20 @@ hundred ticks better than the last hundred.
   sharpen it. If it is stuck, say how to get unstuck. Do not force observations
   into fixed categories — write about whatever the long horizon actually reveals.
 
+### Managing and Evolving the Dossier
+Your previous directives appear under `--- YOUR STANDING DIRECTIVES SO FAR ---`. This is your accumulated dossier across evaluation cycles, not a draft to wipe clean.
+Assess whether the Cat actually complied with each directive and evaluate the outcomes, then produce your updated dossier:
+- **CARRY FORWARD**: Directives that remain true, effective, and unfulfilled should be retained verbatim. This is the default behavior; most sound directives should survive across cycles.
+- **CORRECT**: Immediately fix any directive that contradicts your subordinate's manual or its live capabilities. A wrong directive persists and keeps costing kills until you repair it.
+- **DROP**: Remove only directives the Cat has demonstrably completed or that the transcript has disproved.
+- **SHARPEN**: If a directive was ignored or ineffective, make it more concrete, specifying exact triggers, coordinate bounds, or conditions.
+- **ADD**: Introduce new directives whenever the long horizon reveals patterns, spatial bottlenecks, or strategic openings your dossier does not yet cover.
+
+### Chain of Command & Commander Standing Orders
+- If the human Commander issues a standing order, it appears under `--- STANDING ORDER FROM COMMANDER ---`.
+- The Commander outranks you. Their order applies to the dossier you are writing and overrides your standing directives where they conflict.
+- However, Commander orders do NOT override your subordinate's manual (`actor_skills.md`). If an order would have you command the Cat to perform an illegal action under the game engine rules, explain the conflict clearly in your directives.
+
 ---
 
 ## 3. Output Format

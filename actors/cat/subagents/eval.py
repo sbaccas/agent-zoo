@@ -1097,21 +1097,13 @@ def build_eval_prompt(
     target_cat = agent_id or os.environ.get("CAT_ID") or ("cat-2" if os.environ.get("PORT") == "8003" else "cat-1")
     coach_identity_block = (
         f"--- YOUR ASSIGNMENT: DEDICATED COACH FOR {target_cat.upper()} (LONG-TERM CONSCIOUSNESS) ---\n"
-        f"You are the dedicated tactical coach and long-term consciousness exclusively assigned to {target_cat.upper()} (identity: coach({target_cat})).\n"
-        f"Your role is macro strategy, long-horizon evaluation, and strategic diplomacy with peer coaches.\n"
-        f"Your subordinate is the Tactical Cat Actor ({target_cat}), who acts as the short-term consciousness executing immediate movement and combat.\n"
-        f"Do NOT confuse your assigned agent ({target_cat.upper()}) with any other cat or agent on the arena board.\n\n"
+        f"Assigned Agent: {target_cat} (identity: coach({target_cat}))\n"
+        f"Subordinate: Tactical Cat Actor ({target_cat})\n\n"
     )
 
     # The coach's model of the game IS the actor's manual -- the same bytes the
     # actor is running on, read through the actor's own loader so the two cannot
-    # diverge. eval_skills.md used to carry its own paraphrase of the rules and
-    # it rotted: it described the strike zone as an "expanding 60 degree cone"
-    # long after the engine, the heuristic and actor_skills.md had settled on a
-    # 3-wide rectangle, and its worked examples told the coach to align the cat
-    # to the mouse's "exact row or column". That advice reached the cat verbatim
-    # and cost it most of a game: swings that were correctly aligned were being
-    # "corrected" while the real error, depth, went unmentioned.
+    # diverge.
     actor_manual_block = (
         f"{ACTOR_MANUAL_BLOCK_HEADER}\n"
         f"{get_skills_instruction()}\n\n"
@@ -1123,64 +1115,19 @@ def build_eval_prompt(
         previous_count = sum(
             1 for ln in previous.splitlines() if ln.strip().startswith("-")
         )
-        # The wording here governs how the list evolves. It used to offer
-        # only "keep / drop / replace" -- three operations that all
-        # preserve cardinality -- so the list could never grow. Measured
-        # live: feeding in 2 bullets produced 2-3 back, 6 produced 5.
-        # Output tracked input almost exactly. Adding must be named as an
-        # explicit, expected operation or it does not happen.
         previous_block = (
             "--- YOUR STANDING DIRECTIVES SO FAR ---\n"
             f"{previous}\n\n"
-            "This is your accumulated dossier, not a draft to be rewritten. "
-            "Assess whether the Cat actually followed each directive, then "
-            "produce the updated dossier:\n"
-            "  - CORRECT, before anything else, any directive that contradicts "
-            "your subordinate's manual or its live capabilities above. Because "
-            "the default is to carry directives forward verbatim and the Cat "
-            "obeys them, a wrong directive does not decay -- it persists and "
-            "keeps costing kills until you repair it. Rewrite it to agree with "
-            "the capabilities block.\n"
-            "  - CARRY FORWARD every directive that still holds, reproduced "
-            "verbatim. This is the default; most directives should survive.\n"
-            "  - DROP only a directive the Cat has demonstrably completed or "
-            "that the transcript has proven wrong.\n"
-            "  - SHARPEN a directive the Cat ignored, making it more concrete "
-            "and easier to act on.\n"
-            "  - ADD new directives for everything this stretch of transcript "
-            "revealed that your dossier does not yet cover.\n\n"
-            f"You currently have {previous_count} directive(s). The dossier is "
-            "expected to grow as the game progresses and you learn more; a "
-            "later evaluation covering more of the game should normally return "
-            "more directives than an earlier one. Do not shrink it to hit some "
-            "imagined length, and do not pad it to look thorough.\n\n"
+            f"You currently have {previous_count} directive(s). "
+            "Per eval_skills.md, update your dossier: CARRY FORWARD active directives, DROP completed ones, and ADD new directives as learned.\n\n"
         )
 
     # The Commander's standing order, if one is in force.
-    #
-    # Placed AFTER the dossier and the transcript, immediately before the write
-    # instruction, because it has to win. The dossier block above tells the coach
-    # that carrying directives forward verbatim is the default, and that default
-    # is strong enough to survive a contradicting instruction buried earlier in a
-    # prompt this long -- which would leave the Commander watching an order they
-    # gave get quietly overwritten by the coach's own previous opinion, every
-    # cycle, with no error anywhere.
     directive_block = ""
     if coach_directive and coach_directive.strip():
         directive_block = (
             f"{COACH_DIRECTIVE_BLOCK_HEADER}\n"
             f"{coach_directive.strip()}\n\n"
-            "This order comes from the human Commander, who outranks you. It "
-            "applies to the dossier you are about to write and to every dossier "
-            "after it, until the Commander rescinds it.\n"
-            "  - It overrides your own standing directives where they conflict. "
-            "If a directive already in your dossier contradicts this order, "
-            "rewrite or drop that directive now rather than carrying it "
-            "forward.\n"
-            "  - It does not override your subordinate's manual. If the order "
-            "would have you tell the Cat to do something illegal or impossible "
-            "under that manual, do not issue it. Say so plainly in a directive "
-            "instead, and explain the conflict.\n\n"
         )
 
     memories = store.read_coach_memories(limit=5, agent_id=target_cat)
@@ -1192,26 +1139,21 @@ def build_eval_prompt(
             cat = f"[{m.get('category', 'tactical')}]"
             notes_lines.append(f"  • {cat}{tags} {m.get('note', '')}")
         notebook_block = (
-            "--- YOUR PRIVATE STRATEGIC NOTEBOOK (from earlier rounds) ---\n"
+            "--- YOUR PRIVATE STRATEGIC NOTEBOOK ---\n"
             + "\n".join(notes_lines)
-            + "\n(Use write_coach_note to log new deductions or hypotheses for future rounds)\n\n"
+            + "\n\n"
         )
     else:
         notebook_block = (
             "--- YOUR PRIVATE STRATEGIC NOTEBOOK ---\n"
-            "(Notebook is currently empty. Use write_coach_note during evaluation to record private tactical deductions, hypotheses, and sector patterns across rounds.)\n\n"
+            "(Empty)\n\n"
         )
 
     # No tick indices reach the model -- not on the lines, not in this
     # header. See format_transcript() for why.
-    # The full transcript is not dumped into the default prompt context to avoid
-    # blowing up the token budget. The model queries recent or windowed slices
-    # on demand via pull_transcript.
     transcript_block = (
         f"--- CAT TRANSCRIPT STATUS ({len(records)} consecutive ticks recorded) ---\n"
-        "The raw transcript is no longer dumped into your prompt context. "
-        "Use the pull_transcript tool on demand to inspect recent movement, combat, "
-        "chosen actions, and reasoning (e.g. pull_transcript(last_n=50)).\n\n"
+        "(Query recent slices on demand via pull_transcript)\n\n"
     )
 
     # A2A Strategic Peer Comms block
@@ -1226,18 +1168,14 @@ def build_eval_prompt(
             comms_lines.append(f"  • [{m_type} from {sender}]: \"{content}\"")
         comms_block = (
             "--- A2A STRATEGIC DIPLOMACY (PEER COACH COMMS) ---\n"
-            "Incoming communications from the rival team's Coach (Long-Term Consciousness):\n"
             + "\n".join(comms_lines)
-            + "\n\nYou can deliberate with the peer coach using tool `a2a_send_coach_message` "
-            "to negotiate territory, hunting pacts, or non-aggression. Reflect any agreed strategy in your directives.\n\n"
+            + "\n\n"
         )
     else:
         peer_name = "coach(cat-2)" if target_cat == "cat-1" else "coach(cat-1)"
         comms_block = (
             "--- A2A STRATEGIC DIPLOMACY (PEER COACH COMMS) ---\n"
-            f"(No incoming messages from peer coach {peer_name} yet. "
-            f"You can use tool `a2a_send_coach_message` to initiate diplomacy, suggest territorial divisions, "
-            "or propose hunting pacts.)\n\n"
+            f"(No incoming messages from {peer_name})\n\n"
         )
 
     return (
@@ -1249,14 +1187,8 @@ def build_eval_prompt(
         f"{transcript_block}"
         f"{comms_block}"
         f"{directive_block}"
-        "Follow the three-step Evaluation Execution Protocol:\n"
-        "1. Gather Telemetry & Strategic Comms: Query your tools (e.g. get_boxscore, get_coverage_map, pull_transcript, read_coach_notes, a2a_read_coach_messages, a2a_send_coach_message).\n"
-        "2. Private Coach Note: Call write_coach_note to record your private deduction, hypothesis, or spatial pattern (with optional linked_ticks).\n"
-        "3. Published Standing Orders: Return only the markdown bullet directives for the Cat Actor.\n"
-        "Relax any 3–4 line condition: it is okay and expected for your dossier to grow "
-        "as you make better observations, keeping in mind that the Cat Actor consumes these "
-        "notes with high priority. Every directive must be legal and correct under your "
-        "subordinate's manual above. Do not refer to tick numbers in the directives; the Cat cannot see them."
+        "--- EVALUATION ---\n"
+        "Execute your evaluation per eval_skills.md. Return updated standing directives for the Cat Actor. Do not refer to tick numbers in the directives."
     )
 
 
@@ -1665,18 +1597,16 @@ async def interrogate_general(
 
             coach_identity_block = (
                 f"--- YOUR ASSIGNMENT: COACH FOR {target_cat.upper()} ---\n"
-                f"You are the dedicated tactical coach exclusively assigned to {target_cat.upper()}.\n\n"
+                f"Assigned Agent: {target_cat} (coach({target_cat}))\n\n"
             )
 
             dossier_block = (
                 "--- YOUR DOSSIER, CURRENTLY IN FORCE ---\n"
                 f"{notes.strip()}\n\n"
-                f"These are your own directives. They are being delivered to "
-                f"{target_cat.upper()} verbatim, every tick, right now.\n\n"
                 if (notes or "").strip()
                 else
                 "--- YOUR DOSSIER, CURRENTLY IN FORCE ---\n"
-                "You have not published any directives yet.\n\n"
+                "(No directives published yet)\n\n"
             )
 
             order_block = ""
@@ -1684,8 +1614,6 @@ async def interrogate_general(
                 order_block = (
                     f"{COACH_DIRECTIVE_BLOCK_HEADER}\n"
                     f"{standing_order.strip()}\n\n"
-                    "You are already under this order from the Commander. Answer "
-                    "in light of it.\n\n"
                 )
 
             transcript_block = ""
