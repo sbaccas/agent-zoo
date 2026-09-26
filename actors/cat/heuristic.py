@@ -1,9 +1,12 @@
 import random
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 from actors.models import Observation
 
 
-def compute_heuristic_decision(obs: Observation) -> Tuple[str, str, Dict[str, Any]]:
+def compute_heuristic_decision(
+    obs: Observation,
+    commander_directive: Optional[Dict[str, Any]] = None,
+) -> Tuple[str, str, Dict[str, Any]]:
     """
     Evaluates an observation using deterministic tactical heuristics:
       1. Slash attack if a mouse is in the forward strike zone -- the
@@ -16,7 +19,12 @@ def compute_heuristic_decision(obs: Observation) -> Tuple[str, str, Dict[str, An
     Returns:
       (action_name, thought_string, metadata_dict)
     """
+    cmd_override = _execute_commander_combat_decision(obs, commander_directive, is_reflex=False)
+    if cmd_override is not None:
+        return cmd_override
+
     self_info = obs.self
+
     pos = self_info.get("position", {"x": 0, "y": 0})
     facing = self_info.get("facing", "north")
     legal = obs.legal_actions or ["stay", "north", "south", "east", "west"]
@@ -208,19 +216,234 @@ def in_strike_zone(dx: int, dy: int, facing: str, atk_range: int) -> bool:
     return 1 <= forward <= atk_range and abs(lateral) <= SLASH_HALF_WIDTH
 
 
+def parse_combat_cat_target(
+    directive: str,
+    self_id: str = "cat-1",
+    eliminated: Optional[List[str]] = None,
+) -> Optional[str]:
+    """Extracts target cat ID if the commander directive orders an attack or pursuit on a rival cat."""
+    if not directive:
+        return None
+    d = directive.lower().strip()
+    eliminated_set = set(e.lower() for e in (eliminated or []))
+
+    target_id = None
+    if "cat-2" in d or "cat 2" in d or "cat2" in d:
+        target_id = "cat-2"
+    elif "cat-1" in d or "cat 1" in d or "cat1" in d:
+        target_id = "cat-1"
+    elif any(w in d for w in ("rival", "enemy", "opponent", "other cat", "kill cat", "attack cat")):
+        target_id = "cat-2" if self_id == "cat-1" else "cat-1"
+
+    if not target_id:
+        return None
+
+    if target_id == self_id:
+        return None
+
+    if target_id in eliminated_set:
+        return None
+
+    combat_keywords = (
+        "kill", "attack", "destroy", "eliminate", "hunt", "slay",
+        "strike", "slash", "lunge", "chase", "pursue", "take down",
+        "take out", "target", "fight", "finish off", "get"
+    )
+    if any(kw in d for kw in combat_keywords) or target_id:
+        return target_id
+
+    return None
+
+
+def parse_directional_order(directive: str, legal_actions: List[str]) -> Optional[str]:
+    """Extracts a movement action if the directive orders a specific direction."""
+    if not directive:
+        return None
+    d = directive.lower().strip()
+    for word in ("north", "south", "east", "west", "stay"):
+        if word in d and word in legal_actions:
+            return word
+    return None
+
+
+def _execute_commander_combat_decision(
+    obs: Observation,
+    commander_directive: Optional[Dict[str, Any]],
+    is_reflex: bool = True,
+) -> Optional[Tuple[str, str, Dict[str, Any]]]:
+    """Evaluates whether an active commander directive commands immediate combat against a rival cat or directional move."""
+    if not commander_directive:
+        return None
+
+    directive_text = (commander_directive.get("directive") or "").strip()
+    if not directive_text:
+        return None
+
+    self_info = obs.self or {}
+    self_id = self_info.get("id", "cat-1")
+    pos = self_info.get("position", {"x": 0, "y": 0})
+    facing = self_info.get("facing", "north")
+    legal = obs.legal_actions or ["stay", "north", "south", "east", "west"]
+    atk_range = (obs.capabilities or {}).get("attack_range", 2)
+    eliminated = getattr(obs, "eliminated_cats", []) or []
+
+    target_cat_id = parse_combat_cat_target(directive_text, self_id=self_id, eliminated=eliminated)
+
+    if target_cat_id:
+        cat_candidates = [
+            e for e in obs.visible_entities
+            if e.get("type") == "cat" and e.get("id") == target_cat_id
+        ]
+        if not cat_candidates:
+            cat_candidates = [
+                e for e in obs.visible_entities
+                if e.get("type") == "cat" and e.get("id") != self_id and e.get("id") not in eliminated
+            ]
+
+        tag = "Reflex" if is_reflex else "Heuristic"
+
+        if cat_candidates:
+            target_cat = cat_candidates[0]
+            t_pos = target_cat.get("position", {})
+            tx, ty = t_pos.get("x", 0), t_pos.get("y", 0)
+            dx = tx - pos["x"]
+            dy = ty - pos["y"]
+
+            # A. Strike Zone Slash
+            if "attack" in legal and in_strike_zone(dx, dy, facing, atk_range):
+                forward, lateral = decompose_offset(dx, dy, facing)
+                msg = (
+                    f"[{tag} Commander Priority: Kill {target_cat_id}] Target cat in strike zone "
+                    f"({forward} ahead, {lateral:+d} off-axis, range {atk_range}). Attacking target cat!"
+                )
+                meta = {
+                    "phase": "ATTACK",
+                    "strategy": "ATTACK",
+                    "target_id": target_cat_id,
+                    "target_cat_id": target_cat_id,
+                    "distance": forward,
+                    "target_pos": {"x": tx, "y": ty},
+                }
+                return "attack", msg, meta
+
+            # B. Forward Lunge Gap Closer
+            if "lunge" in legal:
+                directly_ahead = False
+                if facing == "north" and dy < 0 and dx == 0:
+                    directly_ahead = True
+                elif facing == "south" and dy > 0 and dx == 0:
+                    directly_ahead = True
+                elif facing == "east" and dx > 0 and dy == 0:
+                    directly_ahead = True
+                elif facing == "west" and dx < 0 and dy == 0:
+                    directly_ahead = True
+
+                dist = abs(dx) + abs(dy)
+                if directly_ahead and dist >= 2:
+                    msg = f"[{tag} Commander Priority: Kill {target_cat_id}] Lunging forward to close distance on {target_cat_id}!"
+                    meta = {
+                        "phase": "LUNGE",
+                        "strategy": "LUNGE",
+                        "target_id": target_cat_id,
+                        "target_cat_id": target_cat_id,
+                        "distance": dist,
+                        "target_pos": {"x": tx, "y": ty},
+                    }
+                    return "lunge", msg, meta
+
+            # C. Target Lock Pursuit towards rival cat
+            moves = []
+            if abs(dx) >= abs(dy):
+                if dx > 0 and "east" in legal:
+                    moves.append("east")
+                elif dx < 0 and "west" in legal:
+                    moves.append("west")
+                if dy > 0 and "south" in legal:
+                    moves.append("south")
+                elif dy < 0 and "north" in legal:
+                    moves.append("north")
+            else:
+                if dy > 0 and "south" in legal:
+                    moves.append("south")
+                elif dy < 0 and "north" in legal:
+                    moves.append("north")
+                if dx > 0 and "east" in legal:
+                    moves.append("east")
+                elif dx < 0 and "west" in legal:
+                    moves.append("west")
+
+            if not moves:
+                cardinal = [a for a in legal if a in ("north", "south", "east", "west")]
+                if cardinal:
+                    def step_dist(action):
+                        nx, ny = pos["x"], pos["y"]
+                        if action == "north": ny -= 1
+                        elif action == "south": ny += 1
+                        elif action == "east": nx += 1
+                        elif action == "west": nx -= 1
+                        return abs(tx - nx) + abs(ty - ny)
+                    moves = sorted(cardinal, key=step_dist)
+
+            if moves:
+                dist = abs(dx) + abs(dy)
+                msg = f"[{tag} Commander Priority: Kill {target_cat_id}] Advancing on target cat {target_cat_id} at ({tx}, {ty})."
+                meta = {
+                    "phase": "PURSUIT",
+                    "strategy": "PURSUIT",
+                    "target_id": target_cat_id,
+                    "target_cat_id": target_cat_id,
+                    "distance": dist,
+                    "target_pos": {"x": tx, "y": ty},
+                }
+                return moves[0], msg, meta
+
+        # If target cat is not visible, search the arena to locate it (dropping all mice!)
+        cardinal = [a for a in legal if a in ("north", "south", "east", "west")]
+        if cardinal:
+            chosen = cardinal[0]
+            msg = f"[{tag} Commander Priority: Kill {target_cat_id}] Searching arena to locate target cat {target_cat_id}."
+            meta = {
+                "phase": "SEARCH",
+                "strategy": "SEARCH",
+                "target_id": target_cat_id,
+                "target_cat_id": target_cat_id,
+            }
+            return chosen, msg, meta
+
+    # Check for directional movement order (e.g. "move west", "go north")
+    dir_order = parse_directional_order(directive_text, legal)
+    if dir_order:
+        tag = "Reflex" if is_reflex else "Heuristic"
+        msg = f"[{tag} Commander Priority] Executing movement order: {dir_order}."
+        meta = {
+            "phase": "COMMANDER_MOVE",
+            "strategy": "COMMANDER",
+            "directive": directive_text,
+        }
+        return dir_order, msg, meta
+
+    return None
+
+
 def compute_reflex_decision(
     obs: Observation,
     locked_target_id: Optional[str] = None,
     strategy: Optional[str] = None,
+    commander_directive: Optional[Dict[str, Any]] = None,
 ) -> Tuple[str, str, Dict[str, Any]]:
     """
     Fast reflex decision (System 1) executed at sub-millisecond speeds:
+      0. Immediate Commander Directive priority override (orders to kill cat or move).
       1. Immediate slash attack if any mouse is in the forward strike zone.
       2. Gap-closing lunge if directly ahead down a corridor.
       3. Target-Lock pursuit: if locked_target_id is visible, step towards it.
       4. General pursuit: step towards nearest visible mouse.
       5. Roaming sweep: explore legal directions if no prey is visible.
     """
+    cmd_override = _execute_commander_combat_decision(obs, commander_directive, is_reflex=True)
+    if cmd_override is not None:
+        return cmd_override
+
     self_info = obs.self
     pos = self_info.get("position", {"x": 0, "y": 0})
     facing = self_info.get("facing", "north")

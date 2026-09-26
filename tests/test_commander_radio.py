@@ -599,3 +599,106 @@ def test_manual_section_numbering_has_no_duplicates():
     headings = re.findall(r"^## (\d+)\.", SKILLS_MD.read_text(), re.M)
     assert headings == sorted(headings, key=int), f"sections out of order: {headings}"
     assert len(headings) == len(set(headings)), f"duplicate section numbers: {headings}"
+
+
+# --------------------------------------------------------------------------
+# Operator Radio: Highest priority override & "kill cat 2" combat lock-in
+# --------------------------------------------------------------------------
+
+def test_commander_order_kill_cat_2_drops_mice_and_attacks():
+    """When the commander orders "kill cat 2", the agent drops all mice and slashes cat-2 in strike zone."""
+    from actors.cat.heuristic import compute_reflex_decision
+
+    obs = Observation(
+        tick=50,
+        round=1,
+        self={"id": "cat-1", "position": {"x": 5, "y": 5}, "facing": "north", "hp": 100},
+        capabilities={"attack_range": 2},
+        legal_actions=["stay", "north", "south", "east", "west", "attack"],
+        visible_entities=[
+            # A mouse right in strike zone
+            {"id": "mouse-1", "type": "mouse", "position": {"x": 5, "y": 4}},
+            # Rival cat-2 also in strike zone
+            {"id": "cat-2", "type": "cat", "position": {"x": 5, "y": 3}},
+        ],
+    )
+
+    cmd = {"directive": "kill cat 2", "tick": 50, "source": "commander_radio"}
+    action, thought, meta = compute_reflex_decision(obs, commander_directive=cmd)
+
+    assert action == "attack"
+    assert "cat-2" in thought
+    assert meta["target_id"] == "cat-2"
+    assert meta["target_cat_id"] == "cat-2"
+
+
+def test_commander_order_kill_cat_2_pursues_visible_rival_cat():
+    """When cat-2 is visible but out of strike range, the agent advances towards cat-2, ignoring mice."""
+    from actors.cat.heuristic import compute_reflex_decision
+
+    obs = Observation(
+        tick=50,
+        round=1,
+        self={"id": "cat-1", "position": {"x": 5, "y": 5}, "facing": "north", "hp": 100},
+        capabilities={"attack_range": 2},
+        legal_actions=["stay", "north", "south", "east", "west"],
+        visible_entities=[
+            # Nearby mouse to the west
+            {"id": "mouse-1", "type": "mouse", "position": {"x": 4, "y": 5}},
+            # Rival cat-2 to the north-east
+            {"id": "cat-2", "type": "cat", "position": {"x": 8, "y": 5}},
+        ],
+    )
+
+    cmd = {"directive": "kill cat 2", "tick": 50, "source": "commander_radio"}
+    action, thought, meta = compute_reflex_decision(obs, commander_directive=cmd)
+
+    # Cat-2 is at (8, 5), agent is at (5, 5) -> moves east towards cat-2, NOT west towards mouse!
+    assert action == "east"
+    assert "cat-2" in thought
+    assert meta["target_id"] == "cat-2"
+
+
+def test_commander_order_kill_cat_2_lunges_ahead():
+    """When cat-2 is aligned in a corridor ahead, the agent lunges to close distance."""
+    from actors.cat.heuristic import compute_reflex_decision
+
+    obs = Observation(
+        tick=50,
+        round=1,
+        self={"id": "cat-1", "position": {"x": 5, "y": 10}, "facing": "north", "hp": 100},
+        capabilities={"attack_range": 2},
+        legal_actions=["stay", "north", "south", "east", "west", "lunge"],
+        visible_entities=[
+            {"id": "cat-2", "type": "cat", "position": {"x": 5, "y": 7}},
+        ],
+    )
+
+    cmd = {"directive": "drop everything and kill cat 2", "tick": 50, "source": "commander_radio"}
+    action, thought, meta = compute_reflex_decision(obs, commander_directive=cmd)
+
+    assert action == "lunge"
+    assert "cat-2" in thought
+    assert meta["target_id"] == "cat-2"
+
+
+def test_commander_order_invalidates_stale_deliberated_decision():
+    """Sending a commander directive immediately invalidates any pre-computed stale decision."""
+    client = TestClient(app)
+
+    # Simulate an existing deliberated decision from before the operator radios
+    state.latest_deliberated_decision = CatTacticalDecision(
+        action="west",
+        thought="chasing mouse-1",
+        strategy="STALKING",
+        target_mouse_id="mouse-1",
+    )
+
+    # Operator radios "kill cat 2" with steering
+    resp = client.post("/api/agent/prompt", json={"prompt": "kill cat 2", "steer_directive": True})
+    assert resp.status_code == 200
+
+    # The stale decision must have been wiped so the agent does not execute it on the next tick
+    assert state.latest_deliberated_decision is None
+    assert state.commander_directive["directive"] == "kill cat 2"
+

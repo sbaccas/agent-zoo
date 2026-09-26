@@ -518,7 +518,10 @@ async def act_async(obs: Observation, decoupled: bool = False) -> ActionResponse
             # report `adk_gemini`, which meant most WebSocket ticks were credited
             # to the model even though the model had not answered yet.
             auto_action, auto_thought, auto_meta = compute_reflex_decision(
-                obs, locked_target_id=locked_target, strategy=active_strat
+                obs,
+                locked_target_id=locked_target,
+                strategy=active_strat,
+                commander_directive=state.commander_directive,
             )
             auto_meta["engine"] = "heuristic_reflex"
             auto_meta["strategy"] = active_strat
@@ -536,7 +539,10 @@ async def act_async(obs: Observation, decoupled: bool = False) -> ActionResponse
             state.deliberation_task = asyncio.create_task(_run_background_deliberation(obs))
     else:
         # Standard synchronous path / Fallback when unauthenticated
-        auto_action, auto_thought, auto_meta = compute_heuristic_decision(obs)
+        auto_action, auto_thought, auto_meta = compute_heuristic_decision(
+            obs,
+            commander_directive=state.commander_directive,
+        )
 
         if is_authenticated:
             llm_decision = await query_adk_gemini(obs)
@@ -1932,6 +1938,14 @@ async def interrogate_agent(req: InterrogateRequest) -> InterrogateResponse:
             "source": "commander_radio",
         }
         adopted = clean_prompt
+
+        # Preemption: Invalidate stale decisions and cancel in-flight deliberation
+        # so the agent immediately locks into the commander's new order on its next move.
+        state.latest_deliberated_decision = None
+        state.latest_deliberated_prompt = None
+        if state.deliberation_task and not state.deliberation_task.done():
+            state.deliberation_task.cancel()
+        state.is_deliberating = False
 
     now_str = datetime.now().strftime("%H:%M:%S")
     state.chat_history.append({
