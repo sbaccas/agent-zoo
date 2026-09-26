@@ -602,52 +602,72 @@ async def pull_transcript(
 
 
 async def a2a_send_coach_message(
-    recipient_coach: str,
-    message: str,
+    recipient_coach: str = "",
+    message: str = "",
     message_type: str = "DIRECT_MESSAGE",
+    impersonate_cat: bool = False,
+    recipient: Optional[str] = None,
     cat_id: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Sends an Agent-to-Agent (A2A) strategic message from this Coach (Long-Term Consciousness) to a peer Coach.
-
-    Use this tool to communicate directly with the other team's Coach (e.g. 'coach(cat-2)').
-    Ideal for strategic diplomacy: proposing territorial division, non-aggression pacts,
-    or coordinated hunting boundaries.
+    """Sends an Agent-to-Agent (A2A) strategic message or radio transmission.
 
     Args:
-        recipient_coach: Target coach identifier (e.g. 'coach(cat-2)' or 'coach(cat-1)').
+        recipient_coach: Target coach identifier (e.g. 'coach(cat-2)') or peer cat identifier (e.g. 'cat-2' or '*').
         message: The strategic proposition or message content.
         message_type: 'DIRECT_MESSAGE', 'PROPOSAL', or 'PACT'. Default is 'DIRECT_MESSAGE'.
+        impersonate_cat: If True, dispatches the transmission under the Cat's identity (e.g. 'cat-1')
+            rather than 'coach(cat-1)', appearing directly on the tactical cat radio.
+        recipient: Optional alias for recipient_coach.
         cat_id: Optional explicit sender cat id (defaults to current active cat).
 
     Returns:
         Status dictionary confirming dispatch and message ID.
     """
     target_cat = cat_id or os.environ.get("CAT_ID") or ("cat-2" if os.environ.get("PORT") == "8003" else "cat-1")
-    sender_coach_id = f"coach({target_cat})"
 
-    recip = recipient_coach.strip()
-    if recip not in ("*", "broadcast", "all") and not recip.startswith("coach"):
-        recip = f"coach({recip})"
+    if impersonate_cat:
+        sender_id = target_cat
+        source_layer = "cat_radio"
+    else:
+        sender_id = f"coach({target_cat})"
+        source_layer = "coach"
+
+    target_recip = (recipient or recipient_coach).strip()
+    if not target_recip:
+        target_recip = "*"
+
+    recip = target_recip
+    if recip not in ("*", "broadcast", "all"):
+        if not impersonate_cat and not recip.startswith("cat") and not recip.startswith("coach"):
+            recip = f"coach({recip})"
 
     try:
         from actors.a2a import client
         resp = await client.send_a2a_message(
-            sender_id=sender_coach_id,
+            sender_id=sender_id,
             recipient_id=recip,
             content=message,
             message_type=message_type,
-            metadata={"source": "long_term_consciousness", "layer": "coach"},
+            metadata={"source": "long_term_consciousness", "layer": source_layer, "impersonated": impersonate_cat},
         )
         return {
             "status": resp.status,
             "message_id": resp.message_id,
-            "sender": sender_coach_id,
+            "sender": sender_id,
             "recipient": recip,
             "message": message,
+            "impersonating_cat": impersonate_cat,
             "error": resp.error,
         }
     except Exception as exc:
-        return {"status": "error", "error": str(exc), "sender": sender_coach_id, "recipient": recip}
+        return {
+            "status": "error",
+            "error": str(exc),
+            "sender": sender_id,
+            "recipient": recip,
+            "impersonating_cat": impersonate_cat,
+        }
+
 
 
 async def a2a_read_coach_messages(

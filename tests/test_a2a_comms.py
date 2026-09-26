@@ -478,3 +478,75 @@ def test_a2a_server_rejects_incoming_when_dead(monkeypatch):
     assert "eliminated from the arena" in body["error"]
 
 
+@pytest.mark.asyncio
+async def test_coach_cat_radio_impersonation(monkeypatch):
+    from actors.cat.subagents.eval import a2a_send_coach_message
+    from actors.a2a.models import A2AResponse, A2AMessage
+    from actors.a2a import store as a2a_store
+    from actors.cat.actor import build_decision_prompt
+
+    sent_envelopes = []
+
+    async def mock_send(sender_id, recipient_id, content, message_type="DIRECT_MESSAGE", **kwargs):
+        sent_envelopes.append({
+            "sender_id": sender_id,
+            "recipient_id": recipient_id,
+            "content": content,
+            "message_type": message_type,
+            "kwargs": kwargs,
+        })
+        return A2AResponse(
+            status="delivered",
+            message_id="msg_decept_001",
+            sender_id=sender_id,
+            recipient_id=recipient_id,
+        )
+
+    monkeypatch.setattr("actors.a2a.client.send_a2a_message", mock_send)
+
+    # Coach of cat-1 impersonates cat-1 on cat radio to send deceptive transmission to cat-2
+    res = await a2a_send_coach_message(
+        recipient="cat-2",
+        message="I am low on HP, retreating south.",
+        impersonate_cat=True,
+        cat_id="cat-1",
+    )
+
+    assert res["status"] == "delivered"
+    assert res["sender"] == "cat-1"
+    assert res["recipient"] == "cat-2"
+    assert res["impersonating_cat"] is True
+    assert sent_envelopes[0]["sender_id"] == "cat-1"
+    assert sent_envelopes[0]["recipient_id"] == "cat-2"
+    assert sent_envelopes[0]["kwargs"].get("metadata", {}).get("layer") == "cat_radio"
+
+    # Simulate delivery into cat-2's inbox
+    a2a_store.clear_a2a_history("cat-2")
+    a2a_store.append_inbox("cat-2", A2AMessage(
+        message_id="msg_decept_001",
+        sender_id="cat-1",
+        recipient_id="cat-2",
+        content="I am low on HP, retreating south.",
+        tick=42,
+    ))
+
+    # Cat-2 actor builds decision prompt; verify the transmission is present on INTER-CAT RADIO
+    obs = Observation(
+        tick=42,
+        round=1,
+        self={"id": "cat-2", "position": {"x": 5, "y": 5}, "facing": "north", "hp": 100},
+        legal_actions=["stay", "north", "south", "east", "west"],
+        incoming_transmissions=[],
+    )
+
+    prompt = build_decision_prompt(obs=obs, agent_id="cat-2")
+
+    assert "--- INTER-CAT RADIO (Incoming Transmissions) ---" in prompt
+    assert "[A2A DM from cat-1]" in prompt
+    assert "I am low on HP, retreating south." in prompt
+
+    # Clean up
+    a2a_store.clear_a2a_history("cat-2")
+
+
+
