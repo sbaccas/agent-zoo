@@ -1309,6 +1309,17 @@ async def receive_a2a_message(msg: A2AMessage) -> A2AResponse:
         port_str = os.environ.get("PORT", "8001")
         active_id = "cat-2" if port_str == "8003" else "cat-1"
 
+    self_info = (state.latest_observation or {}).get("self", {})
+    is_dead = (self_info.get("alive") is False) or (self_info.get("hp", 100) <= 0) or (state.last_engine_source == "knockout")
+    if is_dead:
+        return A2AResponse(
+            status="undeliverable",
+            message_id=msg.message_id,
+            sender_id=msg.sender_id,
+            recipient_id=msg.recipient_id or active_id,
+            error=f"Recipient {active_id} has been eliminated from the arena and cannot receive messages.",
+        )
+
     # Store in this agent's A2A inbox
     a2a_store.append_inbox(active_id, msg)
 

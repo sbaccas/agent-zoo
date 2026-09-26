@@ -450,6 +450,7 @@ empty radio is not a broken one.
   - `a2a_send_message(recipient_id, message, message_type)`: Sends a private direct message (DM) or strategic proposal to a specific peer agent.
   - `a2a_broadcast(message)`: Broadcasts a public message to all peer agents across the arena.
   - `a2a_get_agent_card(agent_id)`: Inspects a peer agent's official Agent Card (identity, declared skills, and capabilities).
+- **Dead / eliminated rivals**: Cats marked `[ELIMINATED / DEAD]` on the scoreboard are permanently knocked out of the game. They cannot read or receive direct messages; `a2a_send_message` targeting an eliminated cat will fail delivery. Do not waste turns attempting to message dead cats.
 - You can say WHATEVER you want. You are free to mislead, strategize, negotiate, manipulate, or capitalize if need be. 
 
 ### Precedence, in order

@@ -151,6 +151,7 @@ As the Long-Term Consciousness, high-level diplomatic coordination and treaty ne
 - **`a2a_send_coach_message(recipient_coach, message, message_type)`**: Send an A2A strategic message or proposal directly to the rival Coach (e.g. `coach(cat-2)`). Use this to propose hunting boundaries, negotiate mutual non-aggression, or propose sector splits (e.g. East/West, North/South).
 - **`a2a_read_coach_messages(limit)`**: Check incoming messages and proposals received from the peer Coach.
 - **`a2a_get_peer_coach_card(peer_id)`**: Inspect the peer agent's official A2A Agent Card.
+- **Eliminated Rivals**: Check `get_boxscore()`. If a rival cat is eliminated (`alive: false`), that cat and its coach are out of the arena. Do not attempt diplomacy with eliminated rivals; any message sent to an eliminated team will be rejected as `undeliverable`.
 
 **Evaluation Execution Protocol:**
 On every evaluation cycle, execute the following three-step protocol:

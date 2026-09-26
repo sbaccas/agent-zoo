@@ -13,15 +13,22 @@ ctx_current_agent_id: ContextVar[str] = ContextVar("ctx_current_agent_id", defau
 ctx_current_tick: ContextVar[int] = ContextVar("ctx_current_tick", default=0)
 ctx_current_round: ContextVar[int] = ContextVar("ctx_current_round", default=0)
 ctx_tool_calls_trace: ContextVar[Optional[List[Dict[str, Any]]]] = ContextVar("ctx_tool_calls_trace", default=None)
+ctx_current_eliminated_cats: ContextVar[List[str]] = ContextVar("ctx_current_eliminated_cats", default=[])
 
 
-def set_deliberation_context(agent_id: str, tick: int, round_num: int = 0) -> List[Dict[str, Any]]:
+def set_deliberation_context(
+    agent_id: str,
+    tick: int,
+    round_num: int = 0,
+    eliminated_cats: Optional[List[str]] = None,
+) -> List[Dict[str, Any]]:
     """Initializes context variables for a deliberation run and returns a tool trace buffer."""
     trace: List[Dict[str, Any]] = []
     ctx_current_agent_id.set(agent_id)
     ctx_current_tick.set(tick)
     ctx_current_round.set(round_num)
     ctx_tool_calls_trace.set(trace)
+    ctx_current_eliminated_cats.set(list(eliminated_cats or []))
     return trace
 
 
@@ -58,6 +65,27 @@ def a2a_send_message(recipient_id: str, message: str, message_type: str = "DIREC
     tick = ctx_current_tick.get()
     round_num = ctx_current_round.get()
 
+    # Pre-check: reject immediately if recipient is already dead/eliminated
+    eliminated = ctx_current_eliminated_cats.get()
+    clean_recip = store.normalize_agent_id(recipient_id)
+    if recipient_id in eliminated or clean_recip in eliminated:
+        err = f"Recipient {recipient_id} has been eliminated from the arena and cannot receive messages."
+        result_record = {
+            "tool": "a2a_send_message",
+            "sender_id": sender_id,
+            "recipient_id": recipient_id,
+            "message": message,
+            "message_type": message_type,
+            "tick": tick,
+            "status": "undeliverable",
+            "message_id": None,
+            "error": err,
+        }
+        trace = ctx_tool_calls_trace.get()
+        if trace is not None:
+            trace.append(result_record)
+        return f"Delivery failed: recipient {recipient_id} is dead/eliminated from the arena."
+
     try:
         resp = _run_sync(
             client.send_a2a_message(
@@ -89,6 +117,8 @@ def a2a_send_message(recipient_id: str, message: str, message_type: str = "DIREC
 
         if resp.status == "delivered":
             return f"A2A {message_type} delivered to {recipient_id} (Message ID: {resp.message_id})"
+        elif resp.status == "undeliverable":
+            return f"Delivery failed: recipient {recipient_id} is dead/eliminated from the arena. ({resp.error})"
         else:
             return f"A2A dispatch completed with status '{resp.status}': {resp.error or 'no additional error'}"
 

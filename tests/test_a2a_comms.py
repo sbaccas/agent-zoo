@@ -402,3 +402,79 @@ def test_coach_dual_consciousness_agent_card():
     assert any(s.id == "coach_diplomacy" for s in card2.skills)
     assert card1.capabilities.get("coach_to_coach_diplomacy") is True
 
+
+def test_eliminated_rival_labels_in_decision_prompt():
+    from actors.cat.actor import build_decision_prompt
+    from actors.models import Observation
+
+    obs = Observation(
+        tick=50,
+        round=2,
+        self={"id": "cat-1", "position": {"x": 5, "y": 5}, "facing": "north", "hp": 100, "max_hp": 100},
+        scoreboard={"cat-1": 1, "cat-2": 0},
+        eliminated_cats=["cat-2"],
+    )
+    prompt = build_decision_prompt(obs, agent_id="cat-1")
+    assert "Rival Cats: cat-2: 0 [ELIMINATED / DEAD]" in prompt
+
+
+def test_scheduler_tracks_eliminated_cats(empty_sim):
+    sim = empty_sim
+    cat1 = sim.entity_manager.spawn_entity(EntityType.CAT, pos=Position(x=2, y=2), facing=Direction.NORTH)
+    cat2 = sim.entity_manager.spawn_entity(EntityType.CAT, pos=Position(x=5, y=5), facing=Direction.SOUTH)
+
+    # Both alive initially
+    obs1 = sim.scheduler._build_observation_payload(cat1)
+    assert obs1["eliminated_cats"] == []
+
+    # Eliminate cat2
+    cat2.alive = False
+    cat2.hp = 0
+
+    obs1_after = sim.scheduler._build_observation_payload(cat1)
+    assert obs1_after["eliminated_cats"] == [cat2.id]
+
+
+def test_a2a_tool_rejects_eliminated_recipient():
+    from actors.a2a.tools import a2a_send_message, set_deliberation_context
+
+    # Deliberation context where cat-2 is marked as eliminated
+    trace = set_deliberation_context(agent_id="cat-1", tick=20, round_num=1, eliminated_cats=["cat-2"])
+
+    res = a2a_send_message("cat-2", "Hey why aren't you responding?")
+    assert "Delivery failed: recipient cat-2 is dead/eliminated" in res
+    assert len(trace) == 1
+    assert trace[0]["status"] == "undeliverable"
+
+    # Also rejects coach(cat-2)
+    res_coach = a2a_send_message("coach(cat-2)", "Diplomacy request")
+    assert "Delivery failed: recipient coach(cat-2) is dead/eliminated" in res_coach
+
+
+def test_a2a_server_rejects_incoming_when_dead(monkeypatch):
+    from fastapi.testclient import TestClient
+    from actors.cat.api import app as cat_app, state
+    from actors.a2a.models import A2AMessage
+
+    client = TestClient(cat_app)
+
+    # Set state to eliminated / dead
+    monkeypatch.setattr(state, "latest_observation", {"self": {"alive": False, "hp": 0}})
+    monkeypatch.setattr(state, "last_engine_source", "knockout")
+
+    msg = {
+        "sender_id": "cat-1",
+        "sender_card_url": "http://127.0.0.1:8001/.well-known/agent.json",
+        "recipient_id": "cat-2",
+        "message_type": "DIRECT_MESSAGE",
+        "content": "Are you still alive?",
+        "tick": 55,
+    }
+
+    resp = client.post("/a2a/messages", json=msg)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "undeliverable"
+    assert "eliminated from the arena" in body["error"]
+
+

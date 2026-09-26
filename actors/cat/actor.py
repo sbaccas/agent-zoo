@@ -1048,7 +1048,14 @@ def build_decision_prompt(
 
     # Rivals only; the cat's own score is already stated on its own line.
     rivals = {k: v for k, v in (obs.scoreboard or {}).items() if k != obs.self.get("id", agent_id)}
-    rival_text = ", ".join(f"{cid}: {sc}" for cid, sc in sorted(rivals.items())) if rivals else "none"
+    eliminated = set(getattr(obs, "eliminated_cats", None) or [])
+    rival_entries = []
+    for cid, sc in sorted(rivals.items()):
+        if cid in eliminated:
+            rival_entries.append(f"{cid}: {sc} [ELIMINATED / DEAD]")
+        else:
+            rival_entries.append(f"{cid}: {sc}")
+    rival_text = ", ".join(rival_entries) if rival_entries else "none"
 
     # Lock state. The server has always sent these two fields; the prompt used to
     # drop them, so the model issued commands into a locked engine with no way to
@@ -1337,7 +1344,10 @@ async def query_adk_gemini(
             )
 
             legal = obs.legal_actions or ["stay", "north", "south", "east", "west"]
-            tool_trace = set_deliberation_context(agent_id=agent_id, tick=obs.tick, round_num=obs.round)
+            eliminated = getattr(obs, "eliminated_cats", []) or []
+            tool_trace = set_deliberation_context(
+                agent_id=agent_id, tick=obs.tick, round_num=obs.round, eliminated_cats=eliminated
+            )
             prompt = build_decision_prompt(
                 obs,
                 history=history,

@@ -250,6 +250,10 @@ class Scheduler:
             # hit/miss by diffing its own `score` against the previous tick.
             "score": self.scores.get(entity.id, 0),
             "scoreboard": self.get_scoreboard(),
+            "eliminated_cats": [
+                e.id for e in self.entity_manager.entities.values()
+                if e.type == EntityType.CAT and not e.alive
+            ],
             # A2A Comms: audible transmissions from other cats (broadcasts + DMs targeted to this entity or its coach)
             "incoming_transmissions": [
                 t for t in self.transmissions[-25:]

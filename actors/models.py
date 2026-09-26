@@ -14,6 +14,7 @@ class Observation(BaseModel):
     # against the previous tick, rather than being told "hit" or "miss".
     score: int = 0
     scoreboard: Dict[str, int] = Field(default_factory=dict)
+    eliminated_cats: List[str] = Field(default_factory=list)
     deaths: List[Dict[str, Any]] = Field(default_factory=list)
     recent_deaths: List[Dict[str, Any]] = Field(default_factory=list)
     events: List[Dict[str, Any]] = Field(default_factory=list)
