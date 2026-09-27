@@ -1413,10 +1413,12 @@ async def query_adk_gemini(
                 if chosen_clean in legal:
                     decision.action = chosen_clean
                     if capture is not None:
+                        t_id = getattr(decision, "target_id", "") or decision.target_mouse_id or ""
                         capture["decision"] = {
                             "action": decision.action,
                             "thought": decision.thought,
                             "strategy": decision.strategy,
+                            "target_id": t_id,
                             "target_mouse_id": decision.target_mouse_id,
                             "broadcast_msg": getattr(decision, "broadcast_msg", "") or "",
                             "tool_calls": getattr(decision, "tool_calls", []) or [],

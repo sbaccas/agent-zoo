@@ -68,3 +68,27 @@ def test_construction_is_keyword_only_so_the_swap_is_safe():
         "CatTacticalDecision accepted positional args; reordering fields "
         "could silently swap action and thought at a call site."
     )
+
+
+def test_target_id_and_target_mouse_id_synchronization():
+    """Verify target_id works for general targets (including rival cats) and syncs bidirectionally."""
+    # 1. Setting target_id (e.g. rival cat) sets target_mouse_id for backwards compatibility
+    dec_cat = CatTacticalDecision(
+        thought="Rival cat-2 in range, attacking!",
+        action="attack",
+        target_id="cat-2",
+        strategy="ATTACK",
+    )
+    assert dec_cat.target_id == "cat-2"
+    assert dec_cat.target_mouse_id == "cat-2"
+
+    # 2. Setting legacy target_mouse_id populates target_id
+    dec_mouse = CatTacticalDecision(
+        thought="Stalking mouse-5",
+        action="east",
+        target_mouse_id="mouse-5",
+        strategy="STALKING",
+    )
+    assert dec_mouse.target_id == "mouse-5"
+    assert dec_mouse.target_mouse_id == "mouse-5"
+

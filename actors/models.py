@@ -1,5 +1,5 @@
 from typing import Any, Dict, List, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class Observation(BaseModel):
@@ -54,7 +54,14 @@ class CatTacticalDecision(BaseModel):
 
     thought: str = Field(description="Concise tactical reasoning based on game skills and rules")
     action: str = Field(description="The chosen action strictly from legal_actions")
-    target_mouse_id: Optional[str] = Field(default="", description="ID of targeted mouse or empty string if none")
+    target_id: Optional[str] = Field(
+        default="",
+        description="ID of targeted entity (mouse or rival cat) or empty string if none",
+    )
+    target_mouse_id: Optional[str] = Field(
+        default="",
+        description="Legacy alias for target_id; ID of targeted mouse or entity",
+    )
     strategy: str = Field(default="ROAMING", description="Tactical phase: ATTACK, LUNGE, STALKING, or ROAMING")
     broadcast_msg: Optional[str] = Field(
         default="",
@@ -64,6 +71,20 @@ class CatTacticalDecision(BaseModel):
         default_factory=list,
         description="A2A tool calls invoked during deliberation",
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _sync_targets(cls, values: Any) -> Any:
+        if isinstance(values, dict):
+            eff = values.get("target_id") or values.get("target_mouse_id") or ""
+            values.setdefault("target_id", eff)
+            values.setdefault("target_mouse_id", eff)
+            if not values.get("target_id") and eff:
+                values["target_id"] = eff
+            if not values.get("target_mouse_id") and eff:
+                values["target_mouse_id"] = eff
+        return values
+
 
 
 class HistoryWindowRequest(BaseModel):

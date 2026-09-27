@@ -315,8 +315,10 @@ async def _run_background_deliberation(obs: Observation):
             # Logged by act_async, not here: only the consuming tick knows the
             # `applied_at_tick` this prompt should be filed under.
             state.latest_deliberated_prompt = bundle or None
+            t_id = getattr(decision, "target_id", "") or decision.target_mouse_id or ""
             state.active_directive = {
                 "strategy": decision.strategy,
+                "target_id": t_id,
                 "target_mouse_id": decision.target_mouse_id,
                 "thought": decision.thought,
                 "action": decision.action,
@@ -477,7 +479,7 @@ async def act_async(obs: Observation, decoupled: bool = False) -> ActionResponse
         return ActionResponse(action="stay", thought="ELIMINATED: Knocked out of the game.")
 
     active_dir = state.active_directive or {}
-    locked_target = active_dir.get("target_mouse_id") or None
+    locked_target = active_dir.get("target_id") or active_dir.get("target_mouse_id") or None
     active_strat = active_dir.get("strategy") or "ROAMING"
 
     auth_health = check_gemini_auth_health()
@@ -502,9 +504,11 @@ async def act_async(obs: Observation, decoupled: bool = False) -> ActionResponse
             state.latest_deliberated_prompt = None
             auto_action = llm_decision.action
             auto_thought = llm_decision.thought
+            t_id = getattr(llm_decision, "target_id", "") or llm_decision.target_mouse_id or ""
             auto_meta = {
                 "engine": "adk_gemini",
                 "strategy": llm_decision.strategy,
+                "target_id": t_id,
                 "target_mouse_id": llm_decision.target_mouse_id,
                 "broadcast_msg": getattr(llm_decision, "broadcast_msg", "") or "",
                 "tool_calls": getattr(llm_decision, "tool_calls", []) or [],
@@ -549,8 +553,10 @@ async def act_async(obs: Observation, decoupled: bool = False) -> ActionResponse
             if llm_decision and llm_decision.action in legal:
                 auto_action = llm_decision.action
                 auto_thought = llm_decision.thought
+                t_id = getattr(llm_decision, "target_id", "") or llm_decision.target_mouse_id or ""
                 auto_meta["engine"] = "adk_gemini"
                 auto_meta["strategy"] = llm_decision.strategy
+                auto_meta["target_id"] = t_id
                 auto_meta["target_mouse_id"] = llm_decision.target_mouse_id
                 auto_meta["broadcast_msg"] = getattr(llm_decision, "broadcast_msg", "") or ""
                 auto_meta["tool_calls"] = getattr(llm_decision, "tool_calls", []) or []
@@ -558,6 +564,7 @@ async def act_async(obs: Observation, decoupled: bool = False) -> ActionResponse
                 state.last_engine_source = "adk_gemini"
                 state.active_directive = {
                     "strategy": llm_decision.strategy,
+                    "target_id": t_id,
                     "target_mouse_id": llm_decision.target_mouse_id,
                     "thought": llm_decision.thought,
                     "tick": obs.tick,
