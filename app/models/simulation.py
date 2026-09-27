@@ -233,6 +233,12 @@ class SimulationStateResponse(BaseModel):
     species: Optional[Dict[str, Any]] = None
     disclosure: Optional[DisclosureConfig] = None
     map_features: Optional[Dict[str, Any]] = None
+    pending_repositions: Optional[Dict[str, Dict[str, int]]] = None
+
+
+class RepositionEntityRequest(BaseModel):
+    x: int = Field(..., ge=0, description="Target X coordinate")
+    y: int = Field(..., ge=0, description="Target Y coordinate")
 
 
 class UpdateTickRateRequest(BaseModel):

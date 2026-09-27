@@ -443,6 +443,12 @@ body {
   color: #92400e;
 }
 
+.event-item.event-reposition {
+  background-color: #f0fdf4;
+  border-color: #bbf7d0;
+  color: #166534;
+}
+
 .event-pill {
   font-size: 0.65rem;
   font-weight: 800;
@@ -474,6 +480,11 @@ body {
 
 .event-pill.pill-bump {
   background-color: #d97706;
+  color: #ffffff;
+}
+
+.event-pill.pill-reposition {
+  background-color: #16a34a;
   color: #ffffff;
 }
 

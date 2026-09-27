@@ -1283,6 +1283,135 @@
 
     // 12. Render Floating Combat Text ("SLASH!", "CAPTURE!") and Hit Sparks
     renderSlashImpactAndText(currentTickSlashes, state, cellW, cellH);
+
+    // 13. Render Pending Repositions (scheduled for next tick)
+    if (state.pending_repositions) {
+      for (const [entId, pos] of Object.entries(state.pending_repositions)) {
+        const ent = (state.entities || []).find(e => e.id === entId);
+        if (!ent || !ent.alive) continue;
+        const fromX = (ent.position.x + 0.5) * cellW;
+        const fromY = (ent.position.y + 0.5) * cellH;
+        const toX = (pos.x + 0.5) * cellW;
+        const toY = (pos.y + 0.5) * cellH;
+        const isCat = ent.type === 'cat';
+
+        ctx.save();
+        // Dashed trajectory vector
+        ctx.beginPath();
+        ctx.moveTo(fromX, fromY);
+        ctx.lineTo(toX, toY);
+        ctx.strokeStyle = isCat ? 'rgba(220, 38, 38, 0.75)' : 'rgba(2, 132, 199, 0.75)';
+        ctx.lineWidth = 2;
+        ctx.setLineDash([4, 4]);
+        ctx.stroke();
+
+        // Staged destination tile highlight
+        ctx.fillStyle = isCat ? 'rgba(220, 38, 38, 0.2)' : 'rgba(2, 132, 199, 0.2)';
+        ctx.fillRect(pos.x * cellW, pos.y * cellH, cellW, cellH);
+        ctx.strokeStyle = isCat ? '#dc2626' : '#0284c7';
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([]);
+        ctx.strokeRect(pos.x * cellW, pos.y * cellH, cellW, cellH);
+
+        // Ghost entity disc
+        const ghostR = Math.max(6, cellW * 0.75);
+        ctx.beginPath();
+        ctx.arc(toX, toY, ghostR, 0, Math.PI * 2);
+        ctx.fillStyle = isCat ? 'rgba(220, 38, 38, 0.35)' : 'rgba(2, 132, 199, 0.35)';
+        ctx.fill();
+        ctx.fillStyle = '#ffffff';
+        ctx.font = `bold ${Math.max(9, Math.floor(ghostR * 1.2))}px monospace`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(isCat ? 'C' : 'M', toX, toY);
+
+        // Pin badge
+        ctx.fillStyle = '#0f172a';
+        ctx.font = 'bold 9px -apple-system, BlinkMacSystemFont, sans-serif';
+        ctx.fillText('📌 Next Tick', toX, toY - ghostR - 4);
+        ctx.restore();
+      }
+    }
+
+    // 14. Render Active Drag Overlay (in-flight cursor preview & tile target)
+    if (isDraggingAsset && dragCandidate) {
+      const fromX = (dragCandidate.position.x + 0.5) * cellW;
+      const fromY = (dragCandidate.position.y + 0.5) * cellH;
+      const targetGridX = dragCurrentGrid.x;
+      const targetGridY = dragCurrentGrid.y;
+      const toCellX = targetGridX * cellW;
+      const toCellY = targetGridY * cellH;
+      const blocked = isCellBlocked(state, targetGridX, targetGridY);
+
+      ctx.save();
+      // Dashed connector line from original position to target cell
+      ctx.beginPath();
+      ctx.moveTo(fromX, fromY);
+      ctx.lineTo(toCellX + cellW / 2, toCellY + cellH / 2);
+      ctx.strokeStyle = blocked ? 'rgba(239, 68, 68, 0.85)' : 'rgba(34, 197, 94, 0.85)';
+      ctx.lineWidth = 2.5;
+      ctx.setLineDash([5, 4]);
+      ctx.stroke();
+
+      // Destination tile highlight
+      ctx.fillStyle = blocked ? 'rgba(239, 68, 68, 0.3)' : 'rgba(34, 197, 94, 0.25)';
+      ctx.fillRect(toCellX, toCellY, cellW, cellH);
+      ctx.strokeStyle = blocked ? '#ef4444' : '#22c55e';
+      ctx.lineWidth = 2;
+      ctx.setLineDash([]);
+      ctx.strokeRect(toCellX, toCellY, cellW, cellH);
+
+      // Floating cursor avatar following mouse
+      const curX = dragCurrentPixel.x;
+      const curY = dragCurrentPixel.y;
+      const isCat = dragCandidate.type === 'cat';
+      const avatarR = Math.max(12, Math.floor(cellW * 1.25));
+
+      // Drop shadow
+      ctx.shadowColor = 'rgba(0, 0, 0, 0.4)';
+      ctx.shadowBlur = 10;
+      ctx.shadowOffsetY = 4;
+
+      // Disc
+      ctx.beginPath();
+      ctx.arc(curX, curY - 16, avatarR, 0, Math.PI * 2);
+      ctx.fillStyle = isCat ? '#dc2626' : '#0284c7';
+      ctx.fill();
+
+      // Letter
+      ctx.shadowColor = 'transparent';
+      ctx.fillStyle = '#ffffff';
+      ctx.font = `bold ${Math.max(12, Math.floor(avatarR * 1.1))}px monospace`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(isCat ? 'C' : 'M', curX, curY - 16);
+
+      // Tooltip badge
+      const labelText = blocked
+        ? `⛔ Blocked (${targetGridX}, ${targetGridY})`
+        : `📍 Drop at (${targetGridX}, ${targetGridY}) → Next Tick`;
+      ctx.font = 'bold 11px -apple-system, BlinkMacSystemFont, sans-serif';
+      const textWidth = ctx.measureText(labelText).width;
+      const padX = 8, badgeH = 20;
+      const badgeX = curX - textWidth / 2 - padX;
+      const badgeY = curY + 10;
+
+      ctx.fillStyle = blocked ? 'rgba(185, 28, 28, 0.94)' : 'rgba(15, 23, 42, 0.9)';
+      ctx.beginPath();
+      if (typeof ctx.roundRect === 'function') {
+        ctx.roundRect(badgeX, badgeY, textWidth + padX * 2, badgeH, 6);
+      } else {
+        ctx.rect(badgeX, badgeY, textWidth + padX * 2, badgeH);
+      }
+      ctx.fill();
+
+      ctx.fillStyle = '#ffffff';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(labelText, curX, badgeY + badgeH / 2);
+
+      ctx.restore();
+    }
   }
 
 
@@ -1800,9 +1929,46 @@
     pollLoop();
   }
 
-  // Canvas Click to Select Entity
-  canvas.addEventListener('click', (ev) => {
-    if (!currentState || !currentState.entities) return;
+  // Helper to check if a tile is blocked by obstacles or out of bounds
+  function isCellBlocked(state, x, y) {
+    if (!state) return false;
+    const w = state.width || 100;
+    const h = state.height || 100;
+    if (x < 0 || x >= w || y < 0 || y >= h) {
+      return true;
+    }
+    const mf = state.map_features;
+    if (!mf) return false;
+    if (Array.isArray(mf.buildings)) {
+      for (const b of mf.buildings) {
+        if (Array.isArray(b.walls)) {
+          for (const wall of b.walls) {
+            if (wall.x === x && wall.y === y) return true;
+          }
+        }
+      }
+    }
+    if (Array.isArray(mf.trees)) {
+      for (const t of mf.trees) {
+        const tw = t.w || 2;
+        const th = t.h || 2;
+        if (x >= t.x && x < t.x + tw && y >= t.y && y < t.y + th) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  // Interactive Asset Drag & Drop Repositioning
+  let dragCandidate = null;
+  let isDraggingAsset = false;
+  let dragStartPos = { x: 0, y: 0 };
+  let dragCurrentGrid = { x: 0, y: 0 };
+  let dragCurrentPixel = { x: 0, y: 0 };
+
+  canvas.addEventListener('pointerdown', (ev) => {
+    if (ev.button !== 0 || !currentState || !currentState.entities) return;
     const rect = canvas.getBoundingClientRect();
     const clickX = ev.clientX - rect.left;
     const clickY = ev.clientY - rect.top;
@@ -1816,17 +1982,106 @@
     for (const ent of currentState.entities) {
       if (!ent.alive) continue;
       const d = Math.abs(ent.position.x - gridX) + Math.abs(ent.position.y - gridY);
-      if (d < minD && d <= 4) {
+      if (d < minD && d <= 3) {
         closest = ent;
         minD = d;
       }
     }
+
     if (closest) {
-      selectAgent(closest.id);
-    } else if (selectedAgentId) {
-      // Clicked on empty space: deselect current animal and release to auto
-      selectAgent(null);
+      dragCandidate = closest;
+      isDraggingAsset = false;
+      dragStartPos = { x: ev.clientX, y: ev.clientY };
+      dragCurrentGrid = { x: closest.position.x, y: closest.position.y };
+      dragCurrentPixel = { x: clickX, y: clickY };
+      try { canvas.setPointerCapture(ev.pointerId); } catch (_) {}
+    } else {
+      dragCandidate = null;
+      isDraggingAsset = false;
     }
+  });
+
+  canvas.addEventListener('pointermove', (ev) => {
+    if (!currentState) return;
+    const rect = canvas.getBoundingClientRect();
+    const mx = ev.clientX - rect.left;
+    const my = ev.clientY - rect.top;
+    const cellW = canvas.width / (currentState.width || 100);
+    const cellH = canvas.height / (currentState.height || 100);
+    const gridX = Math.floor(mx / cellW);
+    const gridY = Math.floor(my / cellH);
+
+    if (dragCandidate) {
+      const dist = Math.hypot(ev.clientX - dragStartPos.x, ev.clientY - dragStartPos.y);
+      if (dist > 5) {
+        isDraggingAsset = true;
+        canvas.style.cursor = 'grabbing';
+        const targetX = Math.max(0, Math.min((currentState.width || 100) - 1, gridX));
+        const targetY = Math.max(0, Math.min((currentState.height || 100) - 1, gridY));
+        dragCurrentGrid = { x: targetX, y: targetY };
+        dragCurrentPixel = { x: mx, y: my };
+        renderBoard(currentState);
+      }
+    } else {
+      // Hover feedback when mouse is near an animal
+      let isNearEntity = false;
+      for (const ent of (currentState.entities || [])) {
+        if (!ent.alive) continue;
+        if (Math.abs(ent.position.x - gridX) + Math.abs(ent.position.y - gridY) <= 1) {
+          isNearEntity = true;
+          break;
+        }
+      }
+      canvas.style.cursor = isNearEntity ? 'grab' : 'default';
+    }
+  });
+
+  canvas.addEventListener('pointerup', async (ev) => {
+    if (ev.button !== 0) return;
+    try { canvas.releasePointerCapture(ev.pointerId); } catch (_) {}
+
+    if (dragCandidate) {
+      const candidate = dragCandidate;
+      const wasDragging = isDraggingAsset;
+      const targetGrid = { ...dragCurrentGrid };
+
+      dragCandidate = null;
+      isDraggingAsset = false;
+      canvas.style.cursor = 'default';
+
+      if (wasDragging) {
+        // Drag completed!
+        const blocked = isCellBlocked(currentState, targetGrid.x, targetGrid.y);
+        if (!blocked && (targetGrid.x !== candidate.position.x || targetGrid.y !== candidate.position.y)) {
+          // Send reposition request to stage for next tick
+          const res = await apiCall(`/api/simulations/${currentSimId}/entities/${candidate.id}/reposition`, 'POST', {
+            x: targetGrid.x,
+            y: targetGrid.y,
+          });
+          if (res && res.state) {
+            updateUI(res.state);
+          }
+        } else if (currentState) {
+          renderBoard(currentState);
+        }
+      } else {
+        // Plain click: select agent
+        selectAgent(candidate.id);
+      }
+    } else {
+      // Clicked on empty space: deselect current animal and release to auto
+      if (selectedAgentId) {
+        selectAgent(null);
+      }
+    }
+  });
+
+  canvas.addEventListener('pointercancel', (ev) => {
+    try { canvas.releasePointerCapture(ev.pointerId); } catch (_) {}
+    dragCandidate = null;
+    isDraggingAsset = false;
+    canvas.style.cursor = 'default';
+    if (currentState) renderBoard(currentState);
   });
 
   // Agent Inspector Listeners

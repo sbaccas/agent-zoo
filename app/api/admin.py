@@ -6,6 +6,7 @@ from app.game.simulation import Simulation
 from app.models.simulation import (
     DisclosureConfig,
     ModifyPopulationRequest,
+    RepositionEntityRequest,
     SimulationConfig,
     SimulationStateResponse,
     SpeciesConfig,
@@ -122,6 +123,25 @@ async def modify_entities(sim_id: str, req: ModifyPopulationRequest):
     try:
         new_count = sim.modify_population(req.species, req.delta)
         return {"species": req.species, "new_count": new_count}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/{sim_id}/entities/{entity_id}/reposition")
+async def reposition_entity(
+    sim_id: str,
+    entity_id: str,
+    req: RepositionEntityRequest,
+):
+    """Stage an entity to be repositioned on the next simulation tick."""
+    sim = get_simulation_or_404(sim_id)
+    try:
+        result = sim.stage_reposition(entity_id, req.x, req.y)
+        return {
+            "status": "success",
+            **result,
+            "state": sim.get_state(),
+        }
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 

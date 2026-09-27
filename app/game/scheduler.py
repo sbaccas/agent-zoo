@@ -44,6 +44,9 @@ class Scheduler:
         # None means "unknown": the budget is then omitted from the wire rather
         # than guessed at, since a wrong figure is worse than no figure.
         self.tick_budget_sec: Optional[float] = None
+        # Pending reposition requests scheduled to apply on the next tick
+        self.pending_repositions: Dict[str, Tuple[int, int]] = {}
+
 
     def get_scoreboard(self) -> Dict[str, int]:
         """Cumulative captures for every cat on the board, including those on zero.
@@ -471,6 +474,24 @@ class Scheduler:
     async def execute_simulation_step(self, skip_entity_id: Optional[str] = None, advance_clock: bool = True) -> int:
         if advance_clock:
             self.step_logical_clock()
+
+        # Apply any pending asset repositions staged for this tick
+        if self.pending_repositions:
+            for entity_id, (px, py) in list(self.pending_repositions.items()):
+                ent = self.entity_manager.entities.get(entity_id)
+                if ent and ent.alive:
+                    old_pos = (ent.position.x, ent.position.y)
+                    ent.position = Position(x=px, y=py)
+                    self.events.append(GameEvent(
+                        tick=self.tick,
+                        round=self.round,
+                        event_type="reposition",
+                        actor_id=ent.id,
+                        position=ent.position,
+                        message=f"📌 [TICK {self.tick} | R{self.round}] REPOSITION: {ent.id} relocated from {old_pos} to ({px}, {py})",
+                        details={"from": {"x": old_pos[0], "y": old_pos[1]}, "to": {"x": px, "y": py}},
+                    ))
+            self.pending_repositions.clear()
 
         entities = self.entity_manager.get_alive_entities()
         cats = [e for e in entities if e.type == EntityType.CAT and e.alive]

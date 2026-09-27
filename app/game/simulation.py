@@ -24,7 +24,8 @@ class SimulationSnapshot:
     def __init__(self, tick: int, round: int, captures: int, entities: list, events: list,
                  scores: Optional[dict] = None, hazard_zones: Optional[list] = None,
                  stats: Optional[dict] = None, entity_events: Optional[dict] = None,
-                 transmissions: Optional[list] = None):
+                 transmissions: Optional[list] = None,
+                 pending_repositions: Optional[dict] = None):
         self.tick = tick
         self.round = round
         self.captures = captures
@@ -44,6 +45,7 @@ class SimulationSnapshot:
         self.stats = dict(stats or {})
         self.entity_events = {k: list(v) for k, v in (entity_events or {}).items()}
         self.transmissions = [dict(t) for t in (transmissions or [])]
+        self.pending_repositions = dict(pending_repositions or {})
 
 
 class Simulation:
@@ -102,12 +104,18 @@ class Simulation:
             stats=self.stats.snapshot(),
             entity_events={k: [dict(ev) for ev in v] for k, v in self.scheduler.entity_events.items()},
             transmissions=list(self.scheduler.transmissions),
+            pending_repositions=dict(self.scheduler.pending_repositions),
         )
         self.history.append(snapshot)
         if len(self.history) > self.max_history:
             self.history.pop(0)
 
     def get_state(self) -> SimulationStateResponse:
+        pending = {
+            eid: {"x": pos[0], "y": pos[1]}
+            for eid, pos in self.scheduler.pending_repositions.items()
+        } if self.scheduler.pending_repositions else None
+
         return SimulationStateResponse(
             simulation_id=self.simulation_id,
             status=self.status,
@@ -127,6 +135,7 @@ class Simulation:
             species=self.entity_manager.species_config,
             disclosure=self.config.disclosure,
             map_features=self.world.get_map_features(),
+            pending_repositions=pending,
         )
 
     def get_boxscore(self) -> dict:
@@ -290,6 +299,7 @@ class Simulation:
                 z.model_copy(deep=True) for z in snapshot.hazard_zones
             ]
             self.stats.restore(snapshot.stats)
+            self.scheduler.pending_repositions = dict(snapshot.pending_repositions or {})
             msg = f"⏪ [STEP BACK] Rewound to Tick {snapshot.tick} | Round {snapshot.round} | Captures: {snapshot.captures}"
             logger.info(msg)
             print(msg, flush=True)
@@ -329,6 +339,7 @@ class Simulation:
                     z.model_copy(deep=True) for z in target_snapshot.hazard_zones
                 ]
                 self.stats.restore(target_snapshot.stats)
+                self.scheduler.pending_repositions = dict(target_snapshot.pending_repositions or {})
                 msg = f"⏪ [SEEK] Rewound to Tick {target_snapshot.tick} | Round {target_snapshot.round} | Captures: {target_snapshot.captures}"
                 logger.info(msg)
                 print(msg, flush=True)
@@ -364,6 +375,7 @@ class Simulation:
             self.scheduler.events.clear()
             self.scheduler.entity_events.clear()
             self.scheduler.transmissions.clear()
+            self.scheduler.pending_repositions.clear()
             self.stats.reset()
             self.status = SimulationStatus.CREATED
 
@@ -381,6 +393,32 @@ class Simulation:
             self.entity_manager.spawn_population(EntityType.MOUSE, mice)
 
         return self.get_state()
+
+    def stage_reposition(self, entity_id: str, x: int, y: int) -> dict:
+        """Stage an entity to be repositioned to (x, y) on the next simulation tick."""
+        ent = self.entity_manager.entities.get(entity_id)
+        if not ent or not ent.alive:
+            raise ValueError(f"Entity '{entity_id}' not found or is dead.")
+        if not self.world.is_in_bounds(x, y):
+            raise ValueError(f"Target position ({x}, {y}) is out of world bounds (0..{self.world.width-1}, 0..{self.world.height-1}).")
+        if not self.world.is_traversable(x, y):
+            raise ValueError(f"Target position ({x}, {y}) is blocked by an obstacle.")
+
+        if ent.position.x == x and ent.position.y == y:
+            self.scheduler.pending_repositions.pop(entity_id, None)
+            return {
+                "entity_id": entity_id,
+                "staged_position": {"x": x, "y": y},
+                "cancelled": True,
+                "effective_tick": self.scheduler.tick,
+            }
+
+        self.scheduler.pending_repositions[entity_id] = (x, y)
+        return {
+            "entity_id": entity_id,
+            "staged_position": {"x": x, "y": y},
+            "effective_tick": self.scheduler.tick + 1,
+        }
 
     def set_tick_rate(self, tick_rate: float) -> float:
         self.config.tick_rate = max(0.1, min(100.0, tick_rate))
