@@ -1347,6 +1347,8 @@
 
     const order = [
       'system_instruction',
+      'notice_board',
+      'inter_cat_radio',
       'coaching_notes',
       'commander_directive',
       'history_window',

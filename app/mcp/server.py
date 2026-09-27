@@ -86,6 +86,9 @@ async def _build_notice_board_data(sim_id: str = "active") -> Tuple[Dict[str, An
 
     absorption_active = bool(cat_species.get("absorption", False))
     aim_assist_active = bool(cat_species.get("aim_assist", False))
+    mouse_heal = int(cat_species.get("heal_on_mouse_capture", 15))
+    cat_heal = int(cat_species.get("heal_on_cat_elimination", 90))
+    healing_active = mouse_heal > 0 or cat_heal > 0
 
     # Format bulletin
     bulletin_lines = [
@@ -105,6 +108,13 @@ async def _build_notice_board_data(sim_id: str = "active") -> Tuple[Dict[str, An
     if aim_assist_active:
         bulletin_lines.append(
             "- **AIM ASSIST**: ACTIVE. Observation contains authoritative pre-computed forward, offaxis, and in_strike_zone tags."
+        )
+
+    if healing_active:
+        bulletin_lines.append(
+            f"- **PREDATION HP RESTORATION**: **ACTIVE**. Eating prey or rival predators restores vital health: "
+            f"Capturing a mouse restores **+{mouse_heal} HP**. Eliminating a rival cat restores **+{cat_heal} HP** (capped at 100 HP max). "
+            f"Hunting mice allows recovering from combat wounds."
         )
 
     bulletin_text = "\n".join(bulletin_lines)
@@ -127,6 +137,14 @@ async def _build_notice_board_data(sim_id: str = "active") -> Tuple[Dict[str, An
                 "status": "ACTIVE" if aim_assist_active else "INACTIVE",
                 "enabled": aim_assist_active,
                 "description": "Pre-computes relative strike geometry in observer coordinates.",
+            },
+            "predation_healing": {
+                "name": "Predation HP Restoration",
+                "status": "ACTIVE" if healing_active else "INACTIVE",
+                "enabled": healing_active,
+                "mouse_heal": mouse_heal,
+                "cat_heal": cat_heal,
+                "description": f"Capturing a mouse restores +{mouse_heal} HP; eliminating a rival cat restores +{cat_heal} HP (capped at max HP).",
             },
         },
         "bulletin": bulletin_text,
@@ -548,11 +566,11 @@ def create_mcp_server(name: str = "cat-and-mouse-mcp", version: str = "0.1.0") -
 
     @server.tool(
         name="toggle_game_rule",
-        description="Toggles or updates an authoritative game rule on the game server (e.g. 'absorption') and automatically updates the global notice board for all agents.",
+        description="Toggles or updates an authoritative game rule on the game server (e.g. 'absorption', 'heal_on_mouse_capture', 'heal_on_cat_elimination') and automatically updates the global notice board for all agents.",
     )
     async def toggle_game_rule(
         rule: str = "absorption",
-        enabled: bool = True,
+        enabled: Any = True,
         sim_id: str = "active",
     ) -> Dict[str, Any]:
         """Toggle an active game rule on the game server and broadcast notice."""

@@ -218,6 +218,8 @@ class Scheduler:
             "hp": entity.hp,
             "max_hp": entity.max_hp,
             "attack_power": spec_cfg.attack_power if spec_cfg else (34 if entity.type == EntityType.CAT else 0),
+            "heal_on_mouse_capture": getattr(spec_cfg, "heal_on_mouse_capture", 15) if entity.type == EntityType.CAT else 0,
+            "heal_on_cat_elimination": getattr(spec_cfg, "heal_on_cat_elimination", 90) if entity.type == EntityType.CAT else 0,
         }
 
         return {
@@ -309,6 +311,18 @@ class Scheduler:
         if self.stats is not None:
             self.stats.record_kill(owner_id, zone_id, absorbed_kills=absorbed_score)
 
+        owner = self.entity_manager.entities.get(owner_id)
+        healed_hp = 0
+        if owner and owner.type == EntityType.CAT and owner.alive:
+            cat_cfg = self.entity_manager.species_config.get("cat")
+            if is_cat:
+                heal_target = getattr(cat_cfg, "heal_on_cat_elimination", 90) if cat_cfg else 90
+            else:
+                heal_target = getattr(cat_cfg, "heal_on_mouse_capture", 15) if cat_cfg else 15
+            old_hp = owner.hp
+            owner.hp = min(owner.max_hp, owner.hp + heal_target)
+            healed_hp = owner.hp - old_hp
+
         # Matter-of-fact event payload entries for the agents
         if owner_id not in self.entity_events:
             self.entity_events[owner_id] = []
@@ -320,6 +334,8 @@ class Scheduler:
                 "target_type": "cat",
                 "source": source,
                 "absorbed_score": absorbed_score,
+                "healed_hp": healed_hp,
+                "hp": owner.hp if owner else 100,
             })
         else:
             self.entity_events[owner_id].append({
@@ -328,6 +344,8 @@ class Scheduler:
                 "target": victim.id,
                 "target_type": "mouse",
                 "source": source,
+                "healed_hp": healed_hp,
+                "hp": owner.hp if owner else 100,
             })
 
         if victim.id not in self.entity_events:
@@ -339,20 +357,20 @@ class Scheduler:
             "source": source,
         })
 
-        owner = self.entity_manager.entities.get(owner_id)
         o_pos = f"({owner.position.x}, {owner.position.y})" if owner else "?"
+        heal_suffix = f" (+{healed_hp} HP -> {owner.hp}/{owner.max_hp})" if healed_hp > 0 else ""
         if is_cat:
             absorb_suffix = f" (Absorbed +{absorbed_score} kills! Total score: {self.scores[owner_id]})" if absorbed_score > 0 else ""
             msg = (
                 f"⚡ [TICK {self.tick} | R{self.round}] GLORIOUS CONQUEST: {owner_id} at {o_pos} "
-                f"eliminated rival predator {victim.id} via {source}! ({victim.id} is out of the game!){absorb_suffix}"
+                f"eliminated rival predator {victim.id} via {source}! ({victim.id} is out of the game!){heal_suffix}{absorb_suffix}"
             )
             event_type = "elimination"
         else:
             msg = (
                 f"✨ [TICK {self.tick} | R{self.round}] FEAST OF CHAMPIONS: {owner_id} at {o_pos} "
                 f"eliminated {victim.id} at ({victim.position.x}, {victim.position.y}) "
-                f"via {source}! (Total captures: {self.captures})"
+                f"via {source}!{heal_suffix} (Total captures: {self.captures})"
             )
             event_type = "elimination"
 
@@ -366,7 +384,13 @@ class Scheduler:
             target_id=victim.id,
             position=victim.position,
             message=msg,
-            details={"source": source, "victim_type": victim.type.value, "zone_id": zone_id},
+            details={
+                "source": source,
+                "victim_type": victim.type.value,
+                "zone_id": zone_id,
+                "healed_hp": healed_hp,
+                "hp": owner.hp if owner else 100,
+            },
         ))
 
     def _register_damage(self, owner_id: str, victim: Entity, source: str, zone_id: Optional[str] = None, damage: int = 34) -> None:

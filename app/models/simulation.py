@@ -103,6 +103,16 @@ class SpeciesConfig(BaseModel):
         default=True,
         description="When enabled on predator, eliminating a rival cat absorbs their accumulated score",
     )
+    heal_on_mouse_capture: int = Field(
+        default=15,
+        ge=0,
+        description="HP restored to predator when capturing a mouse",
+    )
+    heal_on_cat_elimination: int = Field(
+        default=90,
+        ge=0,
+        description="HP restored to predator when eliminating a rival cat",
+    )
 
 
 class HazardZone(BaseModel):
@@ -276,6 +286,8 @@ class UpdateSpeciesConfigRequest(BaseModel):
     # field the PATCH endpoint silently drops.
     aim_assist: Optional[bool] = Field(default=None)
     absorption: Optional[bool] = Field(default=None)
+    heal_on_mouse_capture: Optional[int] = Field(default=None, ge=0)
+    heal_on_cat_elimination: Optional[int] = Field(default=None, ge=0)
 
 
 class UpdateDisclosureConfigRequest(BaseModel):

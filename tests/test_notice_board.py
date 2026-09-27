@@ -138,5 +138,55 @@ async def test_mcp_get_notice_board_tool(monkeypatch):
     assert result["active_modifiers"]["absorption"]["enabled"] is True
     assert result["active_modifiers"]["absorption"]["status"] == "ACTIVE"
     assert "KILL ABSORPTION" in result["bulletin"]
+    assert "PREDATION HP RESTORATION" in result["bulletin"]
+    assert "+15 HP" in result["bulletin"]
+    assert "+90 HP" in result["bulletin"]
+    assert result["active_modifiers"]["predation_healing"]["enabled"] is True
+    assert result["active_modifiers"]["predation_healing"]["mouse_heal"] == 15
+    assert result["active_modifiers"]["predation_healing"]["cat_heal"] == 90
     # Check that it automatically synced to store
     assert store.read_notice_board() == result["bulletin"]
+
+
+@pytest.mark.asyncio
+async def test_mouse_capture_heals_cat_hp():
+    """Capturing a mouse restores +15 HP up to max_hp."""
+    sim = Simulation(config=SimulationConfig(populations={"cats": 0, "mice": 0}))
+    cat = sim.entity_manager.spawn_entity(EntityType.CAT, pos=Position(x=10, y=10))
+    mouse = sim.entity_manager.spawn_entity(EntityType.MOUSE, pos=Position(x=11, y=10))
+
+    cat.hp = 50
+    mouse.alive = False
+    sim.scheduler._register_capture(cat.id, mouse, "slash impact")
+
+    # 50 + 15 = 65
+    assert cat.hp == 65
+
+    # Capped at max_hp
+    cat.hp = 95
+    mouse2 = sim.entity_manager.spawn_entity(EntityType.MOUSE, pos=Position(x=12, y=10))
+    mouse2.alive = False
+    sim.scheduler._register_capture(cat.id, mouse2, "slash impact")
+    assert cat.hp == 100
+
+
+@pytest.mark.asyncio
+async def test_cat_elimination_heals_cat_hp():
+    """Eliminating a rival cat restores +90 HP up to max_hp."""
+    sim = Simulation(config=SimulationConfig(populations={"cats": 0, "mice": 0}))
+    cat1 = sim.entity_manager.spawn_entity(EntityType.CAT, pos=Position(x=10, y=10))
+    cat2 = sim.entity_manager.spawn_entity(EntityType.CAT, pos=Position(x=11, y=10))
+
+    cat1.hp = 5
+    cat2.alive = False
+    sim.scheduler._register_capture(cat1.id, cat2, "slash impact")
+
+    # 5 + 90 = 95
+    assert cat1.hp == 95
+
+    # Another elimination caps at 100
+    cat3 = sim.entity_manager.spawn_entity(EntityType.CAT, pos=Position(x=12, y=10))
+    cat3.alive = False
+    sim.scheduler._register_capture(cat1.id, cat3, "slash impact")
+    assert cat1.hp == 100
+
