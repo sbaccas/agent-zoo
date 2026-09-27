@@ -32,6 +32,7 @@ HTTP_TIMEOUT_SECONDS = 3.0
 
 STATIC_DIR = Path(__file__).parent / "static"
 INDEX_HTML_PATH = STATIC_DIR / "index.html"
+CHAT_HTML_PATH = STATIC_DIR / "chat.html"
 
 
 def get_game_server_url() -> str:
@@ -1179,8 +1180,291 @@ def create_mcp_app(server: Optional[MCPServer] = None):
         transmissions = res.get("transmissions", []) if isinstance(res, dict) else []
         return JSONResponse({"ok": True, "transmissions": transmissions})
 
+    # 10. Coach Live Chat REST API & Unified Game Chat Monitor
+    async def coach_chat_list_endpoint(request: Request) -> JSONResponse:
+        cat_id = request.query_params.get("cat_id") or "all"
+        view_filter = (request.query_params.get("view") or "all").lower()
+        sender_filter = request.query_params.get("sender") or None
+        source_filter = request.query_params.get("source") or None
+        search_query = (request.query_params.get("search") or "").strip().lower()
+        limit_val = int(request.query_params.get("limit", 150))
+
+        all_messages: List[Dict[str, Any]] = []
+
+        # 1. Fetch inter-cat radio transmissions & DMs from game server engine
+        try:
+            ok, comms_payload, _ = await _fetch_from_game_server("/api/simulations/active/comms?limit=200")
+            if ok and isinstance(comms_payload, dict):
+                for t in comms_payload.get("transmissions", []):
+                    rec = t.get("recipient_id") or "*"
+                    snd = t.get("sender_id") or "cat"
+                    is_dm = rec not in ("*", "broadcast", "all")
+                    is_coach = "coach" in str(snd).lower() or "coach" in str(rec).lower()
+                    # Determine channel
+                    if is_coach:
+                        ch = "coach_a2a"
+                    elif is_dm:
+                        ch = "cat_dm"
+                    else:
+                        ch = "cat_broadcast"
+
+                    all_messages.append({
+                        "id": t.get("message_id") or f"comm-{t.get('tick')}-{snd}-{rec}",
+                        "cat_id": snd,
+                        "sender": snd,
+                        "recipient_id": rec,
+                        "message": t.get("message", ""),
+                        "timestamp": t.get("timestamp") or f"Tick #{t.get('tick', 0)}",
+                        "tick": t.get("tick"),
+                        "round": t.get("round"),
+                        "source": "cat_radio",
+                        "channel": ch,
+                        "is_dm": is_dm,
+                        "position": t.get("position"),
+                    })
+        except Exception:
+            pass
+
+        # 2. Discover cat runtime endpoints / ports for Coach & Commander chats
+        cat_endpoints = {
+            "cat-1": "http://127.0.0.1:8001",
+            "cat-2": "http://127.0.0.1:8003",
+        }
+        target_cats = ["cat-1", "cat-2"] if cat_id in ("all", "*") else [cat_id]
+        async with httpx.AsyncClient(timeout=1.5) as client:
+            for cid in target_cats:
+                base_url = cat_endpoints.get(cid, "http://127.0.0.1:8001")
+                # General <-> Coach radio chat history
+                try:
+                    resp = await client.get(f"{base_url}/api/agent/general/chat-history")
+                    if resp.status_code == 200:
+                        msgs = resp.json()
+                        for m in msgs:
+                            entry = dict(m)
+                            entry["cat_id"] = cid
+                            snd = entry.get("sender", "")
+                            is_gen = entry.get("source") == "user" or snd == "general"
+                            # Keep General<->Coach conversation strictly in 'general' channel
+                            entry["channel"] = "general"
+                            entry["sender"] = "general" if is_gen else "coach"
+                            entry["recipient_id"] = f"coach({cid})" if is_gen else "general"
+                            entry["is_dm"] = False
+                            all_messages.append(entry)
+                except Exception:
+                    pass
+
+                # Commander <-> Cat radio chat history
+                try:
+                    resp_cmd = await client.get(f"{base_url}/api/agent/chat-history")
+                    if resp_cmd.status_code == 200:
+                        msgs = resp_cmd.json()
+                        for m in msgs:
+                            entry = dict(m)
+                            entry["cat_id"] = cid
+                            snd = entry.get("sender", "")
+                            is_cmd = entry.get("source") == "user" or snd == "commander"
+                            entry["channel"] = "commander"
+                            entry["sender"] = "commander" if is_cmd else cid
+                            entry["recipient_id"] = cid if is_cmd else "commander"
+                            entry["is_dm"] = False
+                            all_messages.append(entry)
+                except Exception:
+                    pass
+
+        # 3. Merge A2A Coach diplomatic inbox messages
+        try:
+            from actors.a2a import store as a2a_store
+            for cid in target_cats:
+                inbox_msgs = a2a_store.get_coach_inbox(cid, limit=50)
+                for im in inbox_msgs:
+                    snd = im.get("sender_id", "peer_coach")
+                    rec = im.get("recipient_id", cid)
+                    is_dm = rec not in ("*", "broadcast", "all")
+                    is_coach_msg = "coach" in str(snd).lower() or "coach" in str(rec).lower()
+                    ch = "coach_a2a" if is_coach_msg else ("cat_dm" if is_dm else "cat_broadcast")
+                    all_messages.append({
+                        "id": im.get("message_id") or f"a2a-{im.get('timestamp')}",
+                        "cat_id": cid,
+                        "sender": snd,
+                        "recipient_id": rec,
+                        "message": im.get("content", ""),
+                        "timestamp": im.get("timestamp", ""),
+                        "tick": im.get("tick"),
+                        "source": "a2a_coach",
+                        "channel": ch,
+                        "is_dm": is_dm,
+                        "message_type": im.get("message_type", "DIRECT_MESSAGE"),
+                    })
+        except Exception:
+            pass
+
+        # Deduplicate messages by unique identifier/signature across agents and sources
+        seen_keys = set()
+        deduped_messages: List[Dict[str, Any]] = []
+        for m in all_messages:
+            mid = m.get("id")
+            if m.get("source") == "a2a_coach" and mid:
+                key = f"a2a:{mid}"
+            elif m.get("source") == "cat_radio" and mid:
+                key = f"radio:{mid}"
+            elif mid:
+                key = f"{m.get('cat_id')}:{mid}"
+            else:
+                key = f"{m.get('cat_id')}:{m.get('sender')}:{m.get('message')}:{m.get('timestamp')}:{m.get('tick')}"
+            if key in seen_keys:
+                continue
+            seen_keys.add(key)
+            deduped_messages.append(m)
+        all_messages = deduped_messages
+
+        # Apply filtering
+        filtered = all_messages
+
+        # View filters
+        if view_filter in ("dms", "cat_dms", "dms_only"):
+            # Review cat1<->cat2 dms strictly without any coach!
+            filtered = [
+                m for m in filtered
+                if m.get("channel") == "cat_dm"
+                and "coach" not in str(m.get("sender", "")).lower()
+                and "coach" not in str(m.get("recipient_id", "")).lower()
+            ]
+        elif view_filter in ("coach_a2a", "coach_coach", "peer_coach"):
+            # Review coach1<->coach2 diplomatic comms strictly!
+            filtered = [
+                m for m in filtered
+                if m.get("channel") == "coach_a2a"
+                or ("coach" in str(m.get("sender", "")).lower() and "coach" in str(m.get("recipient_id", "")).lower())
+            ]
+        elif view_filter in ("broadcasts", "broadcasts_only"):
+            filtered = [m for m in filtered if m.get("channel") == "cat_broadcast"]
+        elif view_filter in ("no_coach", "exclude_coach"):
+            filtered = [
+                m for m in filtered
+                if m.get("channel") not in ("coach", "coach_a2a")
+                and "coach" not in str(m.get("sender", "")).lower()
+                and "coach" not in str(m.get("recipient_id", "")).lower()
+            ]
+        elif view_filter in ("coach", "coach_only"):
+            filtered = [m for m in filtered if m.get("channel") in ("coach", "coach_a2a")]
+        elif view_filter in ("general", "general_only"):
+            filtered = [m for m in filtered if m.get("channel") in ("general", "commander")]
+
+        # Agent filter
+        if cat_id not in ("all", "*"):
+            filtered = [
+                m for m in filtered
+                if m.get("cat_id") == cat_id
+                or m.get("sender") == cat_id
+                or m.get("recipient_id") == cat_id
+            ]
+
+        # Additional explicit filters
+        if sender_filter:
+            filtered = [m for m in filtered if m.get("sender") == sender_filter]
+        if source_filter:
+            filtered = [m for m in filtered if m.get("source") == source_filter]
+        if search_query:
+            filtered = [
+                m for m in filtered
+                if search_query in str(m.get("message", "")).lower()
+                or search_query in str(m.get("sender", "")).lower()
+                or search_query in str(m.get("recipient_id", "")).lower()
+                or search_query in str(m.get("tick", "")).lower()
+            ]
+
+        # Sort by timestamp / tick if available
+        def _chat_sort_key(m):
+            return (m.get("tick") or 0, str(m.get("timestamp", "")))
+
+        filtered.sort(key=_chat_sort_key)
+        if limit_val > 0:
+            filtered = filtered[-limit_val:]
+
+        counts = {
+            "all": len(all_messages),
+            "cat_dms": sum(
+                1 for m in all_messages
+                if m.get("channel") == "cat_dm"
+                and "coach" not in str(m.get("sender", "")).lower()
+                and "coach" not in str(m.get("recipient_id", "")).lower()
+            ),
+            "coach_a2a": sum(
+                1 for m in all_messages
+                if m.get("channel") == "coach_a2a"
+                or ("coach" in str(m.get("sender", "")).lower() and "coach" in str(m.get("recipient_id", "")).lower())
+            ),
+            "broadcasts": sum(1 for m in all_messages if m.get("channel") == "cat_broadcast"),
+            "no_coach": sum(
+                1 for m in all_messages
+                if m.get("channel") not in ("coach", "coach_a2a")
+                and "coach" not in str(m.get("sender", "")).lower()
+                and "coach" not in str(m.get("recipient_id", "")).lower()
+            ),
+            "coach": sum(1 for m in all_messages if m.get("channel") in ("coach", "coach_a2a")),
+            "general": sum(1 for m in all_messages if m.get("channel") in ("general", "commander")),
+            "cat-1": sum(1 for m in all_messages if m.get("cat_id") == "cat-1" or m.get("sender") == "cat-1" or m.get("recipient_id") == "cat-1"),
+            "cat-2": sum(1 for m in all_messages if m.get("cat_id") == "cat-2" or m.get("sender") == "cat-2" or m.get("recipient_id") == "cat-2"),
+        }
+
+        return JSONResponse({
+            "ok": True,
+            "cat_id": cat_id,
+            "view": view_filter,
+            "total": len(filtered),
+            "counts": counts,
+            "messages": filtered,
+        })
+
+    # Dedicated Standalone Live Game Chat Monitor Page
+    async def chat_page_endpoint(request: Request) -> Response:
+        if CHAT_HTML_PATH.exists():
+            return HTMLResponse(
+                CHAT_HTML_PATH.read_text(encoding="utf-8"),
+                headers={
+                    "Cache-Control": "no-cache, no-store, must-revalidate",
+                    "Pragma": "no-cache",
+                    "Expires": "0",
+                },
+            )
+        return HTMLResponse("<h1>Live Game Chat Monitor</h1><p>chat.html not found</p>")
+
+    async def coach_chat_send_endpoint(request: Request) -> JSONResponse:
+        try:
+            body = await request.json()
+        except Exception:
+            return JSONResponse({"ok": False, "error": "Invalid JSON body"}, status_code=400)
+
+        message = (body.get("message") or "").strip()
+        cat_id = body.get("cat_id") or "cat-1"
+        steer_directive = bool(body.get("steer_directive", False))
+
+        if not message:
+            return JSONResponse({"ok": False, "error": "Message cannot be empty"}, status_code=400)
+
+        cat_endpoints = {
+            "cat-1": "http://127.0.0.1:8001",
+            "cat-2": "http://127.0.0.1:8003",
+        }
+        base_url = cat_endpoints.get(cat_id, "http://127.0.0.1:8001")
+
+        try:
+            async with httpx.AsyncClient(timeout=25.0) as client:
+                resp = await client.post(
+                    f"{base_url}/api/agent/general/prompt",
+                    json={"prompt": message, "steer_directive": steer_directive},
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    return JSONResponse({"ok": True, "cat_id": cat_id, "result": data})
+                else:
+                    return JSONResponse({"ok": False, "error": f"Agent returned HTTP {resp.status_code}: {resp.text}"}, status_code=resp.status_code)
+        except Exception as exc:
+            return JSONResponse({"ok": False, "error": str(exc)}, status_code=500)
+
     # Register additional HTTP routes
     app.add_route("/", dashboard_endpoint, methods=["GET"])
+    app.add_route("/chat", chat_page_endpoint, methods=["GET"])
     app.add_route("/api/mcp/stream", stream_endpoint, methods=["GET"])
     app.add_route("/api/mcp/status", status_endpoint, methods=["GET"])
     app.add_route("/api/mcp/history", history_endpoint, methods=["GET"])
@@ -1193,6 +1477,9 @@ def create_mcp_app(server: Optional[MCPServer] = None):
     app.add_route("/api/mcp/coach-notes", coach_notes_create_endpoint, methods=["POST"])
     app.add_route("/api/mcp/coach-notes/{id}", coach_notes_item_endpoint, methods=["PUT", "DELETE"])
     app.add_route("/api/mcp/coach-standing-notes", coach_standing_notes_endpoint, methods=["GET", "POST", "PUT"])
+    app.add_route("/api/mcp/coach-chat", coach_chat_list_endpoint, methods=["GET"])
+    app.add_route("/api/mcp/game-chat", coach_chat_list_endpoint, methods=["GET"])
+    app.add_route("/api/mcp/coach-chat/send", coach_chat_send_endpoint, methods=["POST"])
 
     return MCPTelemetryMiddleware(app)
 

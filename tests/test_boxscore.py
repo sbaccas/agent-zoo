@@ -374,7 +374,7 @@ async def test_boxscore_endpoint_returns_a_row_per_cat():
     assert resp.status_code == 200
     body = resp.json()
     assert body["arena"]["tiles"] == body["arena"]["width"] * body["arena"]["height"]
-    assert len(body["cats"]) == 2
+    assert len(body["cats"]) == 10
     expected = {
         "id", "mode", "alive", "position", "kills", "kills_per_100_ticks",
         "tiles_per_kill", "slash_attempts", "slash_accuracy", "whiffs",

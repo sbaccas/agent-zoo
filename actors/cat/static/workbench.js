@@ -1041,7 +1041,6 @@
 
       if (res) {
         inputUserPrompt.value = '';
-        await pollAgentState();
       }
     } catch (err) {
       console.error('Failed to interrogate agent:', err);
@@ -1062,6 +1061,7 @@
       if (sendPromptIcon) sendPromptIcon.textContent = '📡';
       if (sendPromptText) sendPromptText.textContent = 'Send to Agent';
       inputUserPrompt.focus();
+      await pollAgentState();
     }
   }
 
@@ -1543,7 +1543,7 @@
   function renderEvaluator(ev) {
     if (!ev || !evalStateBadge) return;
 
-    const interval = ev.interval || 100;
+    const interval = ev.interval || 10;
     const enabled = ev.enabled !== false;
 
     if (!isDraggingEvalSlider && sliderEvalInterval) {

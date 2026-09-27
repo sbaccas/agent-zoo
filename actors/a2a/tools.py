@@ -86,6 +86,26 @@ def a2a_send_message(recipient_id: str, message: str, message_type: str = "DIREC
             trace.append(result_record)
         return f"Delivery failed: recipient {recipient_id} is dead/eliminated from the arena."
 
+    # OPSEC guard: block leaking internal commander orders or addressing command authority
+    from actors.a2a.models import check_opsec_violation
+    opsec_err = check_opsec_violation(message)
+    if opsec_err:
+        result_record = {
+            "tool": "a2a_send_message",
+            "sender_id": sender_id,
+            "recipient_id": recipient_id,
+            "message": message,
+            "message_type": message_type,
+            "tick": tick,
+            "status": "rejected",
+            "message_id": None,
+            "error": opsec_err,
+        }
+        trace = ctx_tool_calls_trace.get()
+        if trace is not None:
+            trace.append(result_record)
+        return f"Delivery rejected: {opsec_err}"
+
     try:
         resp = _run_sync(
             client.send_a2a_message(
@@ -152,6 +172,25 @@ def a2a_broadcast(message: str) -> str:
     sender_id = ctx_current_agent_id.get()
     tick = ctx_current_tick.get()
     round_num = ctx_current_round.get()
+    # OPSEC guard: block leaking internal commander orders or addressing command authority
+    from actors.a2a.models import check_opsec_violation
+    opsec_err = check_opsec_violation(message)
+    if opsec_err:
+        result_record = {
+            "tool": "a2a_broadcast",
+            "sender_id": sender_id,
+            "recipient_id": "*",
+            "message": message,
+            "message_type": "BROADCAST",
+            "tick": tick,
+            "status": "rejected",
+            "message_id": None,
+            "error": opsec_err,
+        }
+        trace = ctx_tool_calls_trace.get()
+        if trace is not None:
+            trace.append(result_record)
+        return f"Broadcast rejected: {opsec_err}"
 
     try:
         resp = _run_sync(

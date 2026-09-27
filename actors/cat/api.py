@@ -1336,10 +1336,6 @@ async def receive_a2a_message(msg: A2AMessage) -> A2AResponse:
     # Store in this agent's A2A inbox
     a2a_store.append_inbox(active_id, msg)
 
-    # Telemetry logging to Game Server
-    game_server_url = os.environ.get("GAME_SERVER_URL", "http://127.0.0.1:8000")
-    asyncio.create_task(a2a_client._report_transmission_to_engine(game_server_url, msg))
-
     return A2AResponse(
         status="delivered",
         message_id=msg.message_id,

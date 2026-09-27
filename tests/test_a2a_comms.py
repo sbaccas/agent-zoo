@@ -167,6 +167,29 @@ def test_admin_comms_api_endpoint(empty_sim):
     assert data["transmissions"][0]["sender_id"] == "cat-2"
     assert data["transmissions"][0]["message"] == "Moving north-east"
 
+    # Test deduplication on POST /api/simulations/{sim_id}/comms
+    post_payload = {
+        "message_id": "msg-unique-test-123",
+        "sender_id": "cat-1",
+        "recipient_id": "cat-2",
+        "message": "Flanking maneuver",
+        "tick": 11,
+    }
+    # First report
+    p1 = client.post(f"/api/simulations/{sim.simulation_id}/comms", json=post_payload)
+    assert p1.status_code == 200
+    assert p1.json().get("recorded") is True
+
+    # Duplicate report (e.g. from recipient or retransmission)
+    p2 = client.post(f"/api/simulations/{sim.simulation_id}/comms", json=post_payload)
+    assert p2.status_code == 200
+    assert p2.json().get("duplicate") is True
+
+    # Verify only one new record was added
+    resp2 = client.get(f"/api/simulations/{sim.simulation_id}/comms?limit=10")
+    data2 = resp2.json()
+    assert len(data2["transmissions"]) == 2  # initial 1 + single deduped 1
+
 
 @pytest.mark.asyncio
 async def test_mcp_comms_tool_and_endpoint(monkeypatch):

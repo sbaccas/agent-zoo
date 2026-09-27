@@ -109,7 +109,21 @@ class EntityManager:
         return removed
 
     def get_alive_entities(self) -> List[Entity]:
-        return [e for e in self.entities.values() if e.alive]
+        from app.game.ws_manager import ws_agent_manager
+        alive = []
+        for e in self.entities.values():
+            if not e.alive:
+                continue
+            is_agent = (
+                ws_agent_manager.has_agent(e.id)
+                or self.get_agent_mode(e.id) in ("ws", "http", "manual")
+                or e.id in ("cat-1", "cat-2")
+            )
+            e.is_agent = is_agent
+            if is_agent and not e.agent_name:
+                e.agent_name = e.id
+            alive.append(e)
+        return alive
 
     def count_by_type(self, entity_type: EntityType) -> int:
         return sum(1 for e in self.entities.values() if e.type == entity_type and e.alive)

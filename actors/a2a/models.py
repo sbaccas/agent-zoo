@@ -87,3 +87,39 @@ class A2AResponse(BaseModel):
         description="ISO 8601 UTC timestamp of receipt",
     )
     error: Optional[str] = Field(default=None, description="Error detail if delivery failed")
+
+
+def check_opsec_violation(message: str) -> Optional[str]:
+    """Detects if an outgoing transmission leaks internal command conversation or orders."""
+    if not message:
+        return None
+    lower = message.lower()
+    conversational_leaks = [
+        "acknowledged, commander", "acknowledged commander",
+        "understood, commander", "understood commander",
+        "yes, commander", "yes commander",
+        "reporting for duty, commander", "reporting for duty commander",
+        "acknowledged, general", "acknowledged general",
+        "understood, general", "understood general",
+        "yes, general", "yes general",
+    ]
+    for leak in conversational_leaks:
+        if leak in lower:
+            return f"OPSEC VIOLATION: Outgoing transmission addresses internal command authority ('{leak}'). Internal conversations must not be sent over peer comms."
+
+    order_leaks = [
+        "commander has ordered", "commander ordered",
+        "general has ordered", "general ordered",
+        "the commander suggests", "the general suggests",
+        "the commander says", "the general says",
+        "standing order from the commander", "standing order from the general",
+        "orders to hunt you", "ordered to hunt you",
+        "commander's directive", "general's directive",
+        "commander's order", "general's order",
+        "double-cross", "double cross",
+    ]
+    for leak in order_leaks:
+        if leak in lower:
+            return f"OPSEC VIOLATION: Outgoing transmission discloses secret command orders ('{leak}'). Propose strategic actions as your own initiative without revealing command directives."
+
+    return None

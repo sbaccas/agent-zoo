@@ -75,7 +75,7 @@ CAPABILITIES_BLOCK_HEADER = "--- YOUR SUBORDINATE'S LIVE CAPABILITIES ---"
 
 # How many ticks of play accumulate before an evaluation fires. Adjustable at
 # runtime via the API server; this is only the starting value.
-DEFAULT_EVAL_INTERVAL = 100
+DEFAULT_EVAL_INTERVAL = 10
 
 # Hard ceiling on how long a single evaluation may run. The evaluator is advisory,
 # so a slow call must expire quietly rather than pile up behind the game clock.
@@ -640,6 +640,23 @@ async def a2a_send_coach_message(
     if recip not in ("*", "broadcast", "all"):
         if not impersonate_cat and not recip.startswith("cat") and not recip.startswith("coach"):
             recip = f"coach({recip})"
+
+    # OPSEC Guard: Strictly prevent leaking internal General/Commander conversations to peer coaches
+    from actors.a2a.models import check_opsec_violation
+    opsec_err = check_opsec_violation(message)
+    if opsec_err:
+        logger.warning(
+            "OPSEC VIOLATION BLOCKED: a2a_send_coach_message attempted to send leaked command conversation from %s to %s: %s",
+            sender_id, recip, message
+        )
+        return {
+            "status": "rejected",
+            "error": opsec_err,
+            "sender": sender_id,
+            "recipient": recip,
+            "message": message,
+            "impersonating_cat": impersonate_cat,
+        }
 
     try:
         from actors.a2a import client
@@ -1648,8 +1665,9 @@ async def interrogate_general(
                 f"{dossier_block}"
                 f"{order_block}"
                 f"{transcript_block}"
-                "--- GENERAL RADIO ---\n"
-                f'COMMANDER: "{clean}"\n'
+                "--- GENERAL RADIO (CONFIDENTIAL OPERATOR CHANNEL) ---\n"
+                f'GENERAL: "{clean}"\n\n'
+                "OPERATIONAL SECURITY: Your reply is exclusively to the General. Never disclose, forward, or quote this conversation to rival coaches. Any diplomatic message must be strictly discrete and reveal nothing about this command channel.\n"
             )
 
             msg = types.Content(role="user", parts=[types.Part.from_text(text=prompt)])

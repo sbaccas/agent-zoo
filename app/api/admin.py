@@ -5,6 +5,7 @@ from app.game.heatmap import DEFAULT_GRID_SIZE, MAX_GRID_SIZE, MIN_GRID_SIZE
 from app.game.simulation import Simulation
 from app.models.simulation import (
     DisclosureConfig,
+    GameEvent,
     ModifyPopulationRequest,
     RepositionEntityRequest,
     SimulationConfig,
@@ -298,6 +299,19 @@ async def report_simulation_comms(sim_id: str, payload: Dict[str, Any]):
     round_num = payload.get("round") or sim.scheduler.round
     m_type = payload.get("type", "DIRECT_MESSAGE")
 
+    msg_id = payload.get("message_id")
+    # Deduplicate: avoid appending duplicate transmission or duplicate game event
+    if msg_id and any(t.get("message_id") == msg_id for t in sim.scheduler.transmissions):
+        return {"status": "ok", "recorded": False, "duplicate": True}
+    if not msg_id and any(
+        t.get("sender_id") == sender
+        and t.get("recipient_id") == recipient
+        and t.get("message") == msg
+        and t.get("tick") == tick
+        for t in sim.scheduler.transmissions[-20:]
+    ):
+        return {"status": "ok", "recorded": False, "duplicate": True}
+
     record = {
         "tick": tick,
         "round": round_num,
@@ -306,7 +320,7 @@ async def report_simulation_comms(sim_id: str, payload: Dict[str, Any]):
         "message": msg,
         "type": m_type,
         "protocol": payload.get("protocol", "a2a/v1"),
-        "message_id": payload.get("message_id"),
+        "message_id": msg_id,
     }
     sim.scheduler.transmissions.append(record)
     if len(sim.scheduler.transmissions) > 200:

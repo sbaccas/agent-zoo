@@ -94,11 +94,14 @@
   // Light mode colors
   const COLOR_BG = '#ffffff';
   const COLOR_GRID_LINE = 'rgba(203, 213, 225, 0.4)';
-  const COLOR_CAT = '#dc2626';       // Crimson Red
+  const COLOR_CAT = '#dc2626';       // Crimson Red (NPC Cats)
+  const COLOR_AGENT_CAT = '#9333ea'; // Electric Royal Purple (Agent Cats)
   const COLOR_MOUSE = '#0284c7';     // Sky Blue
   const COLOR_CAT_BG = 'rgba(220, 38, 38, 0.12)';
+  const COLOR_AGENT_CAT_BG = 'rgba(147, 51, 234, 0.22)';
   const COLOR_MOUSE_BG = 'rgba(2, 132, 199, 0.12)';
   const COLOR_POINTER_CAT = '#b91c1c';
+  const COLOR_POINTER_AGENT_CAT = '#a855f7';
   const COLOR_POINTER_MOUSE = '#0369a1';
 
   function resizeCanvas() {
@@ -1163,13 +1166,14 @@
       const cx = e.position.x * cellW + cellW / 2;
       const cy = e.position.y * cellH + cellH / 2;
       const isCat = (e.type === 'cat');
+      const isAgentCat = isCat && Boolean(e.is_agent || e.id === 'cat-1' || e.id === 'cat-2' || (e.agent_name && e.agent_name.length > 0));
       const angle = getFacingAngle(e.facing || 'north');
 
       ctx.save();
       ctx.translate(cx, cy);
 
       // Subtle background glow disc
-      ctx.fillStyle = isCat ? COLOR_CAT_BG : COLOR_MOUSE_BG;
+      ctx.fillStyle = isCat ? (isAgentCat ? COLOR_AGENT_CAT_BG : COLOR_CAT_BG) : COLOR_MOUSE_BG;
       const bgRadius = isCat ? Math.max(7, cellW * 0.9) : Math.max(5, cellW * 0.7);
       ctx.beginPath();
       ctx.arc(0, 0, bgRadius, 0, Math.PI * 2);
@@ -1178,7 +1182,7 @@
       // Directional pointer / nose indicator
       ctx.save();
       ctx.rotate(angle);
-      ctx.fillStyle = isCat ? COLOR_POINTER_CAT : COLOR_POINTER_MOUSE;
+      ctx.fillStyle = isCat ? (isAgentCat ? COLOR_POINTER_AGENT_CAT : COLOR_POINTER_CAT) : COLOR_POINTER_MOUSE;
       const pointerDist = bgRadius + 2;
       ctx.beginPath();
       ctx.moveTo(pointerDist + 3, 0);
@@ -1189,7 +1193,7 @@
       ctx.restore();
 
       // Draw ASCII Character 'C' or 'M'
-      ctx.fillStyle = isCat ? COLOR_CAT : COLOR_MOUSE;
+      ctx.fillStyle = isCat ? (isAgentCat ? COLOR_AGENT_CAT : COLOR_CAT) : COLOR_MOUSE;
       ctx.font = `bold ${fontSize}px monospace`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
@@ -1255,6 +1259,42 @@
           ctx.lineTo(d2, barY + barH);
           ctx.stroke();
         }
+      }
+
+      // Overhead Name Label for Agent Cats (e.g. "cat-1", "cat-2")
+      if (isAgentCat) {
+        const labelText = e.agent_name || e.id;
+        const labelFontSize = Math.max(8, Math.min(11, Math.floor(cellW * 0.38)));
+        ctx.save();
+        ctx.font = `bold ${labelFontSize}px system-ui, -apple-system, sans-serif`;
+        const textMetrics = ctx.measureText(labelText);
+        const textW = textMetrics.width;
+        const padX = 3.5;
+        const padY = 1.5;
+        const pillW = textW + padX * 2;
+        const pillH = labelFontSize + padY * 2;
+
+        const hpOffset = (isCat && (e.max_hp > 1 || e.hp !== undefined)) ? (Math.max(1.5, Math.min(2.5, Math.round(cellH * 0.18))) + 3) : 0;
+        const pillY = -bgRadius - hpOffset - pillH - 2;
+        const pillX = -pillW / 2;
+
+        ctx.beginPath();
+        if (ctx.roundRect) {
+          ctx.roundRect(pillX, pillY, pillW, pillH, 2.5);
+        } else {
+          ctx.rect(pillX, pillY, pillW, pillH);
+        }
+        ctx.fillStyle = 'rgba(15, 23, 42, 0.88)';
+        ctx.fill();
+        ctx.strokeStyle = COLOR_AGENT_CAT;
+        ctx.lineWidth = 1;
+        ctx.stroke();
+
+        ctx.fillStyle = '#ffffff';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(labelText, 0, pillY + pillH / 2 + 0.5);
+        ctx.restore();
       }
 
       // Focus ring for selected agent

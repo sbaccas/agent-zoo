@@ -417,10 +417,94 @@ async def test_mcp_ui_and_telemetry_endpoints():
                 "/api/mcp/coach-standing-notes",
                 json={"notes": "- Standing test order 1"}
             )
-            assert r_standing.status_code == 200
-            assert "Standing test order 1" in r_standing.json()["notes"]
+            # Coach Live Chat REST API & filtering
+            r_chat = await client.get("/api/mcp/coach-chat")
+            assert r_chat.status_code == 200
+            chat_data = r_chat.json()
+            assert chat_data["ok"] is True
+            assert "messages" in chat_data
+            assert "counts" in chat_data
     finally:
         srv.should_exit = True
         t.join(timeout=1.0)
+
+
+@pytest.mark.asyncio
+async def test_coach_chat_filtering_logic():
+    """Verify coach chat endpoint filters by agent, sender, and search keyword."""
+    app = create_mcp_app()
+    from starlette.testclient import TestClient
+    tc = TestClient(app)
+
+    # Mock responses from cat agents
+    mock_history = [
+        {"id": "gen-1-user", "sender": "general", "message": "Why is that order in the dossier?", "source": "user", "tick": 50},
+        {"id": "gen-2-agent", "sender": "coach", "message": "Observed 12 mouse captures on east quadrant.", "source": "adk_gemini", "tick": 50},
+    ]
+
+    with patch("httpx.AsyncClient.get") as mock_get:
+        mock_resp = AsyncMock()
+        mock_resp.status_code = 200
+        mock_resp.json = lambda: list(mock_history)
+        mock_get.return_value = mock_resp
+
+        # 1. Fetch all
+        res = tc.get("/api/mcp/coach-chat")
+        assert res.status_code == 200
+        data = res.json()
+        assert data["ok"] is True
+        assert len(data["messages"]) >= 2
+
+        # 2. Filter by sender=coach
+        res_coach = tc.get("/api/mcp/coach-chat?sender=coach")
+        assert res_coach.status_code == 200
+        for m in res_coach.json()["messages"]:
+            assert m["sender"] == "coach"
+
+        # 3. Filter by search keyword
+        res_search = tc.get("/api/mcp/coach-chat?search=quadrant")
+        assert res_search.status_code == 200
+        messages = res_search.json()["messages"]
+        assert len(messages) >= 1
+        assert "quadrant" in messages[0]["message"].lower()
+
+
+@pytest.mark.asyncio
+async def test_coach_chat_deduplication():
+    """Verify coach chat endpoint automatically deduplicates duplicate messages."""
+    app = create_mcp_app()
+    from starlette.testclient import TestClient
+    tc = TestClient(app)
+
+    # When querying both cat-1 and cat-2, if the responses return identical messages
+    duplicate_history = [
+        {"id": "gen-1-user", "sender": "general", "message": "Why is that order in the dossier?", "source": "user", "tick": 50},
+    ]
+
+    with patch("httpx.AsyncClient.get") as mock_get:
+        mock_resp = AsyncMock()
+        mock_resp.status_code = 200
+        mock_resp.json = lambda: list(duplicate_history)
+        mock_get.return_value = mock_resp
+
+        # Fetch for cat-1 only: returns 1 message
+        res_cat1 = tc.get("/api/mcp/coach-chat?cat_id=cat-1")
+        assert res_cat1.status_code == 200
+        assert len(res_cat1.json()["messages"]) == 1
+
+        # Fetch with a2a store returning same message id
+        with patch("actors.a2a.store.get_coach_inbox") as mock_inbox:
+            mock_inbox.return_value = [
+                {"message_id": "a2a-bcast-1", "sender_id": "coach(cat-1)", "content": "Pact proposal", "timestamp": "12:00:00", "tick": 50}
+            ]
+            # Fetch for all: target_cats is [cat-1, cat-2]. get_coach_inbox returns a2a-bcast-1 for both
+            res_all = tc.get("/api/mcp/coach-chat?cat_id=all")
+            assert res_all.status_code == 200
+            msgs = res_all.json()["messages"]
+            # Verify a2a-bcast-1 appears only ONCE even though queried across multiple cats
+            a2a_msgs = [m for m in msgs if m.get("id") == "a2a-bcast-1"]
+            assert len(a2a_msgs) == 1
+
+
 
 

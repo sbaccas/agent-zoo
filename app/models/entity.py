@@ -34,3 +34,5 @@ class Entity(BaseModel):
     locked_action: Optional[str] = None
     hp: int = 100
     max_hp: int = 100
+    is_agent: bool = False
+    agent_name: Optional[str] = None
