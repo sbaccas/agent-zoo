@@ -376,8 +376,37 @@ class Simulation:
             self.scheduler.entity_events.clear()
             self.scheduler.transmissions.clear()
             self.scheduler.pending_repositions.clear()
+            self.scheduler.deaths.clear()
+            self.scheduler.notified_deaths.clear()
+            self.scheduler.consecutive_http_errors.clear()
             self.stats.reset()
             self.status = SimulationStatus.CREATED
+
+            # Reset on-disk and in-memory actor stores directly
+            try:
+                from actors.cat import store as cat_store
+                from actors.a2a import store as a2a_store
+                from actors.cat.subagents.eval import clear_coach_directive
+                cat_store.reset_transcript("all")
+                cat_store.reset_coaching_notes("all")
+                cat_store.reset_coach_memories("all")
+                cat_store.reset_prompts("all")
+                cat_store.reset_notice_board()
+                a2a_store.clear_a2a_history("all")
+                clear_coach_directive()
+            except Exception as exc:
+                logger.warning(f"Error resetting local agent stores during simulation reset: {exc}")
+
+            # Notify active agent HTTP servers if running
+            async def _notify_agents_reset():
+                import httpx
+                for port in (8001, 8003):
+                    try:
+                        async with httpx.AsyncClient(timeout=0.8) as client:
+                            await client.post(f"http://127.0.0.1:{port}/api/agent/reset")
+                    except Exception:
+                        pass
+            asyncio.create_task(_notify_agents_reset())
 
             # Reset entity manager
             self.entity_manager = EntityManager(self.world, self.config.species)

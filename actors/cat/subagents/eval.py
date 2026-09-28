@@ -1671,7 +1671,8 @@ async def interrogate_general(
             )
 
             msg = types.Content(role="user", parts=[types.Part.from_text(text=prompt)])
-            reply_parts: List[str] = []
+            final_chunks: List[str] = []
+            all_chunks: List[str] = []
 
             async with asyncio.timeout(GENERAL_RADIO_TIMEOUT_SECONDS):
                 agen = general_runner.run_async(
@@ -1685,13 +1686,17 @@ async def interrogate_general(
                                 f"ADK Error: {event.error_code} - {event.error_message}"
                             )
                         if event.content and event.content.parts:
+                            is_final = _is_final_event(event)
                             for p in event.content.parts:
                                 if p.text and not getattr(p, "thought", False):
-                                    reply_parts.append(p.text)
+                                    all_chunks.append(p.text)
+                                    if is_final:
+                                        final_chunks.append(p.text)
                 except StopAsyncIteration:
                     pass
 
-            reply_text = "".join(reply_parts).strip()
+            chosen_chunks = final_chunks if final_chunks else all_chunks
+            reply_text = "".join(chosen_chunks).strip()
             if reply_text:
                 logger.info("General radio replied (tick %s)", tick)
                 return reply_text, "adk_gemini", None

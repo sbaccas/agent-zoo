@@ -131,16 +131,35 @@ def get_outbox(agent_id: str, limit: int = 50) -> List[Dict[str, Any]]:
     return messages[-limit:]
 
 
-def clear_a2a_history(agent_id: str) -> None:
-    """Clears both inbox and outbox for an agent (used during test setup or game resets)."""
-    _INBOX_CACHE.pop(agent_id, None)
-    _OUTBOX_CACHE.pop(agent_id, None)
-    for p in (get_inbox_path(agent_id), get_outbox_path(agent_id)):
-        if p.exists():
-            try:
-                p.unlink()
-            except Exception:
-                pass
+def clear_a2a_history(agent_id: Optional[str] = None) -> None:
+    """Clears both inbox and outbox for an agent, or all agents (used during test setup or game resets)."""
+    if not agent_id or agent_id in ("all", "*"):
+        _INBOX_CACHE.clear()
+        _OUTBOX_CACHE.clear()
+        from actors.cat.store import list_known_cat_ids, LOCAL_RUNTIME_DIR
+        agent_ids = list_known_cat_ids()
+        targets = [
+            LOCAL_RUNTIME_DIR / "a2a_inbox.jsonl",
+            LOCAL_RUNTIME_DIR / "a2a_outbox.jsonl",
+        ]
+        for aid in agent_ids:
+            targets.extend([get_inbox_path(aid), get_outbox_path(aid)])
+        for p in targets:
+            if p.exists():
+                try:
+                    p.unlink()
+                except Exception:
+                    pass
+    else:
+        norm = normalize_agent_id(agent_id)
+        _INBOX_CACHE.pop(norm, None)
+        _OUTBOX_CACHE.pop(norm, None)
+        for p in (get_inbox_path(norm), get_outbox_path(norm)):
+            if p.exists():
+                try:
+                    p.unlink()
+                except Exception:
+                    pass
 
 
 def get_coach_inbox(agent_id: str, limit: int = 50) -> List[Dict[str, Any]]:

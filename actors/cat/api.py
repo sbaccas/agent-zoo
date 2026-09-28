@@ -412,33 +412,28 @@ def maybe_dispatch_evaluation(current_tick: int) -> None:
 
 
 def reset_reflexion_state(current_tick: Optional[int] = None) -> None:
-    """Wipes the transcript and coaching notes. Called whenever the game resets.
+    """Wipes the transcript, coaching notes, chat history, and directives across all agents on game reset.
 
     Both must go together: a fresh game must not inherit the previous game's
-    standing orders, and the evaluator must never read a transcript that spans two
-    unrelated games.
-
-    `current_tick` rebases the evaluation clock. Leaving it at 0 meant the very
-    next tick satisfied `tick - 0 >= interval` for any tick past the interval, so
-    a reset late in a game immediately fired an evaluation against a transcript
-    holding a single record -- and those one-tick conclusions became the cat's
-    standing orders.
+    standing orders or coach notes, and the evaluator must never read a transcript
+    that spans two unrelated games.
     """
-    store.reset_transcript()
-    store.reset_coaching_notes()
-    store.reset_coach_memories()
-    # The prompt log is scoped to a single game for the same reason as the
-    # transcript, and it grows far faster, so it must not survive a reset.
-    store.reset_prompts()
+    store.reset_transcript("all")
+    store.reset_coaching_notes("all")
+    store.reset_coach_memories("all")
+    store.reset_prompts("all")
+    store.reset_notice_board()
+    a2a_store.clear_a2a_history("all")
+
     state.latest_deliberated_prompt = None
-    # The commander's standing order goes too. It names positions and mouse IDs
-    # from a world that no longer exists, and once the tick counter rewinds to 0
-    # the order's stated age becomes permanently wrong. Re-radio it if it still
-    # applies.
     state.commander_directive = None
+    clear_coach_directive()
+
+    state.chat_history.clear()
+    state.general_chat_history.clear()
+
     state.last_eval_dispatch_tick = int(current_tick or 0)
     state.last_eval_result = None
-    # Drop any queued request; it was raised against the previous game's transcript.
     state.eval_pending = False
 
 
@@ -1663,6 +1658,22 @@ def clear_history() -> Dict[str, str]:
     # A manual history wipe is a deliberate fresh start, so the durable transcript
     # and any standing orders derived from it go too.
     reset_reflexion_state(state.active_tick)
+    return {"status": "ok"}
+
+
+@app.post("/api/agent/reset")
+async def reset_agent_endpoint() -> Dict[str, str]:
+    """Wipes all agent memory, history, directives, coach notes, and A2A comms on simulation reset."""
+    state.history.clear()
+    state.active_tick = 0
+    state.total_ticks_processed = 0
+    state.latest_observation = None
+    state.latest_response = None
+    state.latest_autonomous = None
+    state.last_evaluated_tick = None
+    state.last_server_tick = None
+    reset_reflexion_state(0)
+    await reset_adk_session(state.agent_id or "cat-1")
     return {"status": "ok"}
 
 

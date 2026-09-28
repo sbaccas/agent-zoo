@@ -194,13 +194,22 @@ def append_tick(exchange: Dict[str, Any]) -> None:
         logger.warning("Failed to append tick to transcript: %s", exc)
 
 
-def reset_transcript() -> None:
+def reset_transcript(agent_id: Optional[str] = None) -> None:
     """Wipes the transcript. Called whenever the game resets."""
-    try:
-        if TRANSCRIPT_PATH.exists():
-            TRANSCRIPT_PATH.unlink()
-    except Exception as exc:
-        logger.warning("Failed to reset transcript: %s", exc)
+    targets = []
+    if agent_id and agent_id not in ("all", "*"):
+        targets.append(get_cat_paths(agent_id)["transcript"])
+    else:
+        targets.append(TRANSCRIPT_PATH)
+        targets.append(LOCAL_RUNTIME_DIR / "transcript.jsonl")
+        for cid in list_known_cat_ids():
+            targets.append(get_cat_paths(cid)["transcript"])
+    for p in targets:
+        try:
+            if p.exists():
+                p.unlink()
+        except Exception as exc:
+            logger.warning("Failed to reset transcript %s: %s", p, exc)
 
 
 def read_transcript_records(agent_id: Optional[str] = None) -> List[Dict[str, Any]]:
@@ -340,13 +349,22 @@ def prompt_log_size() -> Dict[str, Any]:
         return {"bytes": 0, "records": 0}
 
 
-def reset_prompts() -> None:
+def reset_prompts(agent_id: Optional[str] = None) -> None:
     """Wipes the prompt log. Called whenever the game resets."""
-    try:
-        if PROMPTS_PATH.exists():
-            PROMPTS_PATH.unlink()
-    except Exception as exc:
-        logger.warning("Failed to reset prompt log: %s", exc)
+    targets = []
+    if agent_id and agent_id not in ("all", "*"):
+        targets.append(get_cat_paths(agent_id)["prompts"])
+    else:
+        targets.append(PROMPTS_PATH)
+        targets.append(LOCAL_RUNTIME_DIR / "prompts.jsonl")
+        for cid in list_known_cat_ids():
+            targets.append(get_cat_paths(cid)["prompts"])
+    for p in targets:
+        try:
+            if p.exists():
+                p.unlink()
+        except Exception as exc:
+            logger.warning("Failed to reset prompt log %s: %s", p, exc)
 
 
 def write_run_config(config: Dict[str, Any]) -> None:
@@ -404,12 +422,20 @@ def read_coaching_notes(agent_id: Optional[str] = None) -> str:
 
 def reset_coaching_notes(agent_id: Optional[str] = None) -> None:
     """Clears stale advice so a new game does not inherit the last game's orders."""
-    try:
-        target_path = get_cat_paths(agent_id)["coaching_notes"] if agent_id else COACHING_NOTES_PATH
-        if target_path.exists():
-            target_path.unlink()
-    except Exception as exc:
-        logger.warning("Failed to reset coaching notes: %s", exc)
+    targets = []
+    if agent_id and agent_id not in ("all", "*"):
+        targets.append(get_cat_paths(agent_id)["coaching_notes"])
+    else:
+        targets.append(COACHING_NOTES_PATH)
+        targets.append(LOCAL_RUNTIME_DIR / "coaching_notes.md")
+        for cid in list_known_cat_ids():
+            targets.append(get_cat_paths(cid)["coaching_notes"])
+    for p in targets:
+        try:
+            if p.exists():
+                p.unlink()
+        except Exception as exc:
+            logger.warning("Failed to reset coaching notes %s: %s", p, exc)
 
 
 def read_notice_board() -> str:
@@ -439,11 +465,15 @@ def write_notice_board(content: str) -> None:
 
 def reset_notice_board() -> None:
     """Clears the global notice board on reset."""
-    try:
-        if NOTICE_BOARD_PATH.exists():
-            NOTICE_BOARD_PATH.unlink()
-    except Exception as exc:
-        logger.warning("Failed to reset notice board: %s", exc)
+    targets = [NOTICE_BOARD_PATH, LOCAL_RUNTIME_DIR / "notice_board.md"]
+    for cid in list_known_cat_ids():
+        targets.append(get_cat_paths(cid)["notice_board"])
+    for p in targets:
+        try:
+            if p.exists():
+                p.unlink()
+        except Exception as exc:
+            logger.warning("Failed to reset notice board %s: %s", p, exc)
 
 
 import uuid
@@ -759,11 +789,19 @@ def delete_coach_memory(memory_id: str, agent_id: Optional[str] = None) -> bool:
 
 def reset_coach_memories(agent_id: Optional[str] = None) -> None:
     """Wipes the coach memory store."""
-    try:
-        target_path = get_cat_paths(agent_id)["coach_memory"] if agent_id else COACH_MEMORY_PATH
-        if target_path.exists():
-            target_path.unlink()
-    except Exception as exc:
-        logger.warning("Failed to reset coach memory: %s", exc)
+    targets = []
+    if agent_id and agent_id not in ("all", "*"):
+        targets.append(get_cat_paths(agent_id)["coach_memory"])
+    else:
+        targets.append(COACH_MEMORY_PATH)
+        targets.append(LOCAL_RUNTIME_DIR / "coach_memory.jsonl")
+        for cid in list_known_cat_ids():
+            targets.append(get_cat_paths(cid)["coach_memory"])
+    for p in targets:
+        try:
+            if p.exists():
+                p.unlink()
+        except Exception as exc:
+            logger.warning("Failed to reset coach memory %s: %s", p, exc)
 
 
