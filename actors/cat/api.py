@@ -1735,8 +1735,8 @@ def evaluator_status() -> Dict[str, Any]:
         "is_evaluating": state.is_evaluating,
         "last_dispatch_tick": state.last_eval_dispatch_tick,
         "next_dispatch_tick": state.last_eval_dispatch_tick + interval,
-        "transcript_ticks": store.transcript_tick_count(),
-        "coaching_notes": store.read_coaching_notes(),
+        "transcript_ticks": store.transcript_tick_count(state.agent_id),
+        "coaching_notes": store.read_coaching_notes(state.agent_id),
         "last_result": state.last_eval_result,
         # Carried on the poll the workbench already makes, so the control stays
         # in sync with a change made from another tab or from curl.

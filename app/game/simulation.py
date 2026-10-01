@@ -77,6 +77,7 @@ class Simulation:
         self._lock = asyncio.Lock()
         self.history: list[SimulationSnapshot] = []
         self.max_history: int = 500
+        self.replay_snapshots: list[dict] = []
 
         # Initialize initial populations
         cats = self.config.populations.get("cats", 2)
@@ -109,6 +110,26 @@ class Simulation:
         self.history.append(snapshot)
         if len(self.history) > self.max_history:
             self.history.pop(0)
+
+        # Full-match replay history: compact record of every entity for seamless archiving
+        self.replay_snapshots.append({
+            "tick": self.scheduler.tick,
+            "round": self.scheduler.round,
+            "captures": self.scheduler.captures,
+            "scores": dict(self.scheduler.scores),
+            "entities": [
+                {
+                    "id": e.id,
+                    "type": getattr(getattr(e, "type", None), "value", str(getattr(e, "type", ""))),
+                    "x": getattr(getattr(e, "position", None), "x", None),
+                    "y": getattr(getattr(e, "position", None), "y", None),
+                    "facing": getattr(getattr(e, "facing", None), "value", str(getattr(e, "facing", "north"))),
+                    "hp": getattr(e, "hp", 100),
+                    "alive": getattr(e, "alive", True),
+                }
+                for e in self.entity_manager.entities.values()
+            ],
+        })
 
     def get_state(self) -> SimulationStateResponse:
         pending = {
@@ -368,6 +389,7 @@ class Simulation:
             await archive_game(self, reason="reset")
 
             self.history.clear()
+            self.replay_snapshots.clear()
             self.scheduler.tick = 0
             self.scheduler.round = 0
             self.scheduler.captures = 0

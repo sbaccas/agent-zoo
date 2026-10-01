@@ -142,7 +142,11 @@ def cat_runtime_dir(agent_id: Optional[str] = None) -> Path:
             agent_legacy_tmp = tmp_base / f"runtime_{agent_id}"
             if agent_legacy_tmp.is_dir():
                 return agent_legacy_tmp
-            repo_agent = REPO_ROOT / "actors" / "cat" / f"runtime_{agent_id}"
+            repo_agent = (
+                (REPO_ROOT / "actors" / "cat" / "runtime")
+                if agent_id == "cat-1"
+                else (REPO_ROOT / "actors" / "cat" / f"runtime_{agent_id}")
+            )
             if repo_agent.is_dir():
                 return repo_agent
             if agent_id == "cat-1" and override_path.is_dir():
@@ -155,7 +159,11 @@ def cat_runtime_dir(agent_id: Optional[str] = None) -> Path:
         agent_legacy_tmp = tmp_base / f"runtime_{agent_id}"
         if agent_legacy_tmp.is_dir():
             return agent_legacy_tmp
-        repo_agent = REPO_ROOT / "actors" / "cat" / f"runtime_{agent_id}"
+        repo_agent = (
+            (REPO_ROOT / "actors" / "cat" / "runtime")
+            if agent_id == "cat-1"
+            else (REPO_ROOT / "actors" / "cat" / f"runtime_{agent_id}")
+        )
         if repo_agent.is_dir():
             return repo_agent
         if agent_id == "cat-1":
@@ -301,6 +309,56 @@ def capture(sim: Any, reason: str) -> Optional[Dict[str, Any]]:
     now = datetime.now(timezone.utc)
     stamp = now.strftime("%Y%m%dT%H%M%SZ")
 
+    events = None
+    try:
+        if hasattr(sim, "scheduler") and hasattr(sim.scheduler, "events"):
+            events = _jsonable([
+                e.model_dump() if hasattr(e, "model_dump") else (
+                    dict(e) if isinstance(e, dict) else {
+                        "tick": getattr(e, "tick", 0),
+                        "round": getattr(e, "round", 0),
+                        "event_type": getattr(e, "event_type", ""),
+                        "actor_id": getattr(e, "actor_id", ""),
+                        "target_id": getattr(e, "target_id", None),
+                        "position": _jsonable(getattr(e, "position", None)),
+                        "message": getattr(e, "message", ""),
+                        "details": _jsonable(getattr(e, "details", {})),
+                    }
+                )
+                for e in sim.scheduler.events
+            ])
+    except Exception as exc:
+        logger.warning("Archive: events unavailable: %s", exc)
+
+    history_snapshots = None
+    try:
+        if hasattr(sim, "replay_snapshots") and sim.replay_snapshots:
+            history_snapshots = _jsonable(list(sim.replay_snapshots))
+        elif hasattr(sim, "history") and sim.history:
+            history_snapshots = []
+            for s in sim.history:
+                s_entities = []
+                for e in (getattr(s, "entities", None) or []):
+                    pos = getattr(e, "position", None)
+                    s_entities.append({
+                        "id": getattr(e, "id", None),
+                        "type": getattr(getattr(e, "type", None), "value", str(getattr(e, "type", ""))),
+                        "x": getattr(pos, "x", None) if pos else None,
+                        "y": getattr(pos, "y", None) if pos else None,
+                        "facing": getattr(getattr(e, "facing", None), "value", str(getattr(e, "facing", "north"))),
+                        "hp": getattr(e, "hp", 100),
+                        "alive": getattr(e, "alive", True),
+                    })
+                history_snapshots.append({
+                    "tick": getattr(s, "tick", 0),
+                    "round": getattr(s, "round", 0),
+                    "captures": getattr(s, "captures", 0),
+                    "entities": s_entities,
+                    "scores": _jsonable(dict(getattr(s, "scores", {}) or {})),
+                })
+    except Exception as exc:
+        logger.warning("Archive: history unavailable: %s", exc)
+
     return {
         "dir_name": f"{stamp}__tick{tick:05d}__{sim.simulation_id}",
         "manifest": {
@@ -342,6 +400,8 @@ def capture(sim: Any, reason: str) -> Optional[Dict[str, Any]]:
             "code": _git_provenance(),
         },
         "boxscore": boxscore,
+        "events": events,
+        "history": history_snapshots,
     }
 
 
@@ -394,6 +454,22 @@ def write(captured: Dict[str, Any]) -> Path:
             json.dumps(captured["boxscore"], indent=2), encoding="utf-8"
         )
         files["boxscore.json"] = {"source": "memory"}
+
+    if captured.get("events") is not None:
+        (dest / "events.json").write_text(
+            json.dumps(captured["events"], indent=2), encoding="utf-8"
+        )
+        files["events.json"] = {"source": "memory"}
+
+    if captured.get("history") is not None:
+        try:
+            hist_bytes = json.dumps(captured["history"]).encode("utf-8")
+            h_path = dest / "history.json.gz"
+            with gzip.open(h_path, "wb", compresslevel=6) as fh:
+                fh.write(hist_bytes)
+            files["history.json.gz"] = {"source": "memory", "bytes": len(hist_bytes)}
+        except Exception as exc:
+            logger.warning("Archive: failed to write history.json.gz: %s", exc)
 
     agents = manifest.get("agents") or {}
     agent_ids = sorted(agents.keys()) if agents else []

@@ -88,6 +88,23 @@ async def get_archive(archive_id: str) -> Dict[str, Any]:
     return detail
 
 
+@router.get("/{archive_id}/replay")
+async def get_archive_replay(
+    archive_id: str,
+    from_tick: Optional[int] = Query(None, ge=1),
+    to_tick: Optional[int] = Query(None, ge=1),
+) -> Dict[str, Any]:
+    """Returns synchronized tick-by-tick replay frames, multi-agent POV data, and death moments."""
+    from app.game.replay import build_archive_replay
+
+    target_dir = _validate_archive_id(archive_id)
+    actual_id = target_dir.name
+    replay_data = await asyncio.to_thread(build_archive_replay, actual_id, from_tick, to_tick)
+    if not replay_data:
+        raise HTTPException(status_code=404, detail=f"Could not build replay for archive '{archive_id}'")
+    return replay_data
+
+
 @router.get("/{archive_id}/files/{file_path:path}")
 async def get_archive_file(archive_id: str, file_path: str):
     """Securely downloads or previews an artifact file stored within an archive."""

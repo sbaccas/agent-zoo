@@ -2413,12 +2413,12 @@
   const btnOpenArchive = document.getElementById('btnOpenArchive');
 
   function openArchiveWindow() {
-    const width = 1100;
-    const height = 850;
-    const screenW = window.screen.availWidth || window.innerWidth;
-    const screenH = window.screen.availHeight || window.innerHeight;
-    const left = Math.max(10, Math.min(screenW - width - 20, (window.screenX || 0) + (window.outerWidth || 1000) - width));
-    const top = Math.max(20, (window.screenY || 0) + 30);
+    const screenW = window.screen.availWidth || window.innerWidth || 1440;
+    const screenH = window.screen.availHeight || window.innerHeight || 900;
+    const width = Math.min(1600, Math.max(1150, Math.floor(screenW * 0.92)));
+    const height = Math.min(1050, Math.max(800, Math.floor(screenH * 0.90)));
+    const left = Math.max(10, Math.floor((screenW - width) / 2));
+    const top = Math.max(20, Math.floor((screenH - height) / 2));
     const features = `width=${width},height=${height},left=${left},top=${top},resizable=yes,scrollbars=yes,status=no,toolbar=no,menubar=no,location=no`;
 
     const popup = window.open(popoutUrl('/archive'), 'CMArchive', features);

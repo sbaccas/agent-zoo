@@ -63,16 +63,18 @@ def _mirror_to_local_runtime(filename: str, content: str, mode: str = "w", agent
     if os.environ.get("CAT_AGENT_RUNTIME_DIR"):
         return
     try:
-        LOCAL_RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
-        target = LOCAL_RUNTIME_DIR / filename
-        if mode == "a":
-            with target.open("a", encoding="utf-8") as fh:
-                fh.write(content)
-        else:
-            target.write_text(content, encoding="utf-8")
+        tmp_target_id = agent_id or os.environ.get("CAT_ID") or "cat-1"
+        # Only mirror to LOCAL_RUNTIME_DIR if it's for cat-1 or a shared file like notice_board.md
+        if tmp_target_id == "cat-1" or filename == "notice_board.md":
+            LOCAL_RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+            target = LOCAL_RUNTIME_DIR / filename
+            if mode == "a":
+                with target.open("a", encoding="utf-8") as fh:
+                    fh.write(content)
+            else:
+                target.write_text(content, encoding="utf-8")
 
         # Also write to temp folder for external tool compatibility
-        tmp_target_id = agent_id or os.environ.get("CAT_ID") or "cat-1"
         tmp_dir = Path(tempfile.gettempdir()) / f"cm_runtime_{tmp_target_id}"
         tmp_dir.mkdir(parents=True, exist_ok=True)
         tmp_target = tmp_dir / filename
@@ -187,8 +189,9 @@ def append_tick(exchange: Dict[str, Any]) -> None:
         line = json.dumps(record, separators=(",", ":")) + "\n"
         with TRANSCRIPT_PATH.open("a", encoding="utf-8") as fh:
             fh.write(line)
-        if not os.environ.get("CAT_AGENT_RUNTIME_DIR") and TRANSCRIPT_PATH.resolve() != (LOCAL_RUNTIME_DIR / "transcript.jsonl").resolve():
-            _mirror_to_local_runtime("transcript.jsonl", line, mode="a")
+        active_cat = (exchange.get("observation") or {}).get("self", {}).get("id") or os.environ.get("CAT_ID") or "cat-1"
+        if not os.environ.get("CAT_AGENT_RUNTIME_DIR") and active_cat == "cat-1" and TRANSCRIPT_PATH.resolve() != (LOCAL_RUNTIME_DIR / "transcript.jsonl").resolve():
+            _mirror_to_local_runtime("transcript.jsonl", line, mode="a", agent_id="cat-1")
     except Exception as exc:
         # Transcript logging is diagnostic. It must never stall or crash a tick.
         logger.warning("Failed to append tick to transcript: %s", exc)
@@ -234,8 +237,8 @@ def read_transcript_records(agent_id: Optional[str] = None) -> List[Dict[str, An
     return records
 
 
-def transcript_tick_count() -> int:
-    return len(read_transcript_records())
+def transcript_tick_count(agent_id: Optional[str] = None) -> int:
+    return len(read_transcript_records(agent_id=agent_id))
 
 
 def format_transcript(records: List[Dict[str, Any]]) -> str:
@@ -300,8 +303,9 @@ def append_prompt(record: Dict[str, Any]) -> None:
         line = json.dumps(record, separators=(",", ":")) + "\n"
         with PROMPTS_PATH.open("a", encoding="utf-8") as fh:
             fh.write(line)
-        if not os.environ.get("CAT_AGENT_RUNTIME_DIR") and PROMPTS_PATH.resolve() != (LOCAL_RUNTIME_DIR / "prompts.jsonl").resolve():
-            _mirror_to_local_runtime("prompts.jsonl", line, mode="a")
+        active_cat = record.get("agent_id") or os.environ.get("CAT_ID") or "cat-1"
+        if not os.environ.get("CAT_AGENT_RUNTIME_DIR") and active_cat == "cat-1" and PROMPTS_PATH.resolve() != (LOCAL_RUNTIME_DIR / "prompts.jsonl").resolve():
+            _mirror_to_local_runtime("prompts.jsonl", line, mode="a", agent_id="cat-1")
     except Exception as exc:
         # Same contract as the transcript: diagnostics never break a tick.
         logger.warning("Failed to append prompt record: %s", exc)
@@ -381,8 +385,9 @@ def write_run_config(config: Dict[str, Any]) -> None:
         payload["written_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         content = json.dumps(payload, indent=2)
         RUN_CONFIG_PATH.write_text(content, encoding="utf-8")
-        if not os.environ.get("CAT_AGENT_RUNTIME_DIR") and RUN_CONFIG_PATH.resolve() != (LOCAL_RUNTIME_DIR / "run_config.json").resolve():
-            _mirror_to_local_runtime("run_config.json", content, mode="w")
+        active_cat = config.get("agent_id") or os.environ.get("CAT_ID") or "cat-1"
+        if not os.environ.get("CAT_AGENT_RUNTIME_DIR") and active_cat == "cat-1" and RUN_CONFIG_PATH.resolve() != (LOCAL_RUNTIME_DIR / "run_config.json").resolve():
+            _mirror_to_local_runtime("run_config.json", content, mode="w", agent_id="cat-1")
     except Exception as exc:
         logger.warning("Failed to write run config: %s", exc)
 

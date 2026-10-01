@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Simulation Archives — Cat &amp; Mouse</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🗄️</text></svg>">
-  <link rel="stylesheet" href="/static/styles.css?v=15">
+  <link rel="stylesheet" href="/static/styles.css?v=16">
 </head>
 <body class="settings-standalone-body">
   <div class="settings-standalone-container archive-window-container">
@@ -19,6 +19,7 @@
       </div>
       <div style="display: flex; align-items: center; gap: 8px;">
         <span class="settings-header-badge" id="archiveStatusBadge">Connecting…</span>
+        <button id="btnToggleSidebar" class="btn btn-sm btn-outline" title="Toggle runs list sidebar to maximize replay board">◀ Runs</button>
         <button id="btnCaptureCurrent" class="btn btn-sm btn-primary" title="Snapshot the active running game to disk right now">📸 Capture Active Game</button>
         <button id="btnWipeArchives" class="btn btn-sm btn-danger" title="Permanently delete all archives from disk">🗑️ Wipe All</button>
         <button id="btnRefreshArchives" class="btn btn-sm btn-outline" title="Refresh archives from disk">🔄 Refresh</button>
@@ -27,7 +28,7 @@
 
     <main class="archive-layout">
       <!-- Left sidebar: Run list -->
-      <aside class="archive-sidebar">
+      <aside class="archive-sidebar" id="archiveSidebar">
         <div class="archive-search-box">
           <input type="text" id="archiveSearch" class="form-input archive-search-input" placeholder="Filter by tick, sim ID, reason…">
           <div class="archive-stats-row" id="archiveStatsRow">
@@ -66,6 +67,7 @@
 
           <!-- Navigation tabs -->
           <div class="archive-tabs">
+            <button class="archive-tab-btn" data-tab="tabReplay">🎬 Match Replay &amp; POV</button>
             <button class="archive-tab-btn active" data-tab="tabOverview">📊 Overview &amp; KPIs</button>
             <button class="archive-tab-btn" data-tab="tabBoxscore">📋 Box Score</button>
             <button class="archive-tab-btn" data-tab="tabNotes">📝 Coaching Notes</button>
@@ -75,6 +77,145 @@
 
           <!-- Tab Contents -->
           <div class="archive-tab-body">
+            <!-- 0. Interactive Match Replay & POV Tab -->
+            <div id="tabReplay" class="archive-tab-pane">
+              <div class="replay-container">
+                <!-- Playback Control Bar -->
+                <div class="replay-playback-bar">
+                  <div class="replay-btn-group">
+                    <button id="replayBtnStepBack" class="btn btn-sm btn-outline" title="Step Back 1 Tick (Left Arrow)">⏮</button>
+                    <button id="replayBtnPlayPause" class="btn btn-sm btn-primary" title="Play / Pause (Space)">▶ Play</button>
+                    <button id="replayBtnStepForward" class="btn btn-sm btn-outline" title="Step Forward 1 Tick (Right Arrow)">⏭</button>
+                  </div>
+
+                  <div class="replay-scrub-group">
+                    <span class="replay-tick-indicator"><strong id="replayCurrentTickText">Tick 0</strong> / <span id="replayMaxTickText">0</span></span>
+                    <input type="range" id="replayScrubSlider" min="1" max="100" value="1" class="form-range replay-slider">
+                  </div>
+
+                  <div class="replay-speed-group">
+                    <label for="replaySpeedSelect">Speed:</label>
+                    <select id="replaySpeedSelect" class="form-select form-select-sm">
+                      <option value="0.5">0.5x</option>
+                      <option value="1" selected>1x</option>
+                      <option value="2">2x</option>
+                      <option value="5">5x</option>
+                      <option value="10">10x</option>
+                    </select>
+                  </div>
+                </div>
+
+                <!-- Notable Moments & Cat Death Bookmarks -->
+                <div class="replay-deaths-bar" id="replayDeathsBar">
+                  <span class="replay-deaths-label">⚡ Cat Eliminations:</span>
+                  <div class="replay-deaths-scroll" id="replayDeathsList">
+                    <span class="replay-no-deaths">Scanning match for eliminations…</span>
+                  </div>
+                </div>
+
+                <!-- Main Replay Split: Arena Canvas & Inspector -->
+                <div class="replay-main-grid">
+                  <!-- 2D Arena Canvas Board -->
+                  <div class="replay-arena-card">
+                    <div class="replay-arena-header">
+                      <span class="replay-arena-title" id="replayArenaTitle">Arena Simulation (100 × 100)</span>
+                      <div class="replay-pov-chips" id="replayPovChips">
+                        <!-- Rendered dynamically: [All Cats] [cat-1] [cat-2] ... -->
+                      </div>
+                    </div>
+                    <div class="replay-canvas-wrapper" id="replayCanvasWrapper">
+                      <canvas id="replayCanvas" width="700" height="700"></canvas>
+                    </div>
+                    <div class="replay-legend">
+                      <span><span class="legend-dot dot-cat-1"></span> cat-1</span>
+                      <span><span class="legend-dot dot-cat-2"></span> cat-2</span>
+                      <span><span class="legend-dot dot-rival"></span> Rivals</span>
+                      <span><span class="legend-dot dot-mouse"></span> Mice</span>
+                      <span><span class="legend-dot dot-strike"></span> Strike Zone</span>
+                    </div>
+                  </div>
+
+                  <!-- Multi-Agent State & Witness Inspector -->
+                  <div class="replay-inspector-card">
+                    <div class="replay-inspector-header">
+                      <h4>Agent Perspective &amp; Rationale</h4>
+                      <div class="replay-inspector-controls">
+                        <select id="replayInspectorTargetSelect" class="replay-inspector-select" title="Select which agent to inspect">
+                          <!-- Filled dynamically -->
+                        </select>
+                        <span class="badge-pill" id="replayActiveAgentBadge">Omniscient</span>
+                      </div>
+                    </div>
+
+                    <div class="replay-inspector-body">
+                      <!-- Quick Death Action Alert Bar -->
+                      <div id="replayDeathAlertBox" class="replay-death-alert" style="display: none;">
+                        <div class="death-alert-title" id="replayDeathAlertTitle">⚡ Cat Eliminated!</div>
+                        <div class="death-alert-actions" id="replayDeathAlertActions">
+                          <!-- Quick Hunter / Victim / Witness POV jump buttons -->
+                        </div>
+                      </div>
+
+                      <!-- Selected Agent Posture & Decision -->
+                      <div class="replay-agent-section">
+                        <div class="replay-section-title">Posture &amp; Decision</div>
+                        <div class="replay-stat-grid" id="replayAgentStatGrid">
+                          <div class="replay-stat-item">
+                            <span class="stat-lbl">Position:</span>
+                            <strong id="replayAgentPos">--</strong>
+                          </div>
+                          <div class="replay-stat-item">
+                            <span class="stat-lbl">Facing:</span>
+                            <strong id="replayAgentFacing">--</strong>
+                          </div>
+                          <div class="replay-stat-item">
+                            <span class="stat-lbl">Action:</span>
+                            <strong id="replayAgentAction">--</strong>
+                          </div>
+                          <div class="replay-stat-item">
+                            <span class="stat-lbl">HP:</span>
+                            <strong id="replayAgentHp">--</strong>
+                          </div>
+                          <div class="replay-stat-item">
+                            <span class="stat-lbl">Cooldown:</span>
+                            <strong id="replayAgentCooldown">--</strong>
+                          </div>
+                          <div class="replay-stat-item">
+                            <span class="stat-lbl">Engine:</span>
+                            <strong id="replayAgentEngine">--</strong>
+                          </div>
+                        </div>
+                      </div>
+
+                      <!-- Inner Thought / Tactical Rationale -->
+                      <div class="replay-agent-section">
+                        <div class="replay-section-title">Inner Thought / Tactical Rationale</div>
+                        <div class="replay-thought-box" id="replayAgentThought">
+                          Select an agent above to review its live thought stream for this tick.
+                        </div>
+                      </div>
+
+                      <!-- Witness / Perception Ground Truth -->
+                      <div class="replay-agent-section">
+                        <div class="replay-section-title">Perception Ground Truth (Field of View)</div>
+                        <div class="replay-vision-list" id="replayAgentVisionList">
+                          <div class="replay-empty-sub">No targets in FOV.</div>
+                        </div>
+                      </div>
+
+                      <!-- Coach Guidance for this Tick -->
+                      <div class="replay-agent-section">
+                        <div class="replay-section-title">Active Coach Guidance</div>
+                        <div class="replay-coach-box" id="replayCoachNotes">
+                          No coach notes recorded for this tick.
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
             <!-- 1. Overview Tab -->
             <div id="tabOverview" class="archive-tab-pane active">
               <div class="archive-card-grid">
@@ -187,6 +328,6 @@
     </footer>
   </div>
 
-  <script src="/static/archive.js?v=1"></script>
+  <script src="/static/archive.js?v=2"></script>
 </body>
 </html>
