@@ -186,6 +186,7 @@ class AgentWorkbenchState:
         # the prompt cannot be logged until we know which tick actually used it.
         self.latest_deliberated_prompt: Optional[Dict[str, Any]] = None
         self.is_deliberating: bool = False
+        self.deliberation_started_at: Optional[float] = None
 
         # Reflexion loop: long-horizon evaluator subagent.
         # `eval_interval` is how many ticks of play accumulate before the transcript
@@ -289,17 +290,28 @@ def run_sync(coro):
 
 async def _run_background_deliberation(obs: Observation):
     """Executes Gemini LLM macro-deliberation in the background without stalling the game clock."""
+    state.deliberation_started_at = time.monotonic()
     try:
         state.is_deliberating = True
         bundle: Dict[str, Any] = {}
-        decision, _source, reason = await model_query_adk_gemini(
-            obs,
-            history=state.history,
-            agent_id=state.agent_id,
-            history_window_size=state.history_window_size,
-            capture=bundle,
-            commander_directive=state.commander_directive,
-        )
+        delib_timeout = get_deliberation_timeout() + 2.0
+        try:
+            async with asyncio.timeout(delib_timeout):
+                decision, _source, reason = await model_query_adk_gemini(
+                    obs,
+                    history=state.history,
+                    agent_id=state.agent_id,
+                    history_window_size=state.history_window_size,
+                    capture=bundle,
+                    commander_directive=state.commander_directive,
+                )
+        except asyncio.TimeoutError:
+            decision, _source, reason = (
+                None,
+                "heuristic_fallback",
+                f"Background deliberation exceeded {delib_timeout:g}s limit",
+            )
+
         # NOTE: deliberately does NOT set `state.last_engine_source`.
         #
         # This runs detached from the tick loop and produces a decision for a
@@ -340,6 +352,7 @@ async def _run_background_deliberation(obs: Observation):
         state.last_engine_error = err_msg if mark_auth_error(err_msg) else None
     finally:
         state.is_deliberating = False
+        state.deliberation_started_at = None
 
 
 async def _run_evaluation_cycle():
@@ -533,7 +546,25 @@ async def act_async(obs: Observation, decoupled: bool = False) -> ActionResponse
                 else "no completed Gemini decision available for this tick"
             )
 
-        # 3. Trigger background deliberation task if free
+        # 3. Watchdog & trigger background deliberation task if free
+        if state.deliberation_task and state.deliberation_task.done():
+            state.is_deliberating = False
+
+        if state.is_deliberating:
+            started = getattr(state, "deliberation_started_at", None)
+            timeout_limit = get_deliberation_timeout() + 3.0
+            if started and (time.monotonic() - started > timeout_limit):
+                logger.warning(
+                    "Deliberation task for %s exceeded deadline (%0.1fs > %0.1fs); aborting and resetting",
+                    state.agent_id,
+                    time.monotonic() - started,
+                    timeout_limit,
+                )
+                if state.deliberation_task and not state.deliberation_task.done():
+                    state.deliberation_task.cancel()
+                state.is_deliberating = False
+                state.deliberation_started_at = None
+
         if not state.is_deliberating and (state.deliberation_task is None or state.deliberation_task.done()):
             state.deliberation_task = asyncio.create_task(_run_background_deliberation(obs))
     else:
@@ -1672,6 +1703,12 @@ async def reset_agent_endpoint() -> Dict[str, str]:
     state.latest_autonomous = None
     state.last_evaluated_tick = None
     state.last_server_tick = None
+    if state.deliberation_task and not state.deliberation_task.done():
+        state.deliberation_task.cancel()
+    state.is_deliberating = False
+    state.deliberation_started_at = None
+    state.latest_deliberated_decision = None
+    state.latest_deliberated_prompt = None
     reset_reflexion_state(0)
     await reset_adk_session(state.agent_id or "cat-1")
     return {"status": "ok"}

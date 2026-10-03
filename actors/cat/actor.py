@@ -1330,43 +1330,44 @@ async def query_adk_gemini(
     user_id = "cat_commander"
     session_id = f"session_{agent_id}"
 
-    async with _llm_lock:
-        try:
-            # Refresh session to prevent token explosion across ticks
-            try:
-                await session_service.delete_session(
+    timeout_sec = get_deliberation_timeout()
+    try:
+        async with asyncio.timeout(timeout_sec):
+            async with _llm_lock:
+                # Refresh session to prevent token explosion across ticks
+                try:
+                    await session_service.delete_session(
+                        app_name="cat_agent_app", user_id=user_id, session_id=session_id
+                    )
+                except Exception:
+                    pass
+                await session_service.create_session(
                     app_name="cat_agent_app", user_id=user_id, session_id=session_id
                 )
-            except Exception:
-                pass
-            await session_service.create_session(
-                app_name="cat_agent_app", user_id=user_id, session_id=session_id
-            )
 
-            legal = obs.legal_actions or ["stay", "north", "south", "east", "west"]
-            eliminated = getattr(obs, "eliminated_cats", []) or []
-            tool_trace = set_deliberation_context(
-                agent_id=agent_id, tick=obs.tick, round_num=obs.round, eliminated_cats=eliminated
-            )
-            prompt = build_decision_prompt(
-                obs,
-                history=history,
-                agent_id=agent_id,
-                history_window_size=history_window_size,
-                capture=capture,
-                commander_directive=commander_directive,
-            )
+                legal = obs.legal_actions or ["stay", "north", "south", "east", "west"]
+                eliminated = getattr(obs, "eliminated_cats", []) or []
+                tool_trace = set_deliberation_context(
+                    agent_id=agent_id, tick=obs.tick, round_num=obs.round, eliminated_cats=eliminated
+                )
+                prompt = build_decision_prompt(
+                    obs,
+                    history=history,
+                    agent_id=agent_id,
+                    history_window_size=history_window_size,
+                    capture=capture,
+                    commander_directive=commander_directive,
+                )
 
-            msg = types.Content(role="user", parts=[types.Part.from_text(text=prompt)])
-            decision = None
-            # What the model actually billed for thinking on this call. The
-            # budget is a ceiling, not a spend: at AUTO especially, the only way
-            # to know whether the cat thought at all is to read it back. Summed
-            # across events because a single decision can arrive as several.
-            thoughts_tokens: Optional[int] = None
-            _started = time.monotonic()
+                msg = types.Content(role="user", parts=[types.Part.from_text(text=prompt)])
+                decision = None
+                # What the model actually billed for thinking on this call. The
+                # budget is a ceiling, not a spend: at AUTO especially, the only way
+                # to know whether the cat thought at all is to read it back. Summed
+                # across events because a single decision can arrive as several.
+                thoughts_tokens: Optional[int] = None
+                _started = time.monotonic()
 
-            async with asyncio.timeout(get_deliberation_timeout()):
                 agen = adk_runner.run_async(user_id=user_id, session_id=session_id, new_message=msg)
                 try:
                     while True:
@@ -1389,66 +1390,66 @@ async def query_adk_gemini(
                 except StopAsyncIteration:
                     pass
 
-            if isinstance(decision, dict):
-                decision = CatTacticalDecision(**decision)
+                if isinstance(decision, dict):
+                    decision = CatTacticalDecision(**decision)
 
-            if tool_trace and decision:
-                decision.tool_calls = list(tool_trace)
+                if tool_trace and decision:
+                    decision.tool_calls = list(tool_trace)
 
-            if capture is not None:
-                capture["latency_ms"] = round((time.monotonic() - _started) * 1000)
-                # None means the response carried no usage metadata, which is
-                # not the same as zero thinking. Left distinguishable on
-                # purpose: "we did not measure" must not read as "it did not
-                # think" in an experiment about exactly that.
-                capture["thoughts_token_count"] = thoughts_tokens
-                if tool_trace:
-                    capture["tool_calls"] = list(tool_trace)
+                if capture is not None:
+                    capture["latency_ms"] = round((time.monotonic() - _started) * 1000)
+                    # None means the response carried no usage metadata, which is
+                    # not the same as zero thinking. Left distinguishable on
+                    # purpose: "we did not measure" must not read as "it did not
+                    # think" in an experiment about exactly that.
+                    capture["thoughts_token_count"] = thoughts_tokens
+                    if tool_trace:
+                        capture["tool_calls"] = list(tool_trace)
 
-            # Every exit below reports *why* it gave up. Returning a bare None here
-            # was what made fallbacks undiagnosable: the UI could only say "not
-            # Gemini" and guessed at the cause, invariably blaming auth.
-            if decision and decision.action:
-                chosen_clean = decision.action.strip().lower()
-                if chosen_clean in legal:
-                    decision.action = chosen_clean
-                    if capture is not None:
-                        t_id = getattr(decision, "target_id", "") or decision.target_mouse_id or ""
-                        capture["decision"] = {
-                            "action": decision.action,
-                            "thought": decision.thought,
-                            "strategy": decision.strategy,
-                            "target_id": t_id,
-                            "target_mouse_id": decision.target_mouse_id,
-                            "broadcast_msg": getattr(decision, "broadcast_msg", "") or "",
-                            "tool_calls": getattr(decision, "tool_calls", []) or [],
-                        }
-                    return decision, "adk_gemini", None
-                else:
-                    reason = (
-                        f"model chose '{chosen_clean}', which is not legal this tick "
-                        f"(legal: {legal})"
-                    )
-                    print(f"[ADK Warning] {reason}", flush=True)
-                    return None, "heuristic_fallback", reason
+                # Every exit below reports *why* it gave up. Returning a bare None here
+                # was what made fallbacks undiagnosable: the UI could only say "not
+                # Gemini" and guessed at the cause, invariably blaming auth.
+                if decision and decision.action:
+                    chosen_clean = decision.action.strip().lower()
+                    if chosen_clean in legal:
+                        decision.action = chosen_clean
+                        if capture is not None:
+                            t_id = getattr(decision, "target_id", "") or decision.target_mouse_id or ""
+                            capture["decision"] = {
+                                "action": decision.action,
+                                "thought": decision.thought,
+                                "strategy": decision.strategy,
+                                "target_id": t_id,
+                                "target_mouse_id": decision.target_mouse_id,
+                                "broadcast_msg": getattr(decision, "broadcast_msg", "") or "",
+                                "tool_calls": getattr(decision, "tool_calls", []) or [],
+                            }
+                        return decision, "adk_gemini", None
+                    else:
+                        reason = (
+                            f"model chose '{chosen_clean}', which is not legal this tick "
+                            f"(legal: {legal})"
+                        )
+                        print(f"[ADK Warning] {reason}", flush=True)
+                        return None, "heuristic_fallback", reason
 
-        except asyncio.TimeoutError:
-            # Names the thinking budget too: once it is adjustable, overrunning
-            # this ceiling is the expected consequence of having raised it, and
-            # a reason that omits the cause sends you looking at the network.
-            reason = (
-                f"Gemini call exceeded the {get_deliberation_timeout():g}s deliberation "
-                f"budget (thinking budget: "
-                f"{describe_thinking_budget(get_thinking_budget())})"
-            )
-            print(f"[ADK Timeout] {reason} (falling back to heuristics)", flush=True)
-            return None, "heuristic_fallback", reason
+    except asyncio.TimeoutError:
+        # Names the thinking budget too: once it is adjustable, overrunning
+        # this ceiling is the expected consequence of having raised it, and
+        # a reason that omits the cause sends you looking at the network.
+        reason = (
+            f"Gemini call exceeded the {timeout_sec:g}s deliberation "
+            f"budget (thinking budget: "
+            f"{describe_thinking_budget(get_thinking_budget())})"
+        )
+        print(f"[ADK Timeout] {reason} (falling back to heuristics)", flush=True)
+        return None, "heuristic_fallback", reason
 
-        except Exception as exc:
-            err_msg = str(exc)
-            mark_auth_error(err_msg)
-            print(f"[ADK Error] Gemini execution failure: {err_msg} (falling back to heuristics)", flush=True)
-            return None, "heuristic_fallback", err_msg
+    except Exception as exc:
+        err_msg = str(exc)
+        mark_auth_error(err_msg)
+        print(f"[ADK Error] Gemini execution failure: {err_msg} (falling back to heuristics)", flush=True)
+        return None, "heuristic_fallback", err_msg
 
     return None, "heuristic_fallback", "model returned no parseable decision"
 
@@ -1521,78 +1522,78 @@ async def interrogate_adk_gemini(
     user_id = "cat_commander"
     session_id = f"interrogate_{agent_id}"
 
-    async with _llm_lock:
-        try:
-            try:
-                await session_service.delete_session(
+    try:
+        async with asyncio.timeout(15.0):
+            async with _llm_lock:
+                try:
+                    await session_service.delete_session(
+                        app_name="cat_agent_app", user_id=user_id, session_id=session_id
+                    )
+                except Exception:
+                    pass
+                await session_service.create_session(
                     app_name="cat_agent_app", user_id=user_id, session_id=session_id
                 )
-            except Exception:
-                pass
-            await session_service.create_session(
-                app_name="cat_agent_app", user_id=user_id, session_id=session_id
-            )
 
-            window_size = max(1, history_window_size)
-            recent_slice = history[-window_size:] if history else []
-            history_lines = []
-            for h in recent_slice:
-                h_tick = h.get("tick", "?")
-                h_self = h.get("observation", {}).get("self", {})
-                h_pos = h_self.get("position", {})
-                h_facing = h_self.get("facing", "north")
-                h_vis = h.get("observation", {}).get("visible_entities", [])
-                h_resp = h.get("response", {})
-                h_act = (h_resp.get("action") or "stay").upper()
-                h_thought = h_resp.get("thought", "")
-                vis_info = f"{len(h_vis)} visible ({[m.get('id') for m in h_vis]})" if h_vis else "0 visible"
-                h_cd = int(h_self.get("action_cooldown", 0) or 0)
-                h_can_act = h_self.get("can_act")
-                h_locked = (h_cd > 0) if h_can_act is None else (not h_can_act)
-                outcome = "REJECTED - you were locked" if h_locked else "executed"
-                history_lines.append(
-                    f"  • Tick {h_tick}: Pos ({h_pos.get('x',0)}, {h_pos.get('y',0)}) facing {h_facing}. "
-                    f"Context: {vis_info}. Move: {h_act} [{outcome}] (Reason: \"{h_thought}\")"
+                window_size = max(1, history_window_size)
+                recent_slice = history[-window_size:] if history else []
+                history_lines = []
+                for h in recent_slice:
+                    h_tick = h.get("tick", "?")
+                    h_self = h.get("observation", {}).get("self", {})
+                    h_pos = h_self.get("position", {})
+                    h_facing = h_self.get("facing", "north")
+                    h_vis = h.get("observation", {}).get("visible_entities", [])
+                    h_resp = h.get("response", {})
+                    h_act = (h_resp.get("action") or "stay").upper()
+                    h_thought = h_resp.get("thought", "")
+                    vis_info = f"{len(h_vis)} visible ({[m.get('id') for m in h_vis]})" if h_vis else "0 visible"
+                    h_cd = int(h_self.get("action_cooldown", 0) or 0)
+                    h_can_act = h_self.get("can_act")
+                    h_locked = (h_cd > 0) if h_can_act is None else (not h_can_act)
+                    outcome = "REJECTED - you were locked" if h_locked else "executed"
+                    history_lines.append(
+                        f"  • Tick {h_tick}: Pos ({h_pos.get('x',0)}, {h_pos.get('y',0)}) facing {h_facing}. "
+                        f"Context: {vis_info}. Move: {h_act} [{outcome}] (Reason: \"{h_thought}\")"
+                    )
+
+                history_context = ""
+                if history_lines:
+                    history_context = (
+                        f"--- RECENT TACTICAL CONTEXT (Last {len(history_lines)} Ticks) ---\n"
+                        + "\n".join(history_lines)
+                        + "\n\n"
+                    )
+
+                directive_context = ""
+                if active_directive:
+                    d_thought = active_directive.get("thought") or active_directive.get("directive") or ""
+                    d_strat = active_directive.get("strategy") or "ROAMING"
+                    directive_context = f"Current Tactical Phase: {d_strat}\nActive Directive: {d_thought}\n\n"
+
+                life_status = "ELIMINATED / DEAD (Knocked out of the game. You have 0 HP and cannot move or act.)" if is_dead else f"ACTIVE ({self_hp}/{self_max_hp} HP)"
+
+                prompt = (
+                    f"{history_context}"
+                    f"--- CURRENT OBSERVATION (Tick {tick}, Round {round_num}) ---\n"
+                    f"Agent ID: {agent_id}\n"
+                    f"Status: {life_status}\n"
+                    f"Health: {self_hp}/{self_max_hp} HP\n"
+                    f"Current Position: (x={pos.get('x', 0)}, y={pos.get('y', 0)})\n"
+                    f"Current Facing: {facing}\n"
+                    f"vision_radius: {caps.get('vision_radius', 4)} tiles ahead, plus "
+                    f"{caps.get('vision_rear', 2)} behind and {caps.get('vision_half_width', 3)} either side\n"
+                    f"attack_range: {caps.get('attack_range', 2)} tiles\n"
+                    f"Visible Entities in Viewport: {entities}\n"
+                    f"Legal Actions available: {legal}\n"
+                    f"{directive_context}"
+                    f"{COMMANDER_BLOCK_HEADER}\n"
+                    f'COMMANDER: "{user_prompt}"\n'
                 )
 
-            history_context = ""
-            if history_lines:
-                history_context = (
-                    f"--- RECENT TACTICAL CONTEXT (Last {len(history_lines)} Ticks) ---\n"
-                    + "\n".join(history_lines)
-                    + "\n\n"
-                )
+                msg = types.Content(role="user", parts=[types.Part.from_text(text=prompt)])
+                reply_parts = []
 
-            directive_context = ""
-            if active_directive:
-                d_thought = active_directive.get("thought") or active_directive.get("directive") or ""
-                d_strat = active_directive.get("strategy") or "ROAMING"
-                directive_context = f"Current Tactical Phase: {d_strat}\nActive Directive: {d_thought}\n\n"
-
-            life_status = "ELIMINATED / DEAD (Knocked out of the game. You have 0 HP and cannot move or act.)" if is_dead else f"ACTIVE ({self_hp}/{self_max_hp} HP)"
-
-            prompt = (
-                f"{history_context}"
-                f"--- CURRENT OBSERVATION (Tick {tick}, Round {round_num}) ---\n"
-                f"Agent ID: {agent_id}\n"
-                f"Status: {life_status}\n"
-                f"Health: {self_hp}/{self_max_hp} HP\n"
-                f"Current Position: (x={pos.get('x', 0)}, y={pos.get('y', 0)})\n"
-                f"Current Facing: {facing}\n"
-                f"vision_radius: {caps.get('vision_radius', 4)} tiles ahead, plus "
-                f"{caps.get('vision_rear', 2)} behind and {caps.get('vision_half_width', 3)} either side\n"
-                f"attack_range: {caps.get('attack_range', 2)} tiles\n"
-                f"Visible Entities in Viewport: {entities}\n"
-                f"Legal Actions available: {legal}\n"
-                f"{directive_context}"
-                f"{COMMANDER_BLOCK_HEADER}\n"
-                f'COMMANDER: "{user_prompt}"\n'
-            )
-
-            msg = types.Content(role="user", parts=[types.Part.from_text(text=prompt)])
-            reply_parts = []
-
-            async with asyncio.timeout(12.0):
                 agen = adk_interrogator_runner.run_async(
                     user_id=user_id, session_id=session_id, new_message=msg
                 )
@@ -1608,18 +1609,18 @@ async def interrogate_adk_gemini(
                 except StopAsyncIteration:
                     pass
 
-            reply_text = "".join(reply_parts).strip()
-            if reply_text:
-                return reply_text, "adk_gemini", None
-            return "Commander, I received your transmission. Standing by at my current coordinates.", "adk_gemini", None
+                reply_text = "".join(reply_parts).strip()
+                if reply_text:
+                    return reply_text, "adk_gemini", None
+                return "Commander, I received your transmission. Standing by at my current coordinates.", "adk_gemini", None
 
-        except Exception as exc:
-            err_msg = str(exc)
-            print(f"[ADK Interrogate Error] {err_msg}", flush=True)
-            return (
-                f"Commander, radio interference interrupted my cognitive link: {err_msg}. "
-                f"I am at ({pos.get('x',0)}, {pos.get('y',0)}) facing {facing}.",
-                "heuristic_fallback",
-                err_msg,
-            )
+    except Exception as exc:
+        err_msg = str(exc)
+        print(f"[ADK Interrogate Error] {err_msg}", flush=True)
+        return (
+            f"Commander, radio interference interrupted my cognitive link: {err_msg}. "
+            f"I am at ({pos.get('x',0)}, {pos.get('y',0)}) facing {facing}.",
+            "heuristic_fallback",
+            err_msg,
+        )
 

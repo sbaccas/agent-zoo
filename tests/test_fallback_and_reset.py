@@ -18,6 +18,7 @@ Four distinct defects are covered here, all of which were observed live:
 """
 
 import asyncio
+import time
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -452,3 +453,59 @@ def test_failed_background_deliberation_does_not_relabel_either():
         "a failed background call does not change how the previous tick was decided"
     )
     assert state.last_fallback_reason == "connection reset"
+
+
+def test_stuck_deliberation_watchdog_recovers_and_spawns_fresh_task():
+    """If deliberation hangs past the timeout ceiling, act_async must abort it and recover."""
+    from unittest.mock import MagicMock
+    from actors.cat.api import act_async, state
+
+    state.is_deliberating = True
+    # Simulate a task that started 20 seconds ago (well past the ~11s ceiling)
+    state.deliberation_started_at = time.monotonic() - 20.0
+    mock_task = MagicMock()
+    mock_task.done.return_value = False
+    state.deliberation_task = mock_task
+
+    spawned = False
+
+    async def _fake_run_background(obs):
+        nonlocal spawned
+        spawned = True
+
+    async def _drive():
+        with patch("actors.cat.api.check_gemini_auth_health",
+                   return_value={"authenticated": True, "mode": "vertex_ai", "status": "ok"}), \
+             patch("actors.cat.api._run_background_deliberation", side_effect=_fake_run_background):
+            return await act_async(Observation(**_obs(10)), decoupled=True)
+
+    asyncio.run(_drive())
+
+    # Task should have been cancelled by watchdog
+    mock_task.cancel.assert_called_once()
+    # A fresh deliberation task was spawned
+    assert state.deliberation_task is not None
+
+
+def test_reset_endpoint_cancels_deliberation_and_clears_flags():
+    """Simulation reset must cancel any running deliberation and clear deliberation flags."""
+    from unittest.mock import MagicMock
+    from actors.cat.api import reset_agent_endpoint, state
+
+    state.is_deliberating = True
+    state.deliberation_started_at = time.monotonic()
+    mock_task = MagicMock()
+    mock_task.done.return_value = False
+    state.deliberation_task = mock_task
+
+    async def _drive():
+        with patch("actors.cat.api.reset_adk_session", new=AsyncMock()):
+            await reset_agent_endpoint()
+
+    asyncio.run(_drive())
+
+    mock_task.cancel.assert_called_once()
+    assert state.is_deliberating is False
+    assert state.deliberation_started_at is None
+    assert state.latest_deliberated_decision is None
+
