@@ -916,10 +916,12 @@ def create_mcp_app(server: Optional[MCPServer] = None):
     if server is None:
         server = create_mcp_server()
 
+    from mcp.server.transport_security import TransportSecuritySettings
+
     app = server.sse_app(
         sse_path="/sse",
         message_path="/messages/",
-        transport_security=None,
+        transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
     )
 
     # 1. Dashboard Root HTML

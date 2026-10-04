@@ -62,3 +62,23 @@ output "cat_agent_internal_dns" {
   description = "Internal Private DNS hostname for Cat Agent Workbench"
   value       = "http://agent.catz.internal"
 }
+
+output "cat_agent_2_url" {
+  description = "Cat Agent 2 Cloud Run URL"
+  value       = google_cloud_run_v2_service.cat_agent_2.uri
+}
+
+output "cat_agent_2_internal_dns" {
+  description = "Internal Private DNS hostname for Cat Agent 2"
+  value       = "http://cat2.catz.internal"
+}
+
+output "mcp_server_url" {
+  description = "Cat & Mouse MCP Server Cloud Run URL"
+  value       = google_cloud_run_v2_service.mcp_server.uri
+}
+
+output "mcp_server_internal_dns" {
+  description = "Internal Private DNS hostname for MCP Server"
+  value       = "http://mcp.catz.internal"
+}

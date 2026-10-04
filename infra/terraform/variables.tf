@@ -55,3 +55,9 @@ variable "cat_agent_image" {
   description = "Container image for Cat Agent (defaults to GAR placeholder if not yet pushed)"
   default     = "us-docker.pkg.dev/cloudrun/container/hello"
 }
+
+variable "mcp_server_image" {
+  type        = string
+  description = "Container image for Cat & Mouse MCP Server (defaults to GAR placeholder if not yet pushed)"
+  default     = "us-docker.pkg.dev/cloudrun/container/hello"
+}

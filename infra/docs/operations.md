@@ -22,7 +22,9 @@ Once running, open your local browser:
 * **Jumpbox Desktop GUI:** [http://localhost:3000](http://localhost:3000)
 * Inside the Chromium browser on the desktop, navigate to:
   * **Authoritative Game Server:** `http://game.catz.internal/`
-  * **Cat Agent Workbench:** `http://agent.catz.internal/`
+  * **Cat Agent 1 Workbench:** `http://agent.catz.internal/` (or `http://cat1.catz.internal/`)
+  * **Cat Agent 2 Workbench:** `http://cat2.catz.internal/`
+  * **Cat & Mouse MCP Server & Chat:** `http://mcp.catz.internal/`
 
 ---
 

@@ -35,6 +35,26 @@ resource "google_compute_region_network_endpoint_group" "cat_agent_neg" {
   }
 }
 
+resource "google_compute_region_network_endpoint_group" "cat_agent_2_neg" {
+  name                  = "cat-agent-2-neg"
+  network_endpoint_type = "SERVERLESS"
+  region                = var.region
+
+  cloud_run {
+    service = google_cloud_run_v2_service.cat_agent_2.name
+  }
+}
+
+resource "google_compute_region_network_endpoint_group" "mcp_server_neg" {
+  name                  = "mcp-server-neg"
+  network_endpoint_type = "SERVERLESS"
+  region                = var.region
+
+  cloud_run {
+    service = google_cloud_run_v2_service.mcp_server.name
+  }
+}
+
 # 3. Regional Backend Services
 resource "google_compute_region_backend_service" "game_server_backend" {
   name                  = "game-server-backend"
@@ -60,7 +80,31 @@ resource "google_compute_region_backend_service" "cat_agent_backend" {
   }
 }
 
-# 4. Regional URL Map for host-based routing (game.catz.internal vs agent.catz.internal)
+resource "google_compute_region_backend_service" "cat_agent_2_backend" {
+  name                  = "cat-agent-2-backend"
+  region                = var.region
+  protocol              = "HTTP"
+  load_balancing_scheme = "INTERNAL_MANAGED"
+
+  backend {
+    group          = google_compute_region_network_endpoint_group.cat_agent_2_neg.id
+    balancing_mode = "UTILIZATION"
+  }
+}
+
+resource "google_compute_region_backend_service" "mcp_server_backend" {
+  name                  = "mcp-server-backend"
+  region                = var.region
+  protocol              = "HTTP"
+  load_balancing_scheme = "INTERNAL_MANAGED"
+
+  backend {
+    group          = google_compute_region_network_endpoint_group.mcp_server_neg.id
+    balancing_mode = "UTILIZATION"
+  }
+}
+
+# 4. Regional URL Map for host-based routing (game vs agent1 vs agent2 vs mcp)
 resource "google_compute_region_url_map" "internal_url_map" {
   name            = "catz-internal-url-map"
   region          = var.region
@@ -72,8 +116,18 @@ resource "google_compute_region_url_map" "internal_url_map" {
   }
 
   host_rule {
-    hosts        = ["agent.catz.internal", "cat-agent.catz.internal"]
+    hosts        = ["agent.catz.internal", "cat-agent.catz.internal", "cat1.catz.internal"]
     path_matcher = "agent-matcher"
+  }
+
+  host_rule {
+    hosts        = ["cat2.catz.internal", "cat-agent-2.catz.internal", "agent2.catz.internal"]
+    path_matcher = "agent-2-matcher"
+  }
+
+  host_rule {
+    hosts        = ["mcp.catz.internal", "mcp-server.catz.internal"]
+    path_matcher = "mcp-matcher"
   }
 
   path_matcher {
@@ -84,6 +138,16 @@ resource "google_compute_region_url_map" "internal_url_map" {
   path_matcher {
     name            = "agent-matcher"
     default_service = google_compute_region_backend_service.cat_agent_backend.id
+  }
+
+  path_matcher {
+    name            = "agent-2-matcher"
+    default_service = google_compute_region_backend_service.cat_agent_2_backend.id
+  }
+
+  path_matcher {
+    name            = "mcp-matcher"
+    default_service = google_compute_region_backend_service.mcp_server_backend.id
   }
 }
 
@@ -141,6 +205,30 @@ resource "google_dns_record_set" "game_dns" {
 
 resource "google_dns_record_set" "agent_dns" {
   name         = "agent.catz.internal."
+  managed_zone = google_dns_managed_zone.catz_internal.name
+  type         = "A"
+  ttl          = 300
+  rrdatas      = [google_compute_address.internal_gateway_ip.address]
+}
+
+resource "google_dns_record_set" "cat1_dns" {
+  name         = "cat1.catz.internal."
+  managed_zone = google_dns_managed_zone.catz_internal.name
+  type         = "A"
+  ttl          = 300
+  rrdatas      = [google_compute_address.internal_gateway_ip.address]
+}
+
+resource "google_dns_record_set" "cat2_dns" {
+  name         = "cat2.catz.internal."
+  managed_zone = google_dns_managed_zone.catz_internal.name
+  type         = "A"
+  ttl          = 300
+  rrdatas      = [google_compute_address.internal_gateway_ip.address]
+}
+
+resource "google_dns_record_set" "mcp_dns" {
+  name         = "mcp.catz.internal."
   managed_zone = google_dns_managed_zone.catz_internal.name
   type         = "A"
   ttl          = 300

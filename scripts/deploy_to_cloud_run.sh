@@ -14,6 +14,7 @@ REPO_PATH="${REGISTRY}/${PROJECT_ID}/${GAR_REPO}"
 
 GAME_IMAGE="${REPO_PATH}/game-server:latest"
 CAT_IMAGE="${REPO_PATH}/cat-agent:latest"
+MCP_IMAGE="${REPO_PATH}/mcp-server:latest"
 
 echo "================================================================="
 echo "🚀 Deploying Container Images to Google Cloud Run"
@@ -22,11 +23,12 @@ echo "Project:     ${PROJECT_ID}"
 echo "Region:      ${REGION}"
 echo "Game Image:  ${GAME_IMAGE}"
 echo "Cat Image:   ${CAT_IMAGE}"
+echo "MCP Image:   ${MCP_IMAGE}"
 echo "================================================================="
 echo ""
 
 # 1. Deploy Game Server
-echo "🎮 [1/2] Deploying Game Server to Cloud Run..."
+echo "🎮 [1/4] Deploying Game Server to Cloud Run..."
 gcloud run deploy game-server \
   --image="${GAME_IMAGE}" \
   --region="${REGION}" \
@@ -38,23 +40,53 @@ GAME_URL=$(gcloud run services describe game-server --region="${REGION}" --proje
 echo "✓ Game Server deployed successfully: ${GAME_URL}"
 echo ""
 
-# 2. Deploy Cat Agent Workbench
-echo "🐱 [2/2] Deploying Cat Agent Workbench to Cloud Run..."
+# 2. Deploy Cat & Mouse MCP Server
+echo "🔌 [2/4] Deploying Cat & Mouse MCP Server to Cloud Run..."
+gcloud run deploy mcp-server \
+  --image="${MCP_IMAGE}" \
+  --region="${REGION}" \
+  --project="${PROJECT_ID}" \
+  --port=9050 \
+  --set-env-vars="CAT_MCP_PORT=9050,CAT_MCP_HOST=0.0.0.0,GAME_SERVER_URL=${GAME_URL}" \
+  --quiet
+
+MCP_URL=$(gcloud run services describe mcp-server --region="${REGION}" --project="${PROJECT_ID}" --format="value(status.url)")
+echo "✓ MCP Server deployed successfully: ${MCP_URL}"
+echo ""
+
+# 3. Deploy Cat Agent 1 Workbench
+echo "🐱 [3/4] Deploying Cat Agent 1 Workbench to Cloud Run..."
 gcloud run deploy cat-agent \
   --image="${CAT_IMAGE}" \
   --region="${REGION}" \
   --project="${PROJECT_ID}" \
   --port=8001 \
-  --set-env-vars="GAME_SERVER_URL=${GAME_URL},GOOGLE_GENAI_USE_VERTEXAI=true,GOOGLE_CLOUD_PROJECT=${PROJECT_ID},GOOGLE_CLOUD_REGION=${REGION}" \
+  --set-env-vars="AGENT_ID=cat-1,GAME_SERVER_URL=${GAME_URL},GAME_SERVER_AUDIENCE=${GAME_URL},CAT_MCP_SERVER_URL=http://mcp.catz.internal,MCP_SERVER_AUDIENCE=${MCP_URL},GOOGLE_GENAI_USE_VERTEXAI=true,GOOGLE_CLOUD_PROJECT=${PROJECT_ID},GOOGLE_CLOUD_REGION=${REGION}" \
   --quiet
 
 CAT_URL=$(gcloud run services describe cat-agent --region="${REGION}" --project="${PROJECT_ID}" --format="value(status.url)")
-echo "✓ Cat Agent deployed successfully: ${CAT_URL}"
+echo "✓ Cat Agent 1 deployed successfully: ${CAT_URL}"
 echo ""
 
-# 3. Summary
+# 4. Deploy Cat Agent 2 Workbench
+echo "🐱 [4/4] Deploying Cat Agent 2 Workbench to Cloud Run..."
+gcloud run deploy cat-agent-2 \
+  --image="${CAT_IMAGE}" \
+  --region="${REGION}" \
+  --project="${PROJECT_ID}" \
+  --port=8003 \
+  --set-env-vars="AGENT_ID=cat-2,GAME_SERVER_URL=${GAME_URL},GAME_SERVER_AUDIENCE=${GAME_URL},CAT_MCP_SERVER_URL=http://mcp.catz.internal,MCP_SERVER_AUDIENCE=${MCP_URL},GOOGLE_GENAI_USE_VERTEXAI=true,GOOGLE_CLOUD_PROJECT=${PROJECT_ID},GOOGLE_CLOUD_REGION=${REGION}" \
+  --quiet
+
+CAT2_URL=$(gcloud run services describe cat-agent-2 --region="${REGION}" --project="${PROJECT_ID}" --format="value(status.url)")
+echo "✓ Cat Agent 2 deployed successfully: ${CAT2_URL}"
+echo ""
+
+# 5. Summary
 echo "================================================================="
 echo "🎉 Deployment Complete!"
 echo "• Game Server URI:  ${GAME_URL}"
-echo "• Cat Agent URI:    ${CAT_URL}"
+echo "• Cat Agent 1 URI:  ${CAT_URL}"
+echo "• Cat Agent 2 URI:  ${CAT2_URL}"
+echo "• MCP Server URI:   ${MCP_URL}"
 echo "================================================================="

@@ -32,11 +32,30 @@ class MCPClient:
         self.timeout = timeout
         self.sse_url = f"{self.base_url}/sse"
 
+    def _get_headers(self) -> Optional[Dict[str, str]]:
+        """Fetch GCP IAM ID token header for service-to-service calls if running in Cloud Run."""
+        if self.base_url.startswith("http://127.0.0.1") or self.base_url.startswith("http://localhost"):
+            return None
+        audience = os.environ.get("MCP_SERVER_AUDIENCE") or os.environ.get("CAT_MCP_SERVER_AUDIENCE")
+        if not audience:
+            if self.base_url.startswith("https://"):
+                audience = self.base_url
+            elif "catz.internal" in self.base_url:
+                audience = "https://mcp-server-seh2tezjxa-nn.a.run.app"
+        try:
+            from actors.auth import get_gcp_id_token
+            token = get_gcp_id_token(audience=audience)
+            if token:
+                return {"Authorization": f"Bearer {token}"}
+        except Exception as exc:
+            logger.debug("Could not fetch ID token for MCP server: %s", exc)
+        return None
+
     async def list_tools(self) -> List[Dict[str, Any]]:
         """List all tools registered on the MCP server."""
         try:
             async with asyncio.timeout(self.timeout):
-                async with sse_client(self.sse_url, timeout=self.timeout) as (read_stream, write_stream):
+                async with sse_client(self.sse_url, headers=self._get_headers(), timeout=self.timeout) as (read_stream, write_stream):
                     async with ClientSession(read_stream, write_stream) as session:
                         await session.initialize()
                         result = await session.list_tools()
@@ -59,7 +78,7 @@ class MCPClient:
         arguments = arguments or {}
         try:
             async with asyncio.timeout(self.timeout):
-                async with sse_client(self.sse_url, timeout=self.timeout) as (read_stream, write_stream):
+                async with sse_client(self.sse_url, headers=self._get_headers(), timeout=self.timeout) as (read_stream, write_stream):
                     async with ClientSession(read_stream, write_stream) as session:
                         await session.initialize()
                         call_res = await session.call_tool(name, arguments=arguments)
@@ -89,7 +108,7 @@ class MCPClient:
         """List all resources registered on the MCP server."""
         try:
             async with asyncio.timeout(self.timeout):
-                async with sse_client(self.sse_url, timeout=self.timeout) as (read_stream, write_stream):
+                async with sse_client(self.sse_url, headers=self._get_headers(), timeout=self.timeout) as (read_stream, write_stream):
                     async with ClientSession(read_stream, write_stream) as session:
                         await session.initialize()
                         result = await session.list_resources()
@@ -110,7 +129,7 @@ class MCPClient:
         """Read an MCP resource by URI."""
         try:
             async with asyncio.timeout(self.timeout):
-                async with sse_client(self.sse_url, timeout=self.timeout) as (read_stream, write_stream):
+                async with sse_client(self.sse_url, headers=self._get_headers(), timeout=self.timeout) as (read_stream, write_stream):
                     async with ClientSession(read_stream, write_stream) as session:
                         await session.initialize()
                         res = await session.read_resource(uri)

@@ -36,3 +36,11 @@ FROM base AS cat-agent
 ENV PORT=8001
 EXPOSE 8001
 CMD exec python -m uvicorn actors.cat.api:app --host 0.0.0.0 --port ${PORT}
+
+# ----------------------------------------------------
+# Target 3: Cat & Mouse MCP Server
+# ----------------------------------------------------
+FROM base AS mcp-server
+ENV PORT=9050
+EXPOSE 9050
+CMD exec python -m uvicorn app.mcp.server:create_mcp_app --factory --host 0.0.0.0 --port ${PORT}

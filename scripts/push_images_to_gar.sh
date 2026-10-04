@@ -56,7 +56,18 @@ ssh "${CLOUDTOP_HOST}" "
 "
 echo "✓ Cat Agent image pushed successfully!"
 
-# 5. Verify images in Artifact Registry
+# 5. Tag and Push Cat & Mouse MCP Server Image
+MCP_REMOTE_TAG="${REPO_PATH}/mcp-server:latest"
+echo ""
+echo "🏷️ Tagging and pushing MCP Server image..."
+ssh "${CLOUDTOP_HOST}" "
+  podman tag localhost/agent-zoo-mcp:latest ${MCP_REMOTE_TAG}
+  echo '🚀 Pushing ${MCP_REMOTE_TAG}...'
+  podman push ${MCP_REMOTE_TAG}
+"
+echo "✓ MCP Server image pushed successfully!"
+
+# 6. Verify images in Artifact Registry
 echo ""
 echo "📋 Verifying images in Artifact Registry repository '${GAR_REPO}'..."
 gcloud artifacts docker images list "${REPO_PATH}" --project="${PROJECT_ID}"
