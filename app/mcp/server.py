@@ -33,6 +33,7 @@ HTTP_TIMEOUT_SECONDS = 3.0
 STATIC_DIR = Path(__file__).parent / "static"
 INDEX_HTML_PATH = STATIC_DIR / "index.html"
 CHAT_HTML_PATH = STATIC_DIR / "chat.html"
+NOTES_HTML_PATH = STATIC_DIR / "notes.html"
 
 
 def get_game_server_url() -> str:
@@ -1431,6 +1432,19 @@ def create_mcp_app(server: Optional[MCPServer] = None):
             )
         return HTMLResponse("<h1>Live Game Chat Monitor</h1><p>chat.html not found</p>")
 
+    # Dedicated Standalone Coach Private Notes & Tactical Notebook Page
+    async def notes_page_endpoint(request: Request) -> Response:
+        if NOTES_HTML_PATH.exists():
+            return HTMLResponse(
+                NOTES_HTML_PATH.read_text(encoding="utf-8"),
+                headers={
+                    "Cache-Control": "no-cache, no-store, must-revalidate",
+                    "Pragma": "no-cache",
+                    "Expires": "0",
+                },
+            )
+        return HTMLResponse("<h1>Coach Private Notes</h1><p>notes.html not found</p>")
+
     async def coach_chat_send_endpoint(request: Request) -> JSONResponse:
         try:
             body = await request.json()
@@ -1467,6 +1481,7 @@ def create_mcp_app(server: Optional[MCPServer] = None):
     # Register additional HTTP routes
     app.add_route("/", dashboard_endpoint, methods=["GET"])
     app.add_route("/chat", chat_page_endpoint, methods=["GET"])
+    app.add_route("/notes", notes_page_endpoint, methods=["GET"])
     app.add_route("/api/mcp/stream", stream_endpoint, methods=["GET"])
     app.add_route("/api/mcp/status", status_endpoint, methods=["GET"])
     app.add_route("/api/mcp/history", history_endpoint, methods=["GET"])

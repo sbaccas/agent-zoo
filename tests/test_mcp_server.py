@@ -506,5 +506,20 @@ async def test_coach_chat_deduplication():
             assert len(a2a_msgs) == 1
 
 
+@pytest.mark.asyncio
+async def test_notes_page_endpoint():
+    """Verify /notes serves the Coach Private Notes HTML page with no-cache headers."""
+    app = create_mcp_app()
+    from starlette.testclient import TestClient
+    tc = TestClient(app)
+
+    res = tc.get("/notes")
+    assert res.status_code == 200
+    assert "text/html" in res.headers["content-type"]
+    assert "Coach Private Notes" in res.text
+    assert "TACTICAL NOTEBOOK" in res.text
+    assert "no-cache" in res.headers.get("cache-control", "").lower()
+
+
 
 
