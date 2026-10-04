@@ -124,8 +124,6 @@ async def get_agent_observation(sim_id: str, agent_id: str):
         capabilities=capabilities,
         score=sim.scheduler.scores.get(agent_id, 0),
         scoreboard=sim.scheduler.get_scoreboard(),
-        deaths=[dict(d) for d in sim.scheduler.deaths],
-        recent_deaths=[dict(d) for d in sim.scheduler.deaths[-5:]],
     )
 
 
