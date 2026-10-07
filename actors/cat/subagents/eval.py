@@ -50,7 +50,24 @@ from actors.cat.actor import (
 logger = logging.getLogger("cat_agent")
 
 EVAL_MODEL = "gemini-2.5-flash"
-EVAL_SKILLS_PATH = Path(__file__).parent / "eval_skills.md"
+
+def resolve_eval_skills_path() -> Path:
+    custom = os.environ.get("EVAL_SKILLS_PATH")
+    if custom:
+        p = Path(custom)
+        if not p.is_absolute():
+            cwd_p = Path.cwd() / custom
+            if cwd_p.exists():
+                return cwd_p
+            eval_p = (Path(__file__).parent / custom).resolve()
+            if eval_p.exists():
+                return eval_p
+            return cwd_p
+        return p
+    return globals().get("EVAL_SKILLS_PATH", Path(__file__).parent / "eval_skills.md")
+
+
+EVAL_SKILLS_PATH = resolve_eval_skills_path()
 
 # Conversational persona for the General Radio -- the Commander's direct channel
 # to the coach. Kept in its own file, and deliberately NOT merged into
@@ -74,8 +91,8 @@ ACTOR_MANUAL_BLOCK_HEADER = "--- YOUR SUBORDINATE'S MANUAL (actor_skills.md) ---
 CAPABILITIES_BLOCK_HEADER = "--- YOUR SUBORDINATE'S LIVE CAPABILITIES ---"
 
 # How many ticks of play accumulate before an evaluation fires. Adjustable at
-# runtime via the API server; this is only the starting value.
-DEFAULT_EVAL_INTERVAL = 10
+# runtime via the API server or CAT_EVAL_INTERVAL; defaults to 5.
+DEFAULT_EVAL_INTERVAL = int(os.environ.get("CAT_EVAL_INTERVAL", 5))
 
 # Hard ceiling on how long a single evaluation may run. The evaluator is advisory,
 # so a slow call must expire quietly rather than pile up behind the game clock.
@@ -86,7 +103,7 @@ DEFAULT_EVAL_INTERVAL = 10
 # `from ... import EVAL_TIMEOUT_SECONDS` elsewhere would bind a copy that never
 # changes. This name remains the *default*, which is what the boxscore tool's
 # timeout is sized against.
-EVAL_TIMEOUT_SECONDS = 60.0
+EVAL_TIMEOUT_SECONDS = 900.0
 
 # Floor of 30s is not arbitrary: the boxscore tool below is allowed 3s, and an
 # evaluation whose whole budget could be spent waiting on a wedged game server
@@ -224,8 +241,9 @@ def clear_coach_directive() -> bool:
 
 def get_eval_instruction() -> str:
     """Loads the evaluator's own skills manual, distinct from the actor's."""
-    if EVAL_SKILLS_PATH.exists():
-        return EVAL_SKILLS_PATH.read_text(encoding="utf-8")
+    path = resolve_eval_skills_path()
+    if path.exists():
+        return path.read_text(encoding="utf-8")
     return (
         "You are the Cat Evaluator, a long-horizon advisor to a Cat agent hunting "
         "mice on a discrete grid. Read the transcript and write short, concrete, "
@@ -638,8 +656,30 @@ async def a2a_send_coach_message(
 
     recip = target_recip
     if recip not in ("*", "broadcast", "all"):
-        if not impersonate_cat and not recip.startswith("cat") and not recip.startswith("coach"):
-            recip = f"coach({recip})"
+        if not impersonate_cat:
+            if recip.startswith("cat-") or (not recip.startswith("cat") and not recip.startswith("coach")):
+                recip = f"coach({recip})"
+
+    # Pre-validation: Recipient must be a broadcast or a registered A2A peer agent with an Agent Card
+    from actors.a2a import client
+    clean_target = recip.lower().replace("coach(", "").replace(")", "").strip()
+    if recip not in ("*", "broadcast", "all") and not client.resolve_peer_base_url(clean_target):
+        peer_err = (
+            f"Recipient '{recip}' has no registered A2A Agent Card or endpoint. "
+            f"Server-side NPCs have no coaches or A2A agents. Only registered agents with an Agent Card can receive A2A messages."
+        )
+        logger.warning(
+            "UNREGISTERED A2A PEER REJECTED: a2a_send_coach_message from %s to non-agent %s",
+            sender_id, recip
+        )
+        return {
+            "status": "rejected",
+            "error": peer_err,
+            "sender": sender_id,
+            "recipient": recip,
+            "message": message,
+            "impersonating_cat": impersonate_cat,
+        }
 
     # OPSEC Guard: Strictly prevent leaking internal General/Commander conversations to peer coaches
     from actors.a2a.models import check_opsec_violation

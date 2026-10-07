@@ -12,8 +12,10 @@ from actors.a2a import store
 
 # Known peer directory (can be overridden via environment or dynamic registration)
 DEFAULT_PEER_REGISTRY: Dict[str, str] = {
-    "cat-1": "http://127.0.0.1:8001",
-    "cat-2": "http://127.0.0.1:8003",
+    "cat-1": os.environ.get("CAT_1_URL", "http://127.0.0.1:8001"),
+    "cat-2": os.environ.get("CAT_2_URL", "http://127.0.0.1:8003"),
+    "cat-3": os.environ.get("CAT_3_URL") or os.environ.get("EVIL_CAT_URL", "http://127.0.0.1:8005"),
+    "evil-cat": os.environ.get("EVIL_CAT_URL", "http://127.0.0.1:8005"),
 }
 
 
@@ -92,6 +94,21 @@ async def send_a2a_message(
         metadata=metadata or {},
     )
 
+    # Pre-validation: ensure recipient is a broadcast or a registered A2A peer
+    is_broadcast = recipient_id in ("*", "broadcast", "all")
+    peer_base = None
+    if not is_broadcast:
+        peer_base = resolve_peer_base_url(recipient_id)
+        if not peer_base:
+            err = f"Recipient '{recipient_id}' is not a registered A2A agent (no Agent Card or endpoint registered)."
+            return A2AResponse(
+                status="error",
+                message_id=msg.message_id,
+                sender_id=sender_id,
+                recipient_id=recipient_id,
+                error=err,
+            )
+
     # 1. Store in sender's local outbox
     store.append_outbox(sender_id, msg)
 
@@ -100,7 +117,7 @@ async def send_a2a_message(
     asyncio.create_task(_report_transmission_to_engine(game_server_url, msg))
 
     # 3. Direct transmission to recipient
-    if recipient_id in ("*", "broadcast", "all"):
+    if is_broadcast:
         # Broadcast to all known peers other than sender
         reg = get_peer_registry()
         peers = [pid for pid in reg if pid != sender_id]
@@ -127,18 +144,6 @@ async def send_a2a_message(
             sender_id=sender_id,
             recipient_id=recipient_id,
             error=err_str,
-        )
-
-    # Direct Message (DM) to single peer
-    peer_base = resolve_peer_base_url(recipient_id)
-    if not peer_base:
-        err = f"Unknown peer agent: {recipient_id}"
-        return A2AResponse(
-            status="error",
-            message_id=msg.message_id,
-            sender_id=sender_id,
-            recipient_id=recipient_id,
-            error=err,
         )
 
     endpoint_url = f"{peer_base.rstrip('/')}/a2a/messages"

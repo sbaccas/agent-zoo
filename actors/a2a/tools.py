@@ -65,9 +65,29 @@ def a2a_send_message(recipient_id: str, message: str, message_type: str = "DIREC
     tick = ctx_current_tick.get()
     round_num = ctx_current_round.get()
 
+    clean_recip = store.normalize_agent_id(recipient_id)
+
+    # Pre-check: reject immediately if recipient is not a registered A2A agent (no Agent Card)
+    if clean_recip not in ("*", "broadcast", "all") and not client.resolve_peer_base_url(clean_recip):
+        err = f"Recipient {recipient_id} is not a registered A2A agent (no Agent Card found)."
+        result_record = {
+            "tool": "a2a_send_message",
+            "sender_id": sender_id,
+            "recipient_id": recipient_id,
+            "message": message,
+            "message_type": message_type,
+            "tick": tick,
+            "status": "undeliverable",
+            "message_id": None,
+            "error": err,
+        }
+        trace = ctx_tool_calls_trace.get()
+        if trace is not None:
+            trace.append(result_record)
+        return f"Delivery failed: recipient {recipient_id} is not a registered A2A agent (no Agent Card found)."
+
     # Pre-check: reject immediately if recipient is already dead/eliminated
     eliminated = ctx_current_eliminated_cats.get()
-    clean_recip = store.normalize_agent_id(recipient_id)
     if recipient_id in eliminated or clean_recip in eliminated:
         err = f"Recipient {recipient_id} has been eliminated from the arena and cannot receive messages."
         result_record = {

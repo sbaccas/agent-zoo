@@ -432,6 +432,11 @@
       border-color: #ea580c;
     }
 
+    .filter-chip.chip-cat3.active {
+      background: #a855f7;
+      border-color: #a855f7;
+    }
+
     .chip-badge {
       font-size: 0.68rem;
       font-weight: 700;
@@ -483,6 +488,10 @@
       border-left-color: #ea580c;
     }
 
+    .note-card.card-cat-3, .note-card.card-evil-cat {
+      border-left-color: #a855f7;
+    }
+
     .note-card:hover {
       border-color: var(--warning);
       box-shadow: var(--shadow-md);
@@ -520,6 +529,12 @@
       background: rgba(234, 88, 12, 0.15);
       color: #ea580c;
       border: 1px solid rgba(234, 88, 12, 0.3);
+    }
+
+    .badge-cat.cat-3, .badge-cat.evil-cat {
+      background: rgba(168, 85, 247, 0.15);
+      color: #a855f7;
+      border: 1px solid rgba(168, 85, 247, 0.3);
     }
 
     .badge-category {
@@ -722,6 +737,10 @@
         <span class="kpi-label" style="color: #ea580c;">Cat-2 Tactical Notes</span>
         <span class="kpi-val" style="color: #ea580c;" id="kpiCountCat2">0</span>
       </div>
+      <div class="kpi-card" data-cat-filter="cat-3">
+        <span class="kpi-label" style="color: #a855f7;">Cat-3 Tactical Notes</span>
+        <span class="kpi-val" style="color: #a855f7;" id="kpiCountCat3">0</span>
+      </div>
       <div class="kpi-card">
         <span class="kpi-label" style="color: var(--purple);">Snapshots Linked</span>
         <span class="kpi-val" style="color: var(--purple);" id="kpiCountLinked">0</span>
@@ -749,6 +768,7 @@
                     <select class="form-select" id="newCatId">
                       <option value="cat-1" selected>🐱 Cat-1 (Alpha)</option>
                       <option value="cat-2">🐱 Cat-2 (Beta)</option>
+                      <option value="cat-3">🐱 Cat-3 (Gamma / Evil)</option>
                     </select>
                   </div>
                   <div>
@@ -801,6 +821,7 @@
             <div class="standing-tabs">
               <button class="tab-btn active" id="tabCat1Orders" data-target="cat-1">Cat-1 Orders</button>
               <button class="tab-btn" id="tabCat2Orders" data-target="cat-2">Cat-2 Orders</button>
+              <button class="tab-btn" id="tabCat3Orders" data-target="cat-3">Cat-3 Orders</button>
             </div>
             <textarea class="form-textarea standing-textarea" id="standingOrdersText" placeholder="Active standing directives read by the cat agent prompt..."></textarea>
             <button type="button" class="btn-submit" id="btnSaveStandingOrders" style="background: #0284c7;">
@@ -839,6 +860,10 @@
             <button class="filter-chip chip-cat2" data-filter="cat-2">
               <span>Cat-2</span>
               <span class="chip-badge" id="badgeCat2">0</span>
+            </button>
+            <button class="filter-chip chip-cat3" data-filter="cat-3">
+              <span>Cat-3</span>
+              <span class="chip-badge" id="badgeCat3">0</span>
             </button>
           </div>
 
@@ -903,10 +928,12 @@
     const kpiCountAll = document.getElementById('kpiCountAll');
     const kpiCountCat1 = document.getElementById('kpiCountCat1');
     const kpiCountCat2 = document.getElementById('kpiCountCat2');
+    const kpiCountCat3 = document.getElementById('kpiCountCat3');
     const kpiCountLinked = document.getElementById('kpiCountLinked');
     const badgeAll = document.getElementById('badgeAll');
     const badgeCat1 = document.getElementById('badgeCat1');
     const badgeCat2 = document.getElementById('badgeCat2');
+    const badgeCat3 = document.getElementById('badgeCat3');
     const streamTotalBadge = document.getElementById('streamTotalBadge');
     const notesFeed = document.getElementById('notesFeed');
     const formAddNote = document.getElementById('formAddNote');
@@ -918,6 +945,7 @@
     const btnSaveNote = document.getElementById('btnSaveNote');
     const tabCat1Orders = document.getElementById('tabCat1Orders');
     const tabCat2Orders = document.getElementById('tabCat2Orders');
+    const tabCat3Orders = document.getElementById('tabCat3Orders');
     const standingOrdersText = document.getElementById('standingOrdersText');
     const btnSaveStandingOrders = document.getElementById('btnSaveStandingOrders');
     const filterCategory = document.getElementById('filterCategory');
@@ -942,13 +970,15 @@
         standingNotesCache = data.standing_notes || {};
 
         // Update counts
-        const counts = data.counts || { all: allMemoriesCache.length, 'cat-1': 0, 'cat-2': 0 };
+        const counts = data.counts || { all: allMemoriesCache.length, 'cat-1': 0, 'cat-2': 0, 'cat-3': 0 };
         kpiCountAll.innerText = counts.all || 0;
         kpiCountCat1.innerText = counts['cat-1'] || 0;
         kpiCountCat2.innerText = counts['cat-2'] || 0;
+        if (kpiCountCat3) kpiCountCat3.innerText = (counts['cat-3'] || 0) + (counts['evil-cat'] || 0);
         badgeAll.innerText = counts.all || 0;
         badgeCat1.innerText = counts['cat-1'] || 0;
         badgeCat2.innerText = counts['cat-2'] || 0;
+        if (badgeCat3) badgeCat3.innerText = (counts['cat-3'] || 0) + (counts['evil-cat'] || 0);
         streamTotalBadge.innerText = `${allMemoriesCache.length} Notes`;
 
         let linkedCount = 0;
@@ -965,7 +995,7 @@
     }
 
     function renderStandingOrders() {
-      standingOrdersText.value = standingNotesCache[activeStandingCat] || '';
+      standingOrdersText.value = standingNotesCache[activeStandingCat] || (activeStandingCat === 'cat-3' ? standingNotesCache['evil-cat'] : '') || '';
     }
 
     function renderNotesFeed(memories) {
@@ -1180,6 +1210,7 @@
     tabCat1Orders.addEventListener('click', () => {
       tabCat1Orders.classList.add('active');
       tabCat2Orders.classList.remove('active');
+      if (tabCat3Orders) tabCat3Orders.classList.remove('active');
       activeStandingCat = 'cat-1';
       renderStandingOrders();
     });
@@ -1187,9 +1218,20 @@
     tabCat2Orders.addEventListener('click', () => {
       tabCat2Orders.classList.add('active');
       tabCat1Orders.classList.remove('active');
+      if (tabCat3Orders) tabCat3Orders.classList.remove('active');
       activeStandingCat = 'cat-2';
       renderStandingOrders();
     });
+
+    if (tabCat3Orders) {
+      tabCat3Orders.addEventListener('click', () => {
+        tabCat3Orders.classList.add('active');
+        tabCat1Orders.classList.remove('active');
+        tabCat2Orders.classList.remove('active');
+        activeStandingCat = 'cat-3';
+        renderStandingOrders();
+      });
+    }
 
     // Save Standing Orders
     btnSaveStandingOrders.addEventListener('click', async () => {

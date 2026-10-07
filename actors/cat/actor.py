@@ -24,7 +24,23 @@ from actors.a2a.tools import A2A_TOOLS, set_deliberation_context
 from actors.a2a import store as a2a_store
 
 # Skills manual path and loader
-SKILLS_PATH = Path(__file__).parent / "actor_skills.md"
+def resolve_skills_path() -> Path:
+    custom = os.environ.get("CAT_SKILLS_PATH")
+    if custom:
+        p = Path(custom)
+        if not p.is_absolute():
+            cwd_p = Path.cwd() / custom
+            if cwd_p.exists():
+                return cwd_p
+            cat_p = (Path(__file__).parent / custom).resolve()
+            if cat_p.exists():
+                return cat_p
+            return cwd_p
+        return p
+    return globals().get("SKILLS_PATH", Path(__file__).parent / "actor_skills.md")
+
+
+SKILLS_PATH = resolve_skills_path()
 RADIO_SKILLS_PATH = Path(__file__).parent / "radio_skills.md"
 
 # Section delimiters for the decision prompt.
@@ -310,13 +326,14 @@ def get_skills_instruction() -> str:
     the cat to "close distance with lunges", contradicting the manual, and
     would have applied silently had the file ever gone missing.
     """
-    if not SKILLS_PATH.exists():
+    path = resolve_skills_path()
+    if not path.exists():
         raise FileNotFoundError(
-            f"Actor skills manual missing at {SKILLS_PATH}. The agent has no "
+            f"Actor skills manual missing at {path}. The agent has no "
             f"behavioural specification without it; refusing to run on an "
             f"improvised one."
         )
-    return SKILLS_PATH.read_text(encoding="utf-8")
+    return path.read_text(encoding="utf-8")
 
 
 def get_radio_instruction() -> str:

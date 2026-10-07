@@ -1039,24 +1039,38 @@ def create_mcp_app(server: Optional[MCPServer] = None):
         memories = store.read_coach_memories(limit=limit, category=category, search=search, agent_id=cat_id)
 
         all_for_counts = store.read_coach_memories(limit=500, agent_id="all")
-        cat1_count = sum(1 for m in all_for_counts if m.get("cat_id") == "cat-1")
-        cat2_count = sum(1 for m in all_for_counts if m.get("cat_id") == "cat-2")
+        known_cats = store.list_known_cat_ids()
+        cat_set = set(["cat-1", "cat-2", "cat-3", "evil-cat"])
+        cat_set.update(known_cats)
+        for m in all_for_counts:
+            c = m.get("cat_id") or m.get("agent_id")
+            if c:
+                cat_set.add(c)
 
-        standing_notes = {
-            "cat-1": store.read_coaching_notes(agent_id="cat-1"),
-            "cat-2": store.read_coaching_notes(agent_id="cat-2"),
-        }
-        active_notes = standing_notes.get(cat_id) if cat_id in standing_notes else (standing_notes["cat-1"] or standing_notes["cat-2"] or store.read_coaching_notes())
+        counts = {"all": len(all_for_counts)}
+        standing_notes = {}
+        for c in cat_set:
+            counts[c] = sum(1 for m in all_for_counts if m.get("cat_id") == c or m.get("agent_id") == c)
+            standing_notes[c] = store.read_coaching_notes(agent_id=c)
+
+        # Alias sync: if cat-3 is queried and empty, try evil-cat; if evil-cat queried and empty, try cat-3
+        if not standing_notes.get("cat-3") and standing_notes.get("evil-cat"):
+            standing_notes["cat-3"] = standing_notes["evil-cat"]
+        if not standing_notes.get("evil-cat") and standing_notes.get("cat-3"):
+            standing_notes["evil-cat"] = standing_notes["cat-3"]
+
+        if counts.get("evil-cat") and not counts.get("cat-3"):
+            counts["cat-3"] = counts["evil-cat"]
+        elif counts.get("cat-3") and not counts.get("evil-cat"):
+            counts["evil-cat"] = counts["cat-3"]
+
+        active_notes = standing_notes.get(cat_id) or (standing_notes.get("cat-3") if cat_id in ("cat-3", "evil-cat") else None) or store.read_coaching_notes(agent_id=cat_id) or store.read_coaching_notes()
 
         return JSONResponse({
             "ok": True,
             "cat_id": cat_id,
             "count": len(memories),
-            "counts": {
-                "all": len(all_for_counts),
-                "cat-1": cat1_count,
-                "cat-2": cat2_count,
-            },
+            "counts": counts,
             "memories": memories,
             "active_standing_notes": active_notes,
             "standing_notes": standing_notes,
@@ -1118,23 +1132,29 @@ def create_mcp_app(server: Optional[MCPServer] = None):
             notes_text = body.get("notes", "")
             target_cat = body.get("cat_id") or cat_id
             store.write_coaching_notes(notes_text, agent_id=target_cat)
+            standing = {
+                "cat-1": store.read_coaching_notes(agent_id="cat-1"),
+                "cat-2": store.read_coaching_notes(agent_id="cat-2"),
+                "cat-3": store.read_coaching_notes(agent_id="cat-3") or store.read_coaching_notes(agent_id="evil-cat"),
+                "evil-cat": store.read_coaching_notes(agent_id="evil-cat") or store.read_coaching_notes(agent_id="cat-3"),
+            }
             return JSONResponse({
                 "ok": True,
                 "cat_id": target_cat,
                 "notes": store.read_coaching_notes(agent_id=target_cat),
-                "standing_notes": {
-                    "cat-1": store.read_coaching_notes(agent_id="cat-1"),
-                    "cat-2": store.read_coaching_notes(agent_id="cat-2"),
-                },
+                "standing_notes": standing,
             })
+        standing = {
+            "cat-1": store.read_coaching_notes(agent_id="cat-1"),
+            "cat-2": store.read_coaching_notes(agent_id="cat-2"),
+            "cat-3": store.read_coaching_notes(agent_id="cat-3") or store.read_coaching_notes(agent_id="evil-cat"),
+            "evil-cat": store.read_coaching_notes(agent_id="evil-cat") or store.read_coaching_notes(agent_id="cat-3"),
+        }
         return JSONResponse({
             "ok": True,
             "cat_id": cat_id,
             "notes": store.read_coaching_notes(agent_id=cat_id),
-            "standing_notes": {
-                "cat-1": store.read_coaching_notes(agent_id="cat-1"),
-                "cat-2": store.read_coaching_notes(agent_id="cat-2"),
-            },
+            "standing_notes": standing,
         })
 
     # 8. Notice Board REST API
@@ -1187,12 +1207,23 @@ def create_mcp_app(server: Optional[MCPServer] = None):
     async def coach_chat_list_endpoint(request: Request) -> JSONResponse:
         cat_id = request.query_params.get("cat_id") or "all"
         view_filter = (request.query_params.get("view") or "all").lower()
-        sender_filter = request.query_params.get("sender") or None
+        sender_filter = request.query_params.get("from") or request.query_params.get("sender") or None
+        recipient_filter = request.query_params.get("to") or request.query_params.get("recipient") or None
         source_filter = request.query_params.get("source") or None
         search_query = (request.query_params.get("search") or "").strip().lower()
-        limit_val = int(request.query_params.get("limit", 150))
+        limit_val = int(request.query_params.get("limit", 200))
 
         all_messages: List[Dict[str, Any]] = []
+
+        # Dynamic roster discovery: seeds with known cats and store runtimes
+        discovered_roster = {"cat-1", "cat-2", "cat-3", "evil-cat"}
+        try:
+            from actors.cat import store as cat_store
+            for cid in cat_store.list_known_cat_ids():
+                if cid and cid not in ("all", "*"):
+                    discovered_roster.add(cid)
+        except Exception:
+            pass
 
         # 1. Fetch inter-cat radio transmissions & DMs from game server engine
         try:
@@ -1201,6 +1232,10 @@ def create_mcp_app(server: Optional[MCPServer] = None):
                 for t in comms_payload.get("transmissions", []):
                     rec = t.get("recipient_id") or "*"
                     snd = t.get("sender_id") or "cat"
+                    if snd and snd not in ("*", "broadcast", "all", "general", "commander"):
+                        discovered_roster.add(snd)
+                    if rec and rec not in ("*", "broadcast", "all", "general", "commander"):
+                        discovered_roster.add(rec)
                     is_dm = rec not in ("*", "broadcast", "all")
                     is_coach = "coach" in str(snd).lower() or "coach" in str(rec).lower()
                     # Determine channel
@@ -1228,12 +1263,17 @@ def create_mcp_app(server: Optional[MCPServer] = None):
         except Exception:
             pass
 
+        roster = sorted(list(discovered_roster))
+
         # 2. Discover cat runtime endpoints / ports for Coach & Commander chats
         cat_endpoints = {
-            "cat-1": "http://127.0.0.1:8001",
-            "cat-2": "http://127.0.0.1:8003",
+            "cat-1": os.environ.get("CAT_1_URL", "http://127.0.0.1:8001"),
+            "cat-2": os.environ.get("CAT_2_URL", "http://127.0.0.1:8003"),
+            "cat-3": os.environ.get("CAT_3_URL") or os.environ.get("EVIL_CAT_URL", "http://127.0.0.1:8005"),
+            "evil-cat": os.environ.get("EVIL_CAT_URL", "http://127.0.0.1:8005"),
+            "cat-evil": os.environ.get("EVIL_CAT_URL", "http://127.0.0.1:8005"),
         }
-        target_cats = ["cat-1", "cat-2"] if cat_id in ("all", "*") else [cat_id]
+        target_cats = roster if cat_id in ("all", "*") else [cat_id]
         async with httpx.AsyncClient(timeout=1.5) as client:
             for cid in target_cats:
                 base_url = cat_endpoints.get(cid, "http://127.0.0.1:8001")
@@ -1362,9 +1402,50 @@ def create_mcp_app(server: Optional[MCPServer] = None):
                 or m.get("recipient_id") == cat_id
             ]
 
-        # Additional explicit filters
-        if sender_filter:
-            filtered = [m for m in filtered if m.get("sender") == sender_filter]
+        # Additional explicit filters (From & To)
+        if sender_filter and sender_filter not in ("all", "*"):
+            s_low = sender_filter.lower()
+            if s_low == "all_cats":
+                filtered = [
+                    m for m in filtered
+                    if "coach" not in str(m.get("sender", "")).lower()
+                    and str(m.get("sender", "")).lower() not in ("general", "commander")
+                ]
+            elif s_low == "all_coaches":
+                filtered = [m for m in filtered if "coach" in str(m.get("sender", "")).lower()]
+            else:
+                filtered = [
+                    m for m in filtered
+                    if str(m.get("sender", "")).lower() == s_low
+                    or (s_low in ("cat-1", "cat-2", "evil-cat", "cat-evil") and m.get("cat_id") == s_low and not m.get("sender"))
+                ]
+
+        if recipient_filter and recipient_filter not in ("all",):
+            r_low = recipient_filter.lower()
+            if r_low in ("*", "broadcast", "all_broadcasts"):
+                filtered = [
+                    m for m in filtered
+                    if m.get("recipient_id") in ("*", "broadcast", "all") or not m.get("is_dm")
+                ]
+            elif r_low == "all_dms":
+                filtered = [
+                    m for m in filtered
+                    if m.get("is_dm") or (m.get("recipient_id") and m.get("recipient_id") not in ("*", "broadcast", "all"))
+                ]
+            elif r_low == "all_coaches":
+                filtered = [m for m in filtered if "coach" in str(m.get("recipient_id", "")).lower()]
+            elif r_low == "all_cats":
+                filtered = [
+                    m for m in filtered
+                    if "coach" not in str(m.get("recipient_id", "")).lower()
+                    and str(m.get("recipient_id", "")).lower() not in ("general", "commander", "*", "broadcast", "all")
+                ]
+            else:
+                filtered = [
+                    m for m in filtered
+                    if str(m.get("recipient_id", "")).lower() == r_low
+                ]
+
         if source_filter:
             filtered = [m for m in filtered if m.get("source") == source_filter]
         if search_query:
@@ -1406,14 +1487,23 @@ def create_mcp_app(server: Optional[MCPServer] = None):
             ),
             "coach": sum(1 for m in all_messages if m.get("channel") in ("coach", "coach_a2a")),
             "general": sum(1 for m in all_messages if m.get("channel") in ("general", "commander")),
-            "cat-1": sum(1 for m in all_messages if m.get("cat_id") == "cat-1" or m.get("sender") == "cat-1" or m.get("recipient_id") == "cat-1"),
-            "cat-2": sum(1 for m in all_messages if m.get("cat_id") == "cat-2" or m.get("sender") == "cat-2" or m.get("recipient_id") == "cat-2"),
+            "roster": {},
         }
+        for c in roster:
+            c_count = sum(
+                1 for m in all_messages
+                if m.get("cat_id") == c or m.get("sender") == c or m.get("recipient_id") == c
+            )
+            counts[c] = c_count
+            counts["roster"][c] = c_count
 
         return JSONResponse({
             "ok": True,
             "cat_id": cat_id,
+            "from": sender_filter,
+            "to": recipient_filter,
             "view": view_filter,
+            "roster": roster,
             "total": len(filtered),
             "counts": counts,
             "messages": filtered,
@@ -1459,8 +1549,11 @@ def create_mcp_app(server: Optional[MCPServer] = None):
             return JSONResponse({"ok": False, "error": "Message cannot be empty"}, status_code=400)
 
         cat_endpoints = {
-            "cat-1": "http://127.0.0.1:8001",
-            "cat-2": "http://127.0.0.1:8003",
+            "cat-1": os.environ.get("CAT_1_URL", "http://127.0.0.1:8001"),
+            "cat-2": os.environ.get("CAT_2_URL", "http://127.0.0.1:8003"),
+            "cat-3": os.environ.get("CAT_3_URL") or os.environ.get("EVIL_CAT_URL", "http://127.0.0.1:8005"),
+            "evil-cat": os.environ.get("EVIL_CAT_URL", "http://127.0.0.1:8005"),
+            "cat-evil": os.environ.get("EVIL_CAT_URL", "http://127.0.0.1:8005"),
         }
         base_url = cat_endpoints.get(cat_id, "http://127.0.0.1:8001")
 

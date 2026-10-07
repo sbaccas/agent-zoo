@@ -104,15 +104,26 @@ def set_agent_id(agent_id: str) -> None:
 
 def get_cat_paths(agent_id: str) -> Dict[str, Path]:
     """Returns file paths for a specific cat agent."""
+    cid = agent_id or "cat-1"
     if os.environ.get("CAT_AGENT_RUNTIME_DIR"):
         cat_dir = Path(os.environ["CAT_AGENT_RUNTIME_DIR"])
         if agent_id and (Path(os.environ["CAT_AGENT_RUNTIME_DIR"]) / agent_id).is_dir():
             cat_dir = Path(os.environ["CAT_AGENT_RUNTIME_DIR"]) / agent_id
     else:
-        if not agent_id or agent_id == "cat-1":
+        # Check active workbench temp runtime directory
+        tmp_dir = Path(tempfile.gettempdir()) / f"cm_runtime_{cid}"
+        # Also check alias between cat-3 and evil-cat
+        alt_cid = "evil-cat" if cid == "cat-3" else ("cat-3" if cid in ("evil-cat", "cat-evil") else None)
+        alt_tmp_dir = Path(tempfile.gettempdir()) / f"cm_runtime_{alt_cid}" if alt_cid else None
+
+        if tmp_dir.is_dir():
+            cat_dir = tmp_dir
+        elif alt_tmp_dir and alt_tmp_dir.is_dir():
+            cat_dir = alt_tmp_dir
+        elif not agent_id or agent_id == "cat-1":
             cat_dir = LOCAL_RUNTIME_DIR
         else:
-            cat_dir = Path(__file__).parent / f"runtime_{agent_id}"
+            cat_dir = Path(__file__).parent / f"runtime_{cid}"
     _ensure_runtime_dir(cat_dir)
     return {
         "runtime_dir": cat_dir,
@@ -519,7 +530,7 @@ def list_known_cat_ids() -> List[str]:
         return [os.environ.get("CAT_ID") or "cat-1"]
     tmp_base = Path(tempfile.gettempdir())
     found: List[str] = []
-    for default_id in ["cat-1", "cat-2"]:
+    for default_id in ["cat-1", "cat-2", "cat-3"]:
         found.append(default_id)
     try:
         for p in tmp_base.glob("cm_runtime_*"):

@@ -362,6 +362,70 @@
       cursor: pointer;
     }
 
+    /* Comms Board Dropdowns & Roster Styling */
+    .comms-select-wrapper {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 8px;
+      padding: 4px 10px;
+      transition: all 0.15s ease;
+    }
+
+    .comms-select-wrapper:focus-within {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
+    }
+
+    .comms-select-label {
+      font-size: 0.72rem;
+      font-weight: 700;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      white-space: nowrap;
+    }
+
+    .comms-select {
+      background: transparent;
+      border: none;
+      outline: none;
+      font-size: 0.82rem;
+      font-weight: 600;
+      color: var(--text);
+      cursor: pointer;
+      padding: 2px 4px;
+    }
+
+    .comms-select option, .comms-select optgroup {
+      background: var(--card-bg);
+      color: var(--text);
+    }
+
+    .filter-chip.chip-evil.active {
+      background: #dc2626;
+      border-color: #dc2626;
+      color: #ffffff;
+      box-shadow: 0 2px 4px rgba(220, 38, 38, 0.3);
+    }
+
+    .filter-chip.chip-evil:hover {
+      border-color: #dc2626;
+    }
+
+    .msg-card.card-evil {
+      border-left: 4px solid #dc2626;
+      background: rgba(220, 38, 38, 0.03);
+    }
+
+    .badge-channel.badge-evil {
+      background: rgba(220, 38, 38, 0.12);
+      color: #dc2626;
+      border: 1px solid rgba(220, 38, 38, 0.3);
+    }
+
     /* Live Chat Stream Box */
     .stream-container {
       flex: 1;
@@ -699,7 +763,7 @@
         <span class="kpi-val" id="countAll">0</span>
       </div>
       <div class="kpi-card" data-filter-view="dms">
-        <span class="kpi-label" style="color: #e11d48;">🔒 Cat 1 ↔ Cat 2 DMs</span>
+        <span class="kpi-label" style="color: #e11d48;">🔒 Direct Messages (DMs)</span>
         <span class="kpi-val" style="color: #e11d48;" id="countDMs">0</span>
       </div>
       <div class="kpi-card" data-filter-view="broadcasts">
@@ -729,8 +793,8 @@
             <span>🌟 All Transmissions</span>
             <span class="chip-badge" id="badgeAll">0</span>
           </button>
-          <button class="filter-chip chip-dm" data-view="dms" title="View Cat1<->Cat2 direct messages without the coach">
-            <span>🔒 Cat 1 ↔ Cat 2 DMs Only (NO COACH)</span>
+          <button class="filter-chip chip-dm" data-view="dms" title="View all direct agent-to-agent messages without the coach">
+            <span>🔒 Direct Messages (DMs)</span>
             <span class="chip-badge" id="badgeDMs">0</span>
           </button>
           <button class="filter-chip" data-view="broadcasts">
@@ -770,19 +834,91 @@
         </div>
       </div>
 
-      <!-- Row 2: Agent Chips & Search Box -->
-      <div class="filter-row">
-        <div class="filter-chips-group" id="agentFilters">
-          <span style="font-size: 0.72rem; font-weight: 700; color: var(--text-dim);">Agent:</span>
-          <button class="filter-chip active" data-agent="all">All Cats</button>
-          <button class="filter-chip" data-agent="cat-1">🐱 Cat 1</button>
-          <button class="filter-chip" data-agent="cat-2">🐱 Cat 2</button>
+      <!-- Row 2: Comms Board Controls (From & To Dropdowns + Dynamic Agent Roster + Search) -->
+      <div class="filter-row" style="background: var(--feed-bg); padding: 10px 14px; border-radius: 10px; border: 1px solid var(--card-border); gap: 14px;">
+        <!-- From Dropdown -->
+        <div class="comms-select-wrapper" title="Filter transmissions sent FROM this agent or entity">
+          <label for="selectFrom" class="comms-select-label">📤 FROM:</label>
+          <select id="selectFrom" class="comms-select">
+            <option value="all">Any Sender (Everyone)</option>
+            <optgroup label="Agent Cats" id="fromGroupCats">
+              <option value="all_cats">🐱 All Cats</option>
+              <option value="cat-1">🐱 cat-1</option>
+              <option value="cat-2">🐱 cat-2</option>
+              <option value="evil-cat">😈 evil-cat</option>
+            </optgroup>
+            <optgroup label="Coaches" id="fromGroupCoaches">
+              <option value="all_coaches">🎓 All Coaches</option>
+              <option value="coach(cat-1)">🎓 coach(cat-1)</option>
+              <option value="coach(cat-2)">🎓 coach(cat-2)</option>
+              <option value="coach(evil-cat)">🎓 coach(evil-cat)</option>
+            </optgroup>
+            <optgroup label="Operations">
+              <option value="general">🎖️ General (Operator)</option>
+              <option value="commander">🎖️ Commander</option>
+            </optgroup>
+          </select>
         </div>
 
-        <div class="search-box-wrapper">
-          <span class="search-icon">🔍</span>
-          <input type="text" id="inputChatSearch" class="search-input" placeholder="Search transmissions by content, sender, recipient, or tick...">
+        <!-- To Dropdown -->
+        <div class="comms-select-wrapper" title="Filter transmissions sent TO this recipient">
+          <label for="selectTo" class="comms-select-label">📥 TO:</label>
+          <select id="selectTo" class="comms-select">
+            <option value="all">Any Recipient (Everyone)</option>
+            <option value="*">📢 Broadcast (* All Entities)</option>
+            <option value="all_dms">🔒 Any Direct Message</option>
+            <optgroup label="Agent Cats" id="toGroupCats">
+              <option value="all_cats">🐱 All Cats</option>
+              <option value="cat-1">🐱 cat-1</option>
+              <option value="cat-2">🐱 cat-2</option>
+              <option value="evil-cat">😈 evil-cat</option>
+            </optgroup>
+            <optgroup label="Coaches" id="toGroupCoaches">
+              <option value="all_coaches">🎓 All Coaches</option>
+              <option value="coach(cat-1)">🎓 coach(cat-1)</option>
+              <option value="coach(cat-2)">🎓 coach(cat-2)</option>
+              <option value="coach(evil-cat)">🎓 coach(evil-cat)</option>
+            </optgroup>
+            <optgroup label="Operations">
+              <option value="general">🎖️ General (Operator)</option>
+              <option value="commander">🎖️ Commander</option>
+            </optgroup>
+          </select>
         </div>
+
+        <!-- Dynamic Agent Roster Quick Pills -->
+        <div class="filter-chips-group" id="rosterPillsBar" style="align-items: center; gap: 6px;">
+          <span style="font-size: 0.72rem; font-weight: 700; color: var(--text-dim); text-transform: uppercase;">ROSTER:</span>
+          <div id="rosterButtonsContainer" style="display: flex; gap: 6px; flex-wrap: wrap;">
+            <button class="filter-chip active" data-agent="all">
+              <span>🌟 All Cats</span>
+              <span class="chip-badge" id="rosterCountAll">0</span>
+            </button>
+            <button class="filter-chip" data-agent="cat-1">
+              <span>🐱 cat-1</span>
+              <span class="chip-badge" id="rosterCountCat1">0</span>
+            </button>
+            <button class="filter-chip" data-agent="cat-2">
+              <span>🐱 cat-2</span>
+              <span class="chip-badge" id="rosterCountCat2">0</span>
+            </button>
+            <button class="filter-chip chip-evil" data-agent="evil-cat" style="border-color: rgba(220, 38, 38, 0.4);">
+              <span>😈 evil-cat</span>
+              <span class="chip-badge" id="rosterCountEvil">0</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Search Box -->
+        <div class="search-box-wrapper" style="min-width: 180px;">
+          <span class="search-icon">🔍</span>
+          <input type="text" id="inputChatSearch" class="search-input" placeholder="Search transmissions, sender, recipient, tick...">
+        </div>
+
+        <!-- Reset Button -->
+        <button class="btn-nav" id="btnResetCommsFilters" style="padding: 6px 12px; font-size: 0.75rem; white-space: nowrap;" title="Reset all filters">
+          <span>↺ Reset</span>
+        </button>
       </div>
     </div>
 
@@ -860,7 +996,10 @@
     // Application State
     let currentView = 'all';
     let currentAgent = 'all';
+    let currentFrom = 'all';
+    let currentTo = 'all';
     let currentSearch = '';
+    let currentRoster = ['cat-1', 'cat-2', 'evil-cat'];
     let allMessages = [];
     let isSending = false;
 
@@ -872,6 +1011,10 @@
     const checkLiveStream = document.getElementById('checkLiveStream');
     const checkAutoScroll = document.getElementById('checkAutoScroll');
     const btnManualRefresh = document.getElementById('btnManualRefresh');
+    const selectFrom = document.getElementById('selectFrom');
+    const selectTo = document.getElementById('selectTo');
+    const btnResetCommsFilters = document.getElementById('btnResetCommsFilters');
+    const rosterButtonsContainer = document.getElementById('rosterButtonsContainer');
 
     // Counts
     const countAll = document.getElementById('countAll');
@@ -922,15 +1065,40 @@
       });
     }
 
-    // Agent Filter Buttons
-    document.querySelectorAll('[data-agent]').forEach(btn => {
-      btn.addEventListener('click', () => {
-        document.querySelectorAll('[data-agent]').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-        currentAgent = btn.dataset.agent;
+    // From & To Dropdowns Listeners
+    if (selectFrom) {
+      selectFrom.addEventListener('change', () => {
+        currentFrom = selectFrom.value;
         loadChatMessages();
       });
-    });
+    }
+
+    if (selectTo) {
+      selectTo.addEventListener('change', () => {
+        currentTo = selectTo.value;
+        loadChatMessages();
+      });
+    }
+
+    // Reset Filters Button
+    if (btnResetCommsFilters) {
+      btnResetCommsFilters.addEventListener('click', () => {
+        currentView = 'all';
+        currentAgent = 'all';
+        currentFrom = 'all';
+        currentTo = 'all';
+        currentSearch = '';
+        if (selectFrom) selectFrom.value = 'all';
+        if (selectTo) selectTo.value = 'all';
+        if (inputChatSearch) inputChatSearch.value = '';
+        document.querySelectorAll('[data-view]').forEach(b => b.classList.toggle('active', b.dataset.view === 'all'));
+        if (rosterButtonsContainer) {
+          rosterButtonsContainer.querySelectorAll('[data-agent]').forEach(b => b.classList.toggle('active', b.dataset.agent === 'all'));
+        }
+        updateKpiActiveCard();
+        loadChatMessages();
+      });
+    }
 
     // Search Input
     inputChatSearch.addEventListener('input', () => {
@@ -947,6 +1115,113 @@
       return `${m.channel || ''}_${m.tick ?? ''}_${m.timestamp || ''}_${m.sender || ''}_${m.recipient_id || ''}_${m.message || ''}`;
     }
 
+    // Dynamic Roster Synchronization
+    function syncRosterUI(roster, counts) {
+      if (!roster || !Array.isArray(roster) || !roster.length) return;
+      currentRoster = roster;
+
+      // 1. Sync Roster quick filter buttons
+      if (rosterButtonsContainer) {
+        const isAllActive = currentAgent === 'all';
+        let html = `
+          <button class="filter-chip ${isAllActive ? 'active' : ''}" data-agent="all">
+            <span>🌟 All Cats</span>
+            <span class="chip-badge">${counts?.all ?? 0}</span>
+          </button>
+        `;
+        roster.forEach(cid => {
+          const isActive = currentAgent === cid;
+          const isEvil = cid.includes('evil') || cid === 'cat-3';
+          const count = counts?.[cid] ?? counts?.roster?.[cid] ?? 0;
+          const icon = isEvil ? '😈' : '🐱';
+          const evilClass = isEvil ? 'chip-evil' : '';
+          const borderStyle = isEvil ? 'style="border-color: rgba(220, 38, 38, 0.4);"' : '';
+          html += `
+            <button class="filter-chip ${evilClass} ${isActive ? 'active' : ''}" data-agent="${cid}" ${borderStyle}>
+              <span>${icon} ${cid}</span>
+              <span class="chip-badge">${count}</span>
+            </button>
+          `;
+        });
+
+        const currentKeys = Array.from(rosterButtonsContainer.querySelectorAll('[data-agent]')).map(b => b.dataset.agent).join(',');
+        const newKeys = ['all', ...roster].join(',');
+        if (currentKeys !== newKeys) {
+          rosterButtonsContainer.innerHTML = html;
+          rosterButtonsContainer.querySelectorAll('[data-agent]').forEach(btn => {
+            btn.addEventListener('click', () => {
+              rosterButtonsContainer.querySelectorAll('[data-agent]').forEach(b => b.classList.remove('active'));
+              btn.classList.add('active');
+              currentAgent = btn.dataset.agent;
+              loadChatMessages();
+            });
+          });
+        } else {
+          rosterButtonsContainer.querySelectorAll('[data-agent]').forEach(btn => {
+            const ag = btn.dataset.agent;
+            btn.classList.toggle('active', currentAgent === ag);
+            const badge = btn.querySelector('.chip-badge');
+            if (badge) {
+              const val = ag === 'all' ? (counts?.all ?? 0) : (counts?.[ag] ?? counts?.roster?.[ag] ?? 0);
+              badge.innerText = String(val);
+            }
+          });
+        }
+      }
+
+      // 2. Sync From Dropdown Optgroups
+      const fromGroupCats = document.getElementById('fromGroupCats');
+      const fromGroupCoaches = document.getElementById('fromGroupCoaches');
+      if (fromGroupCats && fromGroupCoaches) {
+        const fromKeys = Array.from(fromGroupCats.querySelectorAll('option')).map(o => o.value).join(',');
+        const targetFromKeys = ['all_cats', ...roster].join(',');
+        if (fromKeys !== targetFromKeys) {
+          const selVal = selectFrom ? selectFrom.value : 'all';
+          fromGroupCats.innerHTML = '<option value="all_cats">🐱 All Cats</option>' +
+            roster.map(c => `<option value="${c}">${c.includes('evil') ? '😈' : '🐱'} ${c}</option>`).join('');
+          fromGroupCoaches.innerHTML = '<option value="all_coaches">🎓 All Coaches</option>' +
+            roster.map(c => `<option value="coach(${c})">🎓 coach(${c})</option>`).join('');
+          if (selectFrom) selectFrom.value = selVal;
+        }
+      }
+
+      // 3. Sync To Dropdown Optgroups
+      const toGroupCats = document.getElementById('toGroupCats');
+      const toGroupCoaches = document.getElementById('toGroupCoaches');
+      if (toGroupCats && toGroupCoaches) {
+        const toKeys = Array.from(toGroupCats.querySelectorAll('option')).map(o => o.value).join(',');
+        const targetToKeys = ['all_cats', ...roster].join(',');
+        if (toKeys !== targetToKeys) {
+          const selVal = selectTo ? selectTo.value : 'all';
+          toGroupCats.innerHTML = '<option value="all_cats">🐱 All Cats</option>' +
+            roster.map(c => `<option value="${c}">${c.includes('evil') ? '😈' : '🐱'} ${c}</option>`).join('');
+          toGroupCoaches.innerHTML = '<option value="all_coaches">🎓 All Coaches</option>' +
+            roster.map(c => `<option value="coach(${c})">🎓 coach(${c})</option>`).join('');
+          if (selectTo) selectTo.value = selVal;
+        }
+      }
+
+      // 4. Sync Operator Dispatch Targets
+      if (dispatchTarget) {
+        const targetKeys = Array.from(dispatchTarget.querySelectorAll('option')).map(o => o.value).join(',');
+        const expectedKeys = roster.join(',');
+        if (targetKeys !== expectedKeys) {
+          const prev = dispatchTarget.value;
+          dispatchTarget.innerHTML = '';
+          roster.forEach(c => {
+            const opt = document.createElement('option');
+            opt.value = c;
+            const isEvil = c.includes('evil') || c === 'cat-3';
+            opt.innerText = `${isEvil ? '😈' : '🐱'} ${c.toUpperCase()} Coach`;
+            dispatchTarget.appendChild(opt);
+          });
+          if (roster.includes(prev)) {
+            dispatchTarget.value = prev;
+          }
+        }
+      }
+    }
+
     function createCardElement(m) {
       const ch = m.channel || 'general';
       const isDm = m.is_dm || ch === 'cat_dm';
@@ -954,10 +1229,14 @@
       const isCoachA2A = ch === 'coach_a2a';
       const isCoach = ch === 'coach';
       const isGeneral = ch === 'general' || ch === 'commander';
+      const isEvil = (m.sender && (m.sender.includes('evil') || m.sender === 'cat-3')) ||
+                     (m.recipient_id && m.recipient_id.includes('evil')) ||
+                     (m.cat_id && m.cat_id.includes('evil'));
 
       const card = document.createElement('div');
       let cardClass = 'msg-card';
-      if (isDm) cardClass += ' card-dm';
+      if (isEvil) cardClass += ' card-evil';
+      else if (isDm) cardClass += ' card-dm';
       else if (isBroadcast) cardClass += ' card-broadcast';
       else if (isCoachA2A) cardClass += ' card-coach-a2a';
       else if (isCoach) cardClass += ' card-coach';
@@ -973,7 +1252,10 @@
 
       // Channel Badge
       const chBadge = document.createElement('span');
-      if (isDm) {
+      if (isEvil && !isCoachA2A && !isGeneral) {
+        chBadge.className = 'badge-channel badge-evil';
+        chBadge.innerText = isDm ? '😈 EVIL DM' : '😈 EVIL BROADCAST';
+      } else if (isDm) {
         chBadge.className = 'badge-channel badge-dm';
         chBadge.innerText = '🔒 DIRECT MESSAGE';
       } else if (isBroadcast) {
@@ -981,10 +1263,10 @@
         chBadge.innerText = '📢 BROADCAST';
       } else if (isCoachA2A) {
         chBadge.className = 'badge-channel badge-coach-a2a';
-        chBadge.innerText = '🤝 COACH ↔ COACH A2A';
+        chBadge.innerText = isEvil ? '😈 EVIL COACH DIPLOMACY' : '🤝 COACH ↔ COACH A2A';
       } else if (isCoach) {
         chBadge.className = 'badge-channel badge-coach';
-        chBadge.innerText = '🎓 STRATEGIC COACH';
+        chBadge.innerText = isEvil ? '😈 EVIL COACH DIRECTIVE' : '🎓 STRATEGIC COACH';
       } else {
         chBadge.className = 'badge-channel badge-general';
         chBadge.innerText = '🎖️ OPERATOR GENERAL';
@@ -1045,11 +1327,18 @@
     // Fetch Messages from Server
     async function loadChatMessages(isSilent = false) {
       try {
-        const url = `/api/mcp/coach-chat?cat_id=${currentAgent}&view=${currentView}&limit=200`;
+        const fromParam = encodeURIComponent(currentFrom);
+        const toParam = encodeURIComponent(currentTo);
+        const url = `/api/mcp/coach-chat?cat_id=${currentAgent}&from=${fromParam}&to=${toParam}&view=${currentView}&limit=200`;
         const resp = await fetch(url);
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
         const data = await resp.json();
         allMessages = data.messages || [];
+
+        // Synchronize dynamic roster across UI
+        if (data.roster) {
+          syncRosterUI(data.roster, data.counts);
+        }
 
         // Update counts without causing unnecessary DOM layout thrashing
         if (data.counts) {
@@ -1099,14 +1388,17 @@
       // Update titles only when changed
       const viewTitles = {
         'all': 'All Transmissions & Dialogue',
-        'dms': '🔒 Cat 1 ↔ Cat 2 Direct Messages (No Coach)',
+        'dms': '🔒 Direct Messages (DMs)',
         'broadcasts': '📢 Inter-Cat Radio Broadcasts',
         'coach': '🎓 Coach Evaluations & Standby Dialogue',
         'coach_a2a': '🤝 Coach ↔ Coach Direct Diplomatic Comms',
         'general': '🎖️ General (Operator) Directives',
         'no_coach': '🚫 Direct Agent-to-Agent Comms (Excluding Coach)'
       };
-      const titleText = viewTitles[currentView] || 'Transmissions Feed';
+      let titleText = viewTitles[currentView] || 'Transmissions Feed';
+      if (currentFrom !== 'all' || currentTo !== 'all') {
+        titleText += ` [From: ${currentFrom} ➔ To: ${currentTo}]`;
+      }
       if (streamStatusTitle.innerText !== titleText) {
         streamStatusTitle.innerText = titleText;
       }
@@ -1115,7 +1407,7 @@
         streamMatchCount.innerText = matchText;
       }
 
-      const currentContext = `${currentView}|${currentAgent}|${currentSearch}`;
+      const currentContext = `${currentView}|${currentAgent}|${currentFrom}|${currentTo}|${currentSearch}`;
       const newKeys = filtered.map(getMessageKey);
 
       // If nothing has changed, do absolutely nothing! Eliminates any UI flashing.

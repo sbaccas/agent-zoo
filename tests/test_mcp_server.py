@@ -521,5 +521,58 @@ async def test_notes_page_endpoint():
     assert "no-cache" in res.headers.get("cache-control", "").lower()
 
 
+@pytest.mark.asyncio
+async def test_comms_board_from_to_filtering_and_roster():
+    """Verify From and To dropdown filtering and dynamic roster inclusion (including evil-cat)."""
+    app = create_mcp_app()
+    from starlette.testclient import TestClient
+    tc = TestClient(app)
+
+    sim_comms = {
+        "transmissions": [
+            {"tick": 1, "sender_id": "evil-cat", "recipient_id": "cat-1", "message": "I am friendly, meet me North!"},
+            {"tick": 2, "sender_id": "cat-1", "recipient_id": "*", "message": "Spotted prey at 10, 10"},
+            {"tick": 3, "sender_id": "cat-2", "recipient_id": "evil-cat", "message": "Stay away from my cheese"},
+        ]
+    }
+
+    with patch("app.mcp.server._fetch_from_game_server", return_value=(True, sim_comms, None)):
+        with patch("httpx.AsyncClient.get") as mock_get:
+            mock_resp = AsyncMock()
+            mock_resp.status_code = 200
+            mock_resp.json = lambda: []
+            mock_get.return_value = mock_resp
+
+            # 1. Test full roster discovery
+            res = tc.get("/api/mcp/coach-chat")
+            assert res.status_code == 200
+            data = res.json()
+            assert "evil-cat" in data["roster"]
+            assert "cat-1" in data["roster"]
+            assert "cat-2" in data["roster"]
+            assert data["counts"]["roster"]["evil-cat"] >= 2
+
+            # 2. Test FROM filter (evil-cat only)
+            res_from = tc.get("/api/mcp/coach-chat?from=evil-cat")
+            assert res_from.status_code == 200
+            from_msgs = res_from.json()["messages"]
+            assert len(from_msgs) == 1
+            assert from_msgs[0]["sender"] == "evil-cat"
+
+            # 3. Test TO filter (cat-1 only)
+            res_to = tc.get("/api/mcp/coach-chat?to=cat-1")
+            assert res_to.status_code == 200
+            to_msgs = res_to.json()["messages"]
+            assert len(to_msgs) == 1
+            assert to_msgs[0]["recipient_id"] == "cat-1"
+
+            # 4. Test TO filter (* for broadcasts only)
+            res_bcast = tc.get("/api/mcp/coach-chat?to=*")
+            assert res_bcast.status_code == 200
+            bcast_msgs = res_bcast.json()["messages"]
+            assert len(bcast_msgs) == 1
+            assert bcast_msgs[0]["recipient_id"] == "*"
+
+
 
 

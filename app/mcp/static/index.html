@@ -803,6 +803,10 @@
       color: #ea580c;
       border-left: 2px solid #ea580c;
     }
+    .agent-filter-btn.btn-cat-3.active, .agent-filter-btn.btn-cat-evil.active {
+      color: #a855f7;
+      border-left: 2px solid #a855f7;
+    }
     .count-pill {
       font-size: 0.65rem;
       background: rgba(100, 116, 139, 0.15);
@@ -891,6 +895,9 @@
     .note-card.card-cat-2 {
       border-left-color: #ea580c;
     }
+    .note-card.card-cat-3, .note-card.card-evil-cat, .note-card.card-cat-evil {
+      border-left-color: #a855f7;
+    }
     .note-card:hover {
       border-color: var(--input-focus);
       box-shadow: var(--shadow-sm);
@@ -925,6 +932,11 @@
       background: rgba(234, 88, 12, 0.12);
       color: #ea580c;
       border: 1px solid rgba(234, 88, 12, 0.3);
+    }
+    .badge-cat-id.cat-3, .badge-cat-id.evil-cat, .badge-cat-id.cat-evil {
+      background: rgba(168, 85, 247, 0.12);
+      color: #a855f7;
+      border: 1px solid rgba(168, 85, 247, 0.3);
     }
     .badge-tick {
       font-size: 0.65rem;
@@ -1466,7 +1478,7 @@
           </div>
 
           <!-- Multi-Agent Filter Bar -->
-          <div class="agent-filter-bar">
+          <div class="agent-filter-bar" id="commsRosterBar">
             <button class="agent-filter-btn active" data-comms-agent="all" id="btnFilterCommsAll">
               <span>🐱 All Cats</span>
               <span class="count-pill" id="commsCountAll">0</span>
@@ -1479,6 +1491,33 @@
               <span>🐱 Cat 2</span>
               <span class="count-pill" id="commsCountCat2">0</span>
             </button>
+            <button class="agent-filter-btn btn-cat-evil" data-comms-agent="evil-cat" id="btnFilterCommsEvil">
+              <span>😈 Evil Cat</span>
+              <span class="count-pill" id="commsCountEvil">0</span>
+            </button>
+          </div>
+
+          <!-- Comms Board: From & To Dropdowns -->
+          <div style="display:flex; gap:8px; margin-top:6px; align-items:center; flex-wrap:wrap;">
+            <div style="display:inline-flex; align-items:center; gap:4px; flex:1; min-width:130px;">
+              <span style="font-size:0.68rem; font-weight:700; color:var(--text-dim);">FROM:</span>
+              <select id="commsSelectFrom" class="form-select" style="font-size:0.75rem; padding:3px 6px; flex:1;">
+                <option value="all">Any Sender</option>
+                <option value="cat-1">🐱 cat-1</option>
+                <option value="cat-2">🐱 cat-2</option>
+                <option value="evil-cat">😈 evil-cat</option>
+              </select>
+            </div>
+            <div style="display:inline-flex; align-items:center; gap:4px; flex:1; min-width:130px;">
+              <span style="font-size:0.68rem; font-weight:700; color:var(--text-dim);">TO:</span>
+              <select id="commsSelectTo" class="form-select" style="font-size:0.75rem; padding:3px 6px; flex:1;">
+                <option value="all">Any Recipient</option>
+                <option value="*">📢 Broadcast (*)</option>
+                <option value="cat-1">🐱 cat-1</option>
+                <option value="cat-2">🐱 cat-2</option>
+                <option value="evil-cat">😈 evil-cat</option>
+              </select>
+            </div>
           </div>
 
           <!-- Controls: Search + Live Poll Checkbox -->
@@ -1527,6 +1566,10 @@
               <span>🐱 Cat 2</span>
               <span class="count-pill" id="agentCountCat2">0</span>
             </button>
+            <button class="agent-filter-btn btn-cat-3" data-agent="cat-3" id="btnFilterAgentCat3">
+              <span>🐱 Cat 3</span>
+              <span class="count-pill" id="agentCountCat3">0</span>
+            </button>
           </div>
 
           <!-- Controls: Category Chips + Live Poll Checkbox -->
@@ -1561,6 +1604,7 @@
                 <select id="newNoteAgent" class="form-select" style="font-size:0.72rem; padding:2px 6px;">
                   <option value="cat-1">Cat 1</option>
                   <option value="cat-2">Cat 2</option>
+                  <option value="cat-3">Cat 3 (Evil)</option>
                 </select>
               </div>
             </div>
@@ -1597,6 +1641,7 @@
           <div class="standing-orders-switcher">
             <button class="standing-tab-btn active" id="btnStandingCat1" data-cat="cat-1">🐱 Cat 1 Directives</button>
             <button class="standing-tab-btn" id="btnStandingCat2" data-cat="cat-2">🐱 Cat 2 Directives</button>
+            <button class="standing-tab-btn" id="btnStandingCat3" data-cat="cat-3">🐱 Cat 3 Directives</button>
           </div>
           <div style="font-size:0.7rem; color:var(--text-dim); margin-bottom:6px;">
             Directives read by this Cat agent on every decision tick:
@@ -1826,31 +1871,31 @@
         { name: 'event_type', label: 'Event Type (e.g. attack, death)', type: 'text', default: '' }
       ],
       write_coach_note: [
-        { name: 'cat_id', label: 'Target Cat ID', type: 'select', options: ['cat-1', 'cat-2'], default: 'cat-1' },
+        { name: 'cat_id', label: 'Target Cat ID', type: 'select', options: ['cat-1', 'cat-2', 'cat-3'], default: 'cat-1' },
         { name: 'note', label: 'Memory Note', type: 'textarea', default: 'Observed cat lunging effectively on east corner.' },
         { name: 'category', label: 'Category', type: 'select', options: ['tactical', 'observation', 'hypothesis', 'intel', 'general'], default: 'tactical' },
         { name: 'tags', label: 'Tags (comma separated)', type: 'text', default: 'east, attack, coordination' },
         { name: 'linked_ticks', label: 'Linked Ticks (comma separated numbers, optional)', type: 'text', default: '' }
       ],
       read_coach_notes: [
-        { name: 'cat_id', label: 'Cat ID Filter', type: 'select', options: ['all', 'cat-1', 'cat-2'], default: 'all' },
+        { name: 'cat_id', label: 'Cat ID Filter', type: 'select', options: ['all', 'cat-1', 'cat-2', 'cat-3'], default: 'all' },
         { name: 'limit', label: 'Limit', type: 'number', default: '10' },
         { name: 'category', label: 'Category (optional)', type: 'select', options: ['', 'tactical', 'observation', 'hypothesis', 'intel', 'general'], default: '' },
         { name: 'search', label: 'Search Keyword (optional)', type: 'text', default: '' }
       ],
       update_coach_note: [
         { name: 'memory_id', label: 'Memory ID', type: 'text', default: '' },
-        { name: 'cat_id', label: 'Cat ID (optional, blank = auto-search)', type: 'select', options: ['', 'cat-1', 'cat-2'], default: '' },
+        { name: 'cat_id', label: 'Cat ID (optional, blank = auto-search)', type: 'select', options: ['', 'cat-1', 'cat-2', 'cat-3'], default: '' },
         { name: 'note', label: 'Updated Note', type: 'textarea', default: '' },
         { name: 'category', label: 'Category', type: 'select', options: ['', 'tactical', 'observation', 'hypothesis', 'intel', 'general'], default: 'tactical' },
         { name: 'tags', label: 'Tags (comma separated)', type: 'text', default: '' }
       ],
       delete_coach_note: [
         { name: 'memory_id', label: 'Memory ID', type: 'text', default: '' },
-        { name: 'cat_id', label: 'Cat ID (optional, blank = auto-search)', type: 'select', options: ['', 'cat-1', 'cat-2'], default: '' }
+        { name: 'cat_id', label: 'Cat ID (optional, blank = auto-search)', type: 'select', options: ['', 'cat-1', 'cat-2', 'cat-3'], default: '' }
       ],
       pull_transcript: [
-        { name: 'cat_id', label: 'Cat ID', type: 'select', options: ['cat-1', 'cat-2'], default: 'cat-1' },
+        { name: 'cat_id', label: 'Cat ID', type: 'select', options: ['cat-1', 'cat-2', 'cat-3'], default: 'cat-1' },
         { name: 'last_n', label: 'Last N Ticks', type: 'number', default: '50' },
         { name: 'limit', label: 'Limit (optional)', type: 'number', default: '' },
         { name: 'offset', label: 'Offset (optional)', type: 'number', default: '' }
@@ -2218,14 +2263,16 @@
     const agentCountAll = document.getElementById('agentCountAll');
     const agentCountCat1 = document.getElementById('agentCountCat1');
     const agentCountCat2 = document.getElementById('agentCountCat2');
+    const agentCountCat3 = document.getElementById('agentCountCat3');
     const btnStandingCat1 = document.getElementById('btnStandingCat1');
     const btnStandingCat2 = document.getElementById('btnStandingCat2');
+    const btnStandingCat3 = document.getElementById('btnStandingCat3');
 
     let allCoachMemories = [];
     let currentAgentFilter = 'all';
     let currentCategoryFilter = '';
     let activeStandingCat = 'cat-1';
-    let standingNotesCache = { 'cat-1': '', 'cat-2': '' };
+    let standingNotesCache = { 'cat-1': '', 'cat-2': '', 'cat-3': '' };
     let editingNoteId = null;
 
     // Agent Filter Bar Handling
@@ -2254,14 +2301,25 @@
         activeStandingCat = 'cat-1';
         btnStandingCat1.classList.add('active');
         btnStandingCat2.classList.remove('active');
+        if (btnStandingCat3) btnStandingCat3.classList.remove('active');
         standingNotesEditor.value = standingNotesCache['cat-1'] || '';
       });
       btnStandingCat2.addEventListener('click', () => {
         activeStandingCat = 'cat-2';
         btnStandingCat2.classList.add('active');
         btnStandingCat1.classList.remove('active');
+        if (btnStandingCat3) btnStandingCat3.classList.remove('active');
         standingNotesEditor.value = standingNotesCache['cat-2'] || '';
       });
+      if (btnStandingCat3) {
+        btnStandingCat3.addEventListener('click', () => {
+          activeStandingCat = 'cat-3';
+          btnStandingCat3.classList.add('active');
+          btnStandingCat1.classList.remove('active');
+          btnStandingCat2.classList.remove('active');
+          standingNotesEditor.value = standingNotesCache['cat-3'] || standingNotesCache['evil-cat'] || '';
+        });
+      }
     }
 
     async function loadCoachNotes(isSilent = false) {
@@ -2284,13 +2342,14 @@
           if (agentCountAll) agentCountAll.innerText = data.counts.all ?? 0;
           if (agentCountCat1) agentCountCat1.innerText = data.counts['cat-1'] ?? 0;
           if (agentCountCat2) agentCountCat2.innerText = data.counts['cat-2'] ?? 0;
+          if (agentCountCat3) agentCountCat3.innerText = (data.counts['cat-3'] ?? 0) + (data.counts['evil-cat'] ?? 0);
         }
 
         // Cache standing notes
         if (data.standing_notes) {
           standingNotesCache = data.standing_notes;
           if (document.activeElement !== standingNotesEditor) {
-            standingNotesEditor.value = standingNotesCache[activeStandingCat] || '';
+            standingNotesEditor.value = standingNotesCache[activeStandingCat] || (activeStandingCat === 'cat-3' ? standingNotesCache['evil-cat'] : '') || '';
           }
         } else if (data.active_standing_notes !== undefined && document.activeElement !== standingNotesEditor) {
           standingNotesEditor.value = data.active_standing_notes || '';
@@ -2714,6 +2773,9 @@
     const commsCountAll = document.getElementById('commsCountAll');
     const commsCountCat1 = document.getElementById('commsCountCat1');
     const commsCountCat2 = document.getElementById('commsCountCat2');
+    const commsCountEvil = document.getElementById('commsCountEvil');
+    const commsSelectFrom = document.getElementById('commsSelectFrom');
+    const commsSelectTo = document.getElementById('commsSelectTo');
     const commsSearch = document.getElementById('commsSearch');
     const commsAutoRefresh = document.getElementById('commsAutoRefresh');
     const btnRefreshComms = document.getElementById('btnRefreshComms');
@@ -2742,21 +2804,36 @@
 
       // Update badge counts
       const countAll = allComms.length;
-      const countCat1 = allComms.filter(t => t.sender_id === 'cat-1').length;
-      const countCat2 = allComms.filter(t => t.sender_id === 'cat-2').length;
+      const countCat1 = allComms.filter(t => t.sender_id === 'cat-1' || t.recipient_id === 'cat-1').length;
+      const countCat2 = allComms.filter(t => t.sender_id === 'cat-2' || t.recipient_id === 'cat-2').length;
+      const countEvil = allComms.filter(t => (t.sender_id && t.sender_id.includes('evil')) || (t.recipient_id && t.recipient_id.includes('evil'))).length;
       if (commsCountAll) commsCountAll.innerText = countAll;
       if (commsCountCat1) commsCountCat1.innerText = countCat1;
       if (commsCountCat2) commsCountCat2.innerText = countCat2;
+      if (commsCountEvil) commsCountEvil.innerText = countEvil;
 
-      // Filter by agent and search text
+      // Filter by agent, From, To, and search text
       let filtered = allComms;
       if (currentCommsAgentFilter !== 'all') {
-        filtered = filtered.filter(t => t.sender_id === currentCommsAgentFilter);
+        filtered = filtered.filter(t => t.sender_id === currentCommsAgentFilter || t.recipient_id === currentCommsAgentFilter);
+      }
+      const fromVal = commsSelectFrom ? commsSelectFrom.value : 'all';
+      if (fromVal !== 'all') {
+        filtered = filtered.filter(t => (t.sender_id || '').toLowerCase() === fromVal.toLowerCase());
+      }
+      const toVal = commsSelectTo ? commsSelectTo.value : 'all';
+      if (toVal !== 'all') {
+        if (toVal === '*') {
+          filtered = filtered.filter(t => !t.recipient_id || t.recipient_id === '*' || t.recipient_id === 'broadcast' || t.recipient_id === 'all');
+        } else {
+          filtered = filtered.filter(t => (t.recipient_id || '').toLowerCase() === toVal.toLowerCase());
+        }
       }
       if (q) {
         filtered = filtered.filter(t =>
           (t.message && t.message.toLowerCase().includes(q)) ||
           (t.sender_id && t.sender_id.toLowerCase().includes(q)) ||
+          (t.recipient_id && t.recipient_id.toLowerCase().includes(q)) ||
           String(t.tick).includes(q)
         );
       }
@@ -2852,6 +2929,12 @@
 
     if (commsSearch) {
       commsSearch.addEventListener('input', () => renderComms());
+    }
+    if (commsSelectFrom) {
+      commsSelectFrom.addEventListener('change', () => renderComms());
+    }
+    if (commsSelectTo) {
+      commsSelectTo.addEventListener('change', () => renderComms());
     }
     if (btnRefreshComms) {
       btnRefreshComms.addEventListener('click', () => loadComms());

@@ -54,6 +54,7 @@ CAT_PORT="${PORT:-${CAT_AGENT_PORT:-8001}}"
 CAT_HOST="${HOST:-127.0.0.1}"
 GAME_URL="${GAME_SERVER_URL:-http://127.0.0.1:8000}"
 export CAT_MCP_SERVER_URL="${CAT_MCP_SERVER_URL:-http://127.0.0.1:9050}"
+export CAT_EVAL_TIMEOUT_SEC="${CAT_EVAL_TIMEOUT_SEC:-900}"
 
 if [ -z "${CAT_ID}" ]; then
   if [ "${CAT_PORT}" = "8003" ]; then
@@ -84,6 +85,10 @@ echo ""
 echo "🚀 Starting Cat Agent & Workbench on port ${CAT_PORT}..."
 echo "   • Agent Identity:             ${CAT_ID}"
 echo "   • Workbench Dashboard:        http://${CAT_HOST}:${CAT_PORT}"
+echo "   • Skills Manual:              ${CAT_SKILLS_PATH:-actors/cat/actor_skills.md}"
+echo "   • Coach Skills Manual:        ${EVAL_SKILLS_PATH:-actors/cat/subagents/eval_skills.md}"
+echo "   • Evaluation Interval:        ${CAT_EVAL_INTERVAL:-5} ticks"
+echo "   • Coach Timeout:              ${CAT_EVAL_TIMEOUT_SEC}s (max allowed)"
 echo "   • Runtime Store Directory:    ${CAT_AGENT_RUNTIME_DIR}"
 echo "   • Authoritative Game Server:  ${GAME_URL}"
 echo "================================================================="

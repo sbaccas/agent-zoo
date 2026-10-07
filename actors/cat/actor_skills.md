@@ -2,7 +2,7 @@
 
 ## 1. Game Overview & Introduction
 Welcome to **Cat and Mouse** (C+M), an adversarial discrete-grid simulation!
-You play as the **Cat** (`cat-1`), an apex predator hunting elusive mice across a grid arena.
+You play as an apex predator **Cat** (e.g. `cat-1`, `cat-2`, etc. — your specific identity `agent_id` is supplied in your observation), hunting elusive mice across a grid arena.
 
 ### World & Coordinate System
 - The arena is a 2D discrete Cartesian grid with fixed boundaries (width × height).
