@@ -26,20 +26,57 @@ logger = logging.getLogger("cat_agent")
 LOCAL_RUNTIME_DIR = Path(__file__).parent / "runtime"
 
 
+def _ensure_runtime_dir(target_dir: Optional[Path] = None) -> None:
+    if target_dir is not None:
+        target_dir.mkdir(parents=True, exist_ok=True)
+    elif "RUNTIME_DIR" in globals():
+        RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+    if not os.environ.get("CAT_AGENT_RUNTIME_DIR"):
+        LOCAL_RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def get_cat_paths(agent_id: str) -> Dict[str, Path]:
+    """Returns file paths for a specific cat agent."""
+    cid = agent_id or "cat-1"
+    if os.environ.get("CAT_AGENT_RUNTIME_DIR"):
+        cat_dir = Path(os.environ["CAT_AGENT_RUNTIME_DIR"])
+        if agent_id and (Path(os.environ["CAT_AGENT_RUNTIME_DIR"]) / agent_id).is_dir():
+            cat_dir = Path(os.environ["CAT_AGENT_RUNTIME_DIR"]) / agent_id
+    else:
+        # Check active workbench temp runtime directory
+        tmp_dir = Path(tempfile.gettempdir()) / f"cm_runtime_{cid}"
+        # Also check alias between cat-3 and evil-cat
+        alt_cid = "evil-cat" if cid == "cat-3" else ("cat-3" if cid in ("evil-cat", "cat-evil") else None)
+        alt_tmp_dir = Path(tempfile.gettempdir()) / f"cm_runtime_{alt_cid}" if alt_cid else None
+
+        if tmp_dir.is_dir():
+            cat_dir = tmp_dir
+        elif alt_tmp_dir and alt_tmp_dir.is_dir():
+            cat_dir = alt_tmp_dir
+        elif not agent_id or agent_id == "cat-1":
+            cat_dir = LOCAL_RUNTIME_DIR
+        else:
+            cat_dir = Path(__file__).parent / f"runtime_{cid}"
+    _ensure_runtime_dir(cat_dir)
+    return {
+        "runtime_dir": cat_dir,
+        "transcript": cat_dir / "transcript.jsonl",
+        "coaching_notes": cat_dir / "coaching_notes.md",
+        "notice_board": cat_dir / "notice_board.md",
+        "coach_memory": cat_dir / "coach_memory.jsonl",
+        "prompts": cat_dir / "prompts.jsonl",
+        "coach_prompts": cat_dir / "coach_prompts.jsonl",
+        "run_config": cat_dir / "run_config.json",
+    }
+
+
 def _resolve_runtime_dir(agent_id: Optional[str] = None) -> Path:
     override = os.environ.get("CAT_AGENT_RUNTIME_DIR")
     if override:
         return Path(override)
-    target_id = agent_id or os.environ.get("CAT_ID")
-    if not target_id:
-        port = os.environ.get("PORT")
-        if port == "8003":
-            target_id = "cat-2"
-        elif port == "8001":
-            target_id = "cat-1"
-    if not target_id or target_id == "cat-1":
+    if not agent_id:
         return LOCAL_RUNTIME_DIR
-    return Path(__file__).parent / f"runtime_{target_id}"
+    return get_cat_paths(agent_id)["runtime_dir"]
 
 
 RUNTIME_DIR = _resolve_runtime_dir()
@@ -48,14 +85,8 @@ COACHING_NOTES_PATH = RUNTIME_DIR / "coaching_notes.md"
 NOTICE_BOARD_PATH = RUNTIME_DIR / "notice_board.md"
 COACH_MEMORY_PATH = RUNTIME_DIR / "coach_memory.jsonl"
 PROMPTS_PATH = RUNTIME_DIR / "prompts.jsonl"
+COACH_PROMPTS_PATH = RUNTIME_DIR / "coach_prompts.jsonl"
 RUN_CONFIG_PATH = RUNTIME_DIR / "run_config.json"
-
-
-def _ensure_runtime_dir(target_dir: Optional[Path] = None) -> None:
-    d = target_dir or RUNTIME_DIR
-    d.mkdir(parents=True, exist_ok=True)
-    if not os.environ.get("CAT_AGENT_RUNTIME_DIR"):
-        LOCAL_RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def _mirror_to_local_runtime(filename: str, content: str, mode: str = "w", agent_id: Optional[str] = None) -> None:
@@ -89,51 +120,19 @@ def _mirror_to_local_runtime(filename: str, content: str, mode: str = "w", agent
 
 def set_agent_id(agent_id: str) -> None:
     """Dynamically rebinds runtime file paths to the specified agent ID if not overridden by CAT_AGENT_RUNTIME_DIR."""
-    global RUNTIME_DIR, TRANSCRIPT_PATH, COACHING_NOTES_PATH, NOTICE_BOARD_PATH, COACH_MEMORY_PATH, PROMPTS_PATH, RUN_CONFIG_PATH
+    global RUNTIME_DIR, TRANSCRIPT_PATH, COACHING_NOTES_PATH, NOTICE_BOARD_PATH, COACH_MEMORY_PATH, PROMPTS_PATH, COACH_PROMPTS_PATH, RUN_CONFIG_PATH
     if os.environ.get("CAT_AGENT_RUNTIME_DIR"):
         return  # explicit env override or test fixture takes precedence
-    RUNTIME_DIR = LOCAL_RUNTIME_DIR if (not agent_id or agent_id == "cat-1") else (Path(__file__).parent / f"runtime_{agent_id}")
-    _ensure_runtime_dir()
-    TRANSCRIPT_PATH = RUNTIME_DIR / "transcript.jsonl"
-    COACHING_NOTES_PATH = RUNTIME_DIR / "coaching_notes.md"
-    NOTICE_BOARD_PATH = RUNTIME_DIR / "notice_board.md"
-    COACH_MEMORY_PATH = RUNTIME_DIR / "coach_memory.jsonl"
-    PROMPTS_PATH = RUNTIME_DIR / "prompts.jsonl"
-    RUN_CONFIG_PATH = RUNTIME_DIR / "run_config.json"
-
-
-def get_cat_paths(agent_id: str) -> Dict[str, Path]:
-    """Returns file paths for a specific cat agent."""
-    cid = agent_id or "cat-1"
-    if os.environ.get("CAT_AGENT_RUNTIME_DIR"):
-        cat_dir = Path(os.environ["CAT_AGENT_RUNTIME_DIR"])
-        if agent_id and (Path(os.environ["CAT_AGENT_RUNTIME_DIR"]) / agent_id).is_dir():
-            cat_dir = Path(os.environ["CAT_AGENT_RUNTIME_DIR"]) / agent_id
-    else:
-        # Check active workbench temp runtime directory
-        tmp_dir = Path(tempfile.gettempdir()) / f"cm_runtime_{cid}"
-        # Also check alias between cat-3 and evil-cat
-        alt_cid = "evil-cat" if cid == "cat-3" else ("cat-3" if cid in ("evil-cat", "cat-evil") else None)
-        alt_tmp_dir = Path(tempfile.gettempdir()) / f"cm_runtime_{alt_cid}" if alt_cid else None
-
-        if tmp_dir.is_dir():
-            cat_dir = tmp_dir
-        elif alt_tmp_dir and alt_tmp_dir.is_dir():
-            cat_dir = alt_tmp_dir
-        elif not agent_id or agent_id == "cat-1":
-            cat_dir = LOCAL_RUNTIME_DIR
-        else:
-            cat_dir = Path(__file__).parent / f"runtime_{cid}"
-    _ensure_runtime_dir(cat_dir)
-    return {
-        "runtime_dir": cat_dir,
-        "transcript": cat_dir / "transcript.jsonl",
-        "coaching_notes": cat_dir / "coaching_notes.md",
-        "notice_board": cat_dir / "notice_board.md",
-        "coach_memory": cat_dir / "coach_memory.jsonl",
-        "prompts": cat_dir / "prompts.jsonl",
-        "run_config": cat_dir / "run_config.json",
-    }
+    paths = get_cat_paths(agent_id)
+    RUNTIME_DIR = paths["runtime_dir"]
+    _ensure_runtime_dir(RUNTIME_DIR)
+    TRANSCRIPT_PATH = paths["transcript"]
+    COACHING_NOTES_PATH = paths["coaching_notes"]
+    NOTICE_BOARD_PATH = paths["notice_board"]
+    COACH_MEMORY_PATH = paths["coach_memory"]
+    PROMPTS_PATH = paths["prompts"]
+    COACH_PROMPTS_PATH = paths["coach_prompts"]
+    RUN_CONFIG_PATH = paths["run_config"]
 
 
 def _compact_record(exchange: Dict[str, Any]) -> Dict[str, Any]:
@@ -195,13 +194,14 @@ def _compact_record(exchange: Dict[str, Any]) -> Dict[str, Any]:
 def append_tick(exchange: Dict[str, Any]) -> None:
     """Appends one tick to the transcript. Never raises into the game loop."""
     try:
-        _ensure_runtime_dir()
+        active_cat = (exchange.get("observation") or {}).get("self", {}).get("id") or os.environ.get("CAT_ID") or "cat-1"
+        target_path = get_cat_paths(active_cat)["transcript"]
+        _ensure_runtime_dir(target_path.parent)
         record = _compact_record(exchange)
         line = json.dumps(record, separators=(",", ":")) + "\n"
-        with TRANSCRIPT_PATH.open("a", encoding="utf-8") as fh:
+        with target_path.open("a", encoding="utf-8") as fh:
             fh.write(line)
-        active_cat = (exchange.get("observation") or {}).get("self", {}).get("id") or os.environ.get("CAT_ID") or "cat-1"
-        if not os.environ.get("CAT_AGENT_RUNTIME_DIR") and active_cat == "cat-1" and TRANSCRIPT_PATH.resolve() != (LOCAL_RUNTIME_DIR / "transcript.jsonl").resolve():
+        if not os.environ.get("CAT_AGENT_RUNTIME_DIR") and active_cat == "cat-1" and target_path.resolve() != (LOCAL_RUNTIME_DIR / "transcript.jsonl").resolve():
             _mirror_to_local_runtime("transcript.jsonl", line, mode="a", agent_id="cat-1")
     except Exception as exc:
         # Transcript logging is diagnostic. It must never stall or crash a tick.
@@ -228,9 +228,14 @@ def reset_transcript(agent_id: Optional[str] = None) -> None:
 
 def read_transcript_records(agent_id: Optional[str] = None) -> List[Dict[str, Any]]:
     """Returns every tick recorded for the current game, oldest first."""
-    target_path = get_cat_paths(agent_id)["transcript"] if agent_id else TRANSCRIPT_PATH
+    active_cat = agent_id or os.environ.get("CAT_ID") or "cat-1"
+    target_path = get_cat_paths(active_cat)["transcript"]
     if not target_path.exists():
-        return []
+        fallback = LOCAL_RUNTIME_DIR / "transcript.jsonl"
+        if fallback.exists() and active_cat == "cat-1":
+            target_path = fallback
+        else:
+            return []
     records: List[Dict[str, Any]] = []
     try:
         with target_path.open("r", encoding="utf-8") as fh:
@@ -310,28 +315,36 @@ def append_prompt(record: Dict[str, Any]) -> None:
     for them.
     """
     try:
-        _ensure_runtime_dir()
-        line = json.dumps(record, separators=(",", ":")) + "\n"
-        with PROMPTS_PATH.open("a", encoding="utf-8") as fh:
-            fh.write(line)
         active_cat = record.get("agent_id") or os.environ.get("CAT_ID") or "cat-1"
-        if not os.environ.get("CAT_AGENT_RUNTIME_DIR") and active_cat == "cat-1" and PROMPTS_PATH.resolve() != (LOCAL_RUNTIME_DIR / "prompts.jsonl").resolve():
+        paths = get_cat_paths(active_cat)
+        target_path = paths["prompts"]
+        _ensure_runtime_dir(target_path.parent)
+        line = json.dumps(record, separators=(",", ":")) + "\n"
+        with target_path.open("a", encoding="utf-8") as fh:
+            fh.write(line)
+        if not os.environ.get("CAT_AGENT_RUNTIME_DIR") and active_cat == "cat-1" and target_path.resolve() != (LOCAL_RUNTIME_DIR / "prompts.jsonl").resolve():
             _mirror_to_local_runtime("prompts.jsonl", line, mode="a", agent_id="cat-1")
     except Exception as exc:
         # Same contract as the transcript: diagnostics never break a tick.
         logger.warning("Failed to append prompt record: %s", exc)
 
 
-def read_prompt_for_tick(tick: int) -> Optional[Dict[str, Any]]:
+def read_prompt_for_tick(tick: int, agent_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """Returns the prompt behind the decision applied at `tick`, if captured.
 
     Scans backwards so that if a tick somehow has more than one record the
     most recent wins, matching what the trajectory row ended up showing.
     """
-    if not PROMPTS_PATH.exists():
-        return None
+    active_cat = agent_id or os.environ.get("CAT_ID") or "cat-1"
+    target_path = get_cat_paths(active_cat)["prompts"]
+    if not target_path.exists():
+        fallback = LOCAL_RUNTIME_DIR / "prompts.jsonl"
+        if fallback.exists() and active_cat == "cat-1":
+            target_path = fallback
+        else:
+            return None
     try:
-        with PROMPTS_PATH.open("r", encoding="utf-8") as fh:
+        with target_path.open("r", encoding="utf-8") as fh:
             lines = fh.readlines()
     except Exception as exc:
         logger.warning("Failed to read prompt log: %s", exc)
@@ -350,13 +363,19 @@ def read_prompt_for_tick(tick: int) -> Optional[Dict[str, Any]]:
     return None
 
 
-def prompt_log_size() -> Dict[str, Any]:
+def prompt_log_size(agent_id: Optional[str] = None) -> Dict[str, Any]:
     """Byte size and record count, so the UI can warn before the file gets silly."""
-    if not PROMPTS_PATH.exists():
-        return {"bytes": 0, "records": 0}
+    active_cat = agent_id or os.environ.get("CAT_ID") or "cat-1"
+    target_path = get_cat_paths(active_cat)["prompts"]
+    if not target_path.exists():
+        fallback = LOCAL_RUNTIME_DIR / "prompts.jsonl"
+        if fallback.exists() and active_cat == "cat-1":
+            target_path = fallback
+        else:
+            return {"bytes": 0, "records": 0}
     try:
-        size = PROMPTS_PATH.stat().st_size
-        with PROMPTS_PATH.open("r", encoding="utf-8") as fh:
+        size = target_path.stat().st_size
+        with target_path.open("r", encoding="utf-8") as fh:
             count = sum(1 for ln in fh if ln.strip())
         return {"bytes": size, "records": count}
     except Exception as exc:
@@ -380,6 +399,100 @@ def reset_prompts(agent_id: Optional[str] = None) -> None:
                 p.unlink()
         except Exception as exc:
             logger.warning("Failed to reset prompt log %s: %s", p, exc)
+    reset_coach_prompts(agent_id)
+
+
+def append_coach_prompt(record: Dict[str, Any], agent_id: Optional[str] = None) -> None:
+    """Records the full model input behind one Coach evaluation pass."""
+    try:
+        active_cat = agent_id or record.get("agent_id") or os.environ.get("CAT_ID") or "cat-1"
+        paths = get_cat_paths(active_cat)
+        target_path = paths.get("coach_prompts", COACH_PROMPTS_PATH)
+        _ensure_runtime_dir(target_path.parent)
+        line = json.dumps(record, separators=(",", ":")) + "\n"
+        with target_path.open("a", encoding="utf-8") as fh:
+            fh.write(line)
+        if not os.environ.get("CAT_AGENT_RUNTIME_DIR") and active_cat == "cat-1" and target_path.resolve() != (LOCAL_RUNTIME_DIR / "coach_prompts.jsonl").resolve():
+            _mirror_to_local_runtime("coach_prompts.jsonl", line, mode="a", agent_id="cat-1")
+    except Exception as exc:
+        logger.warning("Failed to append coach prompt record: %s", exc)
+
+
+def read_coach_prompt_for_tick(tick: Optional[int] = None, agent_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """Returns the coach prompt behind an evaluation, if captured.
+
+    If `tick` is provided, finds the coach prompt whose built_at_tick <= tick (most recent evaluation up to that tick).
+    If `tick` is None, returns the most recent captured coach prompt record.
+    """
+    active_cat = agent_id or os.environ.get("CAT_ID") or "cat-1"
+    paths = get_cat_paths(active_cat)
+    target_path = paths.get("coach_prompts", COACH_PROMPTS_PATH)
+    if not target_path.exists():
+        fallback_path = LOCAL_RUNTIME_DIR / "coach_prompts.jsonl"
+        if fallback_path.exists():
+            target_path = fallback_path
+        else:
+            return None
+
+    try:
+        with target_path.open("r", encoding="utf-8") as fh:
+            lines = fh.readlines()
+    except Exception as exc:
+        logger.warning("Failed to read coach prompt log: %s", exc)
+        return None
+
+    for line in reversed(lines):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rec = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if tick is None:
+            return rec
+        built = rec.get("built_at_tick")
+        applied = rec.get("applied_at_tick")
+        if built == tick or applied == tick:
+            return rec
+        if built is not None and built <= tick:
+            return rec
+    return None
+
+
+def coach_prompt_log_size(agent_id: Optional[str] = None) -> Dict[str, Any]:
+    """Byte size and record count for coach prompts."""
+    active_cat = agent_id or os.environ.get("CAT_ID") or "cat-1"
+    paths = get_cat_paths(active_cat)
+    target_path = paths.get("coach_prompts", COACH_PROMPTS_PATH)
+    if not target_path.exists():
+        return {"bytes": 0, "records": 0}
+    try:
+        size = target_path.stat().st_size
+        with target_path.open("r", encoding="utf-8") as fh:
+            count = sum(1 for ln in fh if ln.strip())
+        return {"bytes": size, "records": count}
+    except Exception as exc:
+        logger.warning("Failed to stat coach prompt log: %s", exc)
+        return {"bytes": 0, "records": 0}
+
+
+def reset_coach_prompts(agent_id: Optional[str] = None) -> None:
+    """Wipes the coach prompt log."""
+    targets = []
+    if agent_id and agent_id not in ("all", "*"):
+        targets.append(get_cat_paths(agent_id).get("coach_prompts", COACH_PROMPTS_PATH))
+    else:
+        targets.append(COACH_PROMPTS_PATH)
+        targets.append(LOCAL_RUNTIME_DIR / "coach_prompts.jsonl")
+        for cid in list_known_cat_ids():
+            targets.append(get_cat_paths(cid).get("coach_prompts", COACH_PROMPTS_PATH))
+    for p in targets:
+        try:
+            if p and p.exists():
+                p.unlink()
+        except Exception as exc:
+            logger.warning("Failed to reset coach prompt log %s: %s", p, exc)
 
 
 def write_run_config(config: Dict[str, Any]) -> None:

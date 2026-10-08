@@ -135,7 +135,7 @@ class AgentWorkbenchState:
     def __init__(self, max_history: int = 50):
         self.max_history = max_history
         self.history_window_size: int = 25
-        initial_id = os.environ.get("CAT_ID") or ("cat-2" if os.environ.get("PORT") == "8003" else "cat-1")
+        initial_id = os.environ.get("CAT_ID") or ("cat-3" if os.environ.get("PORT") == "8005" else ("cat-2" if os.environ.get("PORT") == "8003" else "cat-1"))
         self.agent_id: str = initial_id
         self.simulation_id: Optional[str] = None
         self.active_tick: int = 0
@@ -1351,7 +1351,7 @@ async def get_agent_card() -> AgentCard:
     active_id = state.agent_id or os.environ.get("CAT_ID")
     if not active_id:
         port_str = os.environ.get("PORT", "8001")
-        active_id = "cat-2" if port_str == "8003" else "cat-1"
+        active_id = "cat-3" if port_str == "8005" else ("cat-2" if port_str == "8003" else "cat-1")
     port_val = int(os.environ.get("PORT", "8001"))
     return a2a_store.build_default_agent_card(active_id, port_val)
 
@@ -1362,7 +1362,7 @@ async def receive_a2a_message(msg: A2AMessage) -> A2AResponse:
     active_id = state.agent_id or os.environ.get("CAT_ID")
     if not active_id:
         port_str = os.environ.get("PORT", "8001")
-        active_id = "cat-2" if port_str == "8003" else "cat-1"
+        active_id = "cat-3" if port_str == "8005" else ("cat-2" if port_str == "8003" else "cat-1")
 
     self_info = (state.latest_observation or {}).get("self", {})
     is_dead = (self_info.get("alive") is False) or (self_info.get("hp", 100) <= 0) or (state.last_engine_source == "knockout")
@@ -1392,7 +1392,7 @@ async def get_a2a_inbox(limit: int = 50) -> Dict[str, Any]:
     active_id = state.agent_id or os.environ.get("CAT_ID")
     if not active_id:
         port_str = os.environ.get("PORT", "8001")
-        active_id = "cat-2" if port_str == "8003" else "cat-1"
+        active_id = "cat-3" if port_str == "8005" else ("cat-2" if port_str == "8003" else "cat-1")
     return {
         "agent_id": active_id,
         "inbox": a2a_store.get_inbox(active_id, limit=limit),
@@ -1405,7 +1405,7 @@ async def get_a2a_outbox(limit: int = 50) -> Dict[str, Any]:
     active_id = state.agent_id or os.environ.get("CAT_ID")
     if not active_id:
         port_str = os.environ.get("PORT", "8001")
-        active_id = "cat-2" if port_str == "8003" else "cat-1"
+        active_id = "cat-3" if port_str == "8005" else ("cat-2" if port_str == "8003" else "cat-1")
     return {
         "agent_id": active_id,
         "outbox": a2a_store.get_outbox(active_id, limit=limit),
@@ -1482,11 +1482,11 @@ async def get_agent_state(sync: bool = False, agent_id: Optional[str] = None) ->
         "evaluator": evaluator_status(),
         "chat_history": state.chat_history[-50:],
         "agent_card": a2a_store.build_default_agent_card(
-            state.agent_id or ("cat-2" if os.environ.get("PORT") == "8003" else "cat-1"),
+            state.agent_id or ("cat-3" if os.environ.get("PORT") == "8005" else ("cat-2" if os.environ.get("PORT") == "8003" else "cat-1")),
             int(os.environ.get("PORT", "8001")),
         ).model_dump(),
-        "a2a_inbox_count": len(a2a_store.get_inbox(state.agent_id or ("cat-2" if os.environ.get("PORT") == "8003" else "cat-1"))),
-        "a2a_outbox_count": len(a2a_store.get_outbox(state.agent_id or ("cat-2" if os.environ.get("PORT") == "8003" else "cat-1"))),
+        "a2a_inbox_count": len(a2a_store.get_inbox(state.agent_id or ("cat-3" if os.environ.get("PORT") == "8005" else ("cat-2" if os.environ.get("PORT") == "8003" else "cat-1")))),
+        "a2a_outbox_count": len(a2a_store.get_outbox(state.agent_id or ("cat-3" if os.environ.get("PORT") == "8005" else ("cat-2" if os.environ.get("PORT") == "8003" else "cat-1")))),
     }
 
 
@@ -1910,10 +1910,76 @@ def get_prompt_for_tick(tick: int) -> Dict[str, Any]:
     return {"status": "not_found", "tick": tick, "record": None, "detail": detail}
 
 
+@app.get("/api/agent/prompt/latest")
+def get_prompt_latest() -> Dict[str, Any]:
+    """Returns the most recent model input behind an actor decision."""
+    size = store.prompt_log_size()
+    if size["records"] == 0:
+        return {
+            "status": "not_found",
+            "record": None,
+            "detail": "No prompts captured yet.",
+        }
+    record = store.read_prompt_for_tick(state.active_tick)
+    if record:
+        return {"status": "ok", "record": record}
+    # Fallback to reading the latest record in prompt log
+    try:
+        with store.PROMPTS_PATH.open("r", encoding="utf-8") as fh:
+            lines = [ln.strip() for ln in fh if ln.strip()]
+            if lines:
+                return {"status": "ok", "record": json.loads(lines[-1])}
+    except Exception:
+        pass
+    return {
+        "status": "not_found",
+        "record": None,
+        "detail": "No prompt captured for latest tick.",
+    }
+
+
 @app.get("/api/agent/prompt-log/stats")
 def get_prompt_log_stats() -> Dict[str, Any]:
     """Size of the prompt log, so the UI can show growth without downloading it."""
     return {"status": "ok", **store.prompt_log_size(), "path": str(store.PROMPTS_PATH)}
+
+
+@app.get("/api/agent/coach/prompt/latest")
+@app.get("/api/workbench/coach/prompt/latest")
+def get_coach_prompt_latest() -> Dict[str, Any]:
+    """Returns the most recent prompt and payload received by the strategic coach."""
+    record = store.read_coach_prompt_for_tick(tick=None, agent_id=state.agent_id)
+    if record:
+        return {"status": "ok", "record": record}
+    return {
+        "status": "not_found",
+        "record": None,
+        "detail": "No coach prompts have been captured yet. The coach runs every N ticks or when triggered.",
+    }
+
+
+@app.get("/api/agent/coach/prompt/{tick}")
+@app.get("/api/workbench/coach/prompt/{tick}")
+def get_coach_prompt_for_tick(tick: int) -> Dict[str, Any]:
+    """Returns the prompt and payload behind the coach evaluation at or before `tick`."""
+    record = store.read_coach_prompt_for_tick(tick=tick, agent_id=state.agent_id)
+    if record:
+        return {"status": "ok", "tick": tick, "record": record}
+    return {
+        "status": "not_found",
+        "tick": tick,
+        "record": None,
+        "detail": f"No coach prompt found for tick {tick}.",
+    }
+
+
+@app.get("/api/agent/coach/prompt-log/stats")
+@app.get("/api/workbench/coach/prompt-log/stats")
+def get_coach_prompt_log_stats() -> Dict[str, Any]:
+    """Size of the coach prompt log."""
+    paths = store.get_cat_paths(state.agent_id)
+    p = paths.get("coach_prompts", store.COACH_PROMPTS_PATH)
+    return {"status": "ok", **store.coach_prompt_log_size(state.agent_id), "path": str(p)}
 
 
 @app.get("/api/agent/directive")

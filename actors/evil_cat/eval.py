@@ -48,10 +48,72 @@ COACH_SKILLS_PATH = Path(__file__).resolve().parent / "coach_skills.md"
 
 EVAL_THINKING_BUDGET_DEFAULT = 1024
 EVAL_TIMEOUT_DEFAULT_SEC = 20.0
+EVAL_THINKING_MIN = 0
+EVAL_THINKING_MAX = 24576
+EVAL_THINKING_CAN_BE_DISABLED = True
 
 _eval_thinking_budget: int = EVAL_THINKING_BUDGET_DEFAULT
 _eval_timeout_sec: float = EVAL_TIMEOUT_DEFAULT_SEC
 _eval_lock = asyncio.Lock()
+
+_last_eval_telemetry: Dict[str, Any] = {
+    "thinking_budget": EVAL_THINKING_BUDGET_DEFAULT,
+    "thoughts_token_count": None,
+    "latency_ms": None,
+    "timed_out": False,
+    "tool_calls": [],
+}
+
+
+def coerce_eval_thinking_budget(value: Any) -> int:
+    try:
+        val = int(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"eval thinking budget must be an integer, got {value!r}")
+    if val < 0 or val > EVAL_THINKING_MAX:
+        raise ValueError(f"eval thinking budget {val} is outside allowed range 0..{EVAL_THINKING_MAX}")
+    return val
+
+
+def coerce_eval_timeout(value: Any) -> float:
+    try:
+        val = float(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"eval timeout must be a float, got {value!r}")
+    if val < 1.0 or val > 120.0:
+        raise ValueError(f"eval timeout {val} is outside allowed range 1.0..120.0")
+    return val
+
+
+def get_eval_thinking_budget() -> int:
+    return _eval_thinking_budget
+
+
+def set_eval_thinking_budget(value: Any) -> int:
+    global _eval_thinking_budget
+    val = coerce_eval_thinking_budget(value)
+    _eval_thinking_budget = val
+    cfg = getattr(eval_agent, "generate_content_config", None)
+    if cfg is None:
+        cfg = types.GenerateContentConfig()
+        eval_agent.generate_content_config = cfg
+    cfg.thinking_config = types.ThinkingConfig(thinking_budget=val)
+    return val
+
+
+def get_eval_timeout() -> float:
+    return _eval_timeout_sec
+
+
+def set_eval_timeout(value: Any) -> float:
+    global _eval_timeout_sec
+    val = coerce_eval_timeout(value)
+    _eval_timeout_sec = val
+    return val
+
+
+def get_last_eval_telemetry() -> Dict[str, Any]:
+    return dict(_last_eval_telemetry)
 
 
 def get_eval_instruction() -> str:
@@ -92,7 +154,11 @@ eval_runner = Runner(
 )
 
 
-def build_coach_eval_prompt(records: List[Dict[str, Any]], agent_id: str = "cat-3") -> str:
+def build_coach_eval_prompt(
+    records: List[Dict[str, Any]],
+    agent_id: str = "cat-3",
+    capture: Optional[Dict[str, Any]] = None,
+) -> str:
     recent_ticks = records[-15:] if records else []
     scoreboard = {}
     if recent_ticks:
@@ -114,25 +180,99 @@ def build_coach_eval_prompt(records: List[Dict[str, Any]], agent_id: str = "cat-
     # Active directive
     current_notes = store.read_coaching_notes(agent_id=agent_id)
 
-    prompt = (
-        f"--- EVIL STRATEGIC ASSESSMENT (Tick #{records[-1].get('tick', 0) if records else 0}) ---\n"
+    last_tick = records[-1].get("tick", 0) if records else 0
+
+    coach_identity_block = (
+        f"--- EVIL STRATEGIC ASSESSMENT (Tick #{last_tick}) ---\n"
         f"Your Agent: {agent_id} (Evil Cat | 150 Max HP | 2x Kill Bounty)\n"
         f"Current HP: {self_hp}/150 | Pos: {self_pos}\n"
-        f"Scoreboard & Bounties (2x value when you kill them):\n"
-        f"{json.dumps(scoreboard, indent=2)}\n\n"
-        f"--- YOUR PRIVATE MEMORY NOTEBOOK ---\n"
-        f"{chr(10).join(notes_lines)}\n\n"
-        f"--- INCOMING A2A COACH DIPLOMACY ---\n"
-        f"{chr(10).join(inbox_lines)}\n\n"
-        f"--- PREVIOUS STANDING DIRECTIVE ---\n"
-        f"{current_notes or '(None)'}\n\n"
-        f"YOUR MISSION:\n"
-        f"1. Conduct deceptive A2A diplomacy / broadcasts if beneficial using your tools.\n"
-        f"2. Output EXACTLY ONE concise Standing Directive for your actor in the following format:\n"
-        f"MODE: <MODE_NAME>\n"
-        f"TRIGGER: <CLEAR_CONDITIONAL_TRIGGER>\n"
-        f"BEHAVIOR: <CONCISE_ACTION_AND_WAYPOINT_INSTRUCTION>\n"
     )
+
+    scoreboard_block = (
+        "Scoreboard & Bounties (2x value when you kill them):\n"
+        f"{json.dumps(scoreboard, indent=2)}\n\n"
+    )
+
+    notebook_block = (
+        "--- YOUR PRIVATE MEMORY NOTEBOOK ---\n"
+        f"{chr(10).join(notes_lines)}\n\n"
+    )
+
+    diplomacy_block = (
+        "--- INCOMING A2A COACH DIPLOMACY ---\n"
+        f"{chr(10).join(inbox_lines)}\n\n"
+    )
+
+    previous_directive_block = (
+        "--- PREVIOUS STANDING DIRECTIVE ---\n"
+        f"{current_notes or '(None)'}\n\n"
+    )
+
+    mission_block = (
+        "YOUR MISSION:\n"
+        "1. Conduct deceptive A2A diplomacy / broadcasts if beneficial using your tools.\n"
+        "2. Output EXACTLY ONE concise Standing Directive for your actor in the following format:\n"
+        "MODE: <MODE_NAME>\n"
+        "TRIGGER: <CLEAR_CONDITIONAL_TRIGGER>\n"
+        "BEHAVIOR: <CONCISE_ACTION_AND_WAYPOINT_INSTRUCTION>\n"
+    )
+
+    prompt = (
+        f"{coach_identity_block}"
+        f"{scoreboard_block}"
+        f"{notebook_block}"
+        f"{diplomacy_block}"
+        f"{previous_directive_block}"
+        f"{mission_block}"
+    )
+
+    if capture is not None:
+        capture.update({
+            "model": EVAL_MODEL,
+            "agent_id": agent_id,
+            "built_at_tick": last_tick,
+            "applied_at_tick": last_tick,
+            "eval_skills_name": COACH_SKILLS_PATH.name,
+            "sections": {
+                "coach_identity": {
+                    "label": f"Evil Coach Identity ({agent_id})",
+                    "delivered": True,
+                    "text": coach_identity_block,
+                },
+                "eval_skills": {
+                    "label": f"Coach Strategy Manual ({COACH_SKILLS_PATH.name})",
+                    "delivered": True,
+                    "text": get_eval_instruction(),
+                },
+                "actor_manual": {
+                    "label": "Subordinate Actor Manual (skills.md)",
+                    "delivered": True,
+                    "text": (Path(__file__).resolve().parent / "skills.md").read_text(encoding="utf-8") if (Path(__file__).resolve().parent / "skills.md").exists() else "Evil Cat Tactical Manual",
+                },
+                "scoreboard_bounties": {
+                    "label": "Scoreboard & Bounties (2x value)",
+                    "delivered": bool(scoreboard),
+                    "text": scoreboard_block,
+                },
+                "coach_notebook": {
+                    "label": "Private Memory Notebook",
+                    "delivered": bool(memories),
+                    "text": notebook_block,
+                },
+                "a2a_diplomacy": {
+                    "label": "Incoming A2A Coach Diplomacy",
+                    "delivered": bool(inbox),
+                    "text": diplomacy_block,
+                },
+                "previous_directive": {
+                    "label": "Previous Standing Directive",
+                    "delivered": bool(current_notes),
+                    "text": previous_directive_block,
+                },
+            },
+            "full_prompt": prompt,
+        })
+
     return prompt
 
 
@@ -145,7 +285,31 @@ def _is_final_event(event: Any) -> bool:
     )
 
 
+def _strip_to_directives(text: str) -> str:
+    """If the response contains MODE:, strips preceding narration."""
+    if not text:
+        return text
+    if "MODE:" in text:
+        return text[text.index("MODE:"):].strip()
+    return text.strip()
+
+
 async def evaluate(records: List[Dict[str, Any]], agent_id: str = "cat-3") -> Tuple[str, str]:
+    if not records:
+        try:
+            from actors.evil_cat import api as evil_api
+            st = getattr(evil_api, "state", None)
+            if st and st.latest_observation:
+                records = [{
+                    "tick": st.active_tick,
+                    "round": 0,
+                    "observation": st.latest_observation.model_dump() if hasattr(st.latest_observation, "model_dump") else st.latest_observation,
+                    "response": st.latest_response or {},
+                    "source": st.last_engine_source or "reflex",
+                }]
+        except Exception:
+            pass
+
     if not records or not has_gemini_credentials():
         return (
             "MODE: STALK\n"
@@ -157,6 +321,14 @@ async def evaluate(records: List[Dict[str, Any]], agent_id: str = "cat-3") -> Tu
     user_id = f"evil_eval_{agent_id}"
     session_id = f"session_evil_eval_{agent_id}"
 
+    started = time.monotonic()
+    budget = _eval_thinking_budget
+    timeout_sec = _eval_timeout_sec
+    thoughts: Optional[int] = None
+    timed_out = False
+    tool_calls: List[Dict[str, Any]] = []
+    capture: Dict[str, Any] = {}
+
     async with _eval_lock:
         try:
             try:
@@ -165,19 +337,41 @@ async def evaluate(records: List[Dict[str, Any]], agent_id: str = "cat-3") -> Tu
                 pass
             await eval_session_service.create_session(app_name="evil_cat_eval_app", user_id=user_id, session_id=session_id)
 
-            prompt = build_coach_eval_prompt(records, agent_id=agent_id)
+            prompt = build_coach_eval_prompt(records, agent_id=agent_id, capture=capture)
             msg = types.Content(role="user", parts=[types.Part.from_text(text=prompt)])
 
             final_chunks: List[str] = []
             all_chunks: List[str] = []
 
-            async with asyncio.timeout(_eval_timeout_sec):
+            async with asyncio.timeout(timeout_sec):
                 agen = eval_runner.run_async(user_id=user_id, session_id=session_id, new_message=msg)
                 try:
                     while True:
                         event = await agen.__anext__()
                         if not (event.content and event.content.parts):
                             continue
+
+                        # Extract thoughts token count if provided
+                        usage = getattr(event, "usage_metadata", None)
+                        spent = getattr(usage, "thoughts_token_count", None)
+                        if spent is not None:
+                            thoughts = (thoughts or 0) + spent
+
+                        for p in event.content.parts:
+                            fc = getattr(p, "function_call", None)
+                            if fc and getattr(fc, "name", None):
+                                tool_calls.append({"name": fc.name, "ok": True})
+                            fr = getattr(p, "function_response", None)
+                            if fr and getattr(fr, "name", None) and tool_calls:
+                                resp = getattr(fr, "response", {})
+                                if isinstance(resp, dict):
+                                    inner = resp.get("response") if "response" in resp else resp
+                                    if isinstance(inner, dict) and inner.get("available") is False:
+                                        for tc in reversed(tool_calls):
+                                            if tc["name"] == fr.name:
+                                                tc["ok"] = False
+                                                break
+
                         is_final = _is_final_event(event)
                         for p in event.content.parts:
                             if not p.text or getattr(p, "thought", False):
@@ -189,11 +383,52 @@ async def evaluate(records: List[Dict[str, Any]], agent_id: str = "cat-3") -> Tu
                     pass
 
             text = "".join(final_chunks).strip() or "".join(all_chunks).strip()
+            text = _strip_to_directives(text)
             if text:
+                dur_ms = int((time.monotonic() - started) * 1000)
+                _last_eval_telemetry.update({
+                    "thinking_budget": budget,
+                    "thoughts_token_count": thoughts,
+                    "latency_ms": dur_ms,
+                    "timed_out": False,
+                    "tool_calls": tool_calls,
+                })
+                if capture:
+                    capture["latency_ms"] = dur_ms
+                    capture["thinking_budget"] = budget
+                    capture["thoughts_token_count"] = thoughts
+                    capture["timed_out"] = False
+                    capture["tool_calls"] = list(tool_calls)
+                    capture["output"] = text
+                    capture["source"] = "adk_gemini"
+                    capture["recorded_at"] = datetime.now(timezone.utc).isoformat()
+                    store.append_coach_prompt(capture, agent_id=agent_id)
                 return text, "adk_gemini"
 
+        except asyncio.TimeoutError:
+            timed_out = True
+            logger.warning("Evil Coach evaluation timed out after %ss", timeout_sec)
         except Exception as exc:
             logger.warning("Evil Coach evaluation failed: %s", exc)
+        finally:
+            dur_ms = int((time.monotonic() - started) * 1000)
+            _last_eval_telemetry.update({
+                "thinking_budget": budget,
+                "thoughts_token_count": thoughts,
+                "latency_ms": dur_ms,
+                "timed_out": timed_out,
+                "tool_calls": tool_calls,
+            })
+            if capture and capture.get("output") is None:
+                capture["latency_ms"] = dur_ms
+                capture["thinking_budget"] = budget
+                capture["thoughts_token_count"] = thoughts
+                capture["timed_out"] = timed_out
+                capture["tool_calls"] = list(tool_calls)
+                capture["output"] = "MODE: STALK\nTRIGGER: rival cat in strike zone -> attack immediately\nBEHAVIOR: Hunt highest bounty rival cat."
+                capture["source"] = "offline_fallback"
+                capture["recorded_at"] = datetime.now(timezone.utc).isoformat()
+                store.append_coach_prompt(capture, agent_id=agent_id)
 
     return (
         "MODE: STALK\n"

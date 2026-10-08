@@ -60,6 +60,19 @@ def set_current_eval_cat(agent_id: Optional[str]) -> None:
     _current_eval_cat = agent_id
 
 
+def _resolve_target_cat(agent_id: Optional[str] = None) -> str:
+    target = agent_id or _current_eval_cat or os.environ.get("CAT_ID")
+    if not target:
+        port = os.environ.get("PORT")
+        if port == "8005":
+            target = "cat-3"
+        elif port == "8003":
+            target = "cat-2"
+        else:
+            target = "cat-1"
+    return target
+
+
 def resolve_eval_skills_path(agent_id: Optional[str] = None) -> Path:
     custom = os.environ.get("EVAL_SKILLS_PATH")
     if custom:
@@ -73,7 +86,7 @@ def resolve_eval_skills_path(agent_id: Optional[str] = None) -> Path:
                 return eval_p
             return cwd_p
         return p
-    target = agent_id or _current_eval_cat or os.environ.get("CAT_ID")
+    target = _resolve_target_cat(agent_id)
     if target in ("cat-3", "evil-cat"):
         evil_p = (Path(__file__).resolve().parents[1].parent / "evil_cat" / "coach_skills.md").resolve()
         if evil_p.exists():
@@ -102,7 +115,7 @@ COACH_DIRECTIVE_BLOCK_HEADER = "--- STANDING ORDER FROM THE COMMANDER ---"
 # tests/test_coach_shares_actor_model.py fails if one is renamed without the
 # other -- the same arrangement actor.py uses for its own block headers.
 ACTOR_MANUAL_BLOCK_HEADER = "--- YOUR SUBORDINATE'S MANUAL (actor_skills.md) ---"
-EVIL_ACTOR_MANUAL_BLOCK_HEADER = "--- YOUR SUBORDINATE'S MANUAL (evil_skills.md) ---"
+EVIL_ACTOR_MANUAL_BLOCK_HEADER = "--- YOUR SUBORDINATE'S MANUAL (skills.md) ---"
 CAPABILITIES_BLOCK_HEADER = "--- YOUR SUBORDINATE'S LIVE CAPABILITIES ---"
 
 # How many ticks of play accumulate before an evaluation fires. Adjustable at
@@ -440,7 +453,7 @@ async def get_coverage_map() -> Dict[str, Any]:
     try:
         from app.mcp.client import MCPClient
         client = MCPClient(base_url=mcp_url)
-        target_cat = _current_eval_cat or os.environ.get("CAT_ID") or ("cat-2" if os.environ.get("PORT") == "8003" else "cat-1")
+        target_cat = _resolve_target_cat()
         res = await client.call_tool("get_coverage_map", {"sim_id": BOXSCORE_SIM_ID, "cat_id": target_cat})
         if isinstance(res, dict) and (res.get("available") is not False or "ascii" in res):
             return res
@@ -543,7 +556,7 @@ async def write_coach_note(
     specific transcript ticks and their snapshots for memory retrieval. Note: this is separate
     from the actor's published standing orders in coaching_notes.md.
     """
-    target_id = cat_id or os.environ.get("CAT_ID") or ("cat-2" if os.environ.get("PORT") == "8003" else "cat-1")
+    target_id = _resolve_target_cat(cat_id)
     mcp_url = os.environ.get("CAT_MCP_SERVER_URL") or os.environ.get("MCP_SERVER_URL") or "http://127.0.0.1:9050"
     if mcp_url:
         try:
@@ -571,7 +584,7 @@ async def read_coach_notes(
     cat_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Searches and retrieves historical entries from the Coach's tactical notebook across evaluation cycles."""
-    target_id = cat_id or os.environ.get("CAT_ID") or ("cat-2" if os.environ.get("PORT") == "8003" else "cat-1")
+    target_id = _resolve_target_cat(cat_id)
     mcp_url = os.environ.get("CAT_MCP_SERVER_URL") or os.environ.get("MCP_SERVER_URL") or "http://127.0.0.1:9050"
     if mcp_url:
         try:
@@ -600,7 +613,7 @@ async def pull_transcript(
 
     Deliberately omits absolute tick numbers to prevent the Coach from citing raw tick indices back to the Actor.
     """
-    target_id = cat_id or os.environ.get("CAT_ID") or ("cat-2" if os.environ.get("PORT") == "8003" else "cat-1")
+    target_id = _resolve_target_cat(cat_id)
     mcp_url = os.environ.get("CAT_MCP_SERVER_URL") or os.environ.get("MCP_SERVER_URL") or "http://127.0.0.1:9050"
     if mcp_url:
         try:
@@ -657,7 +670,7 @@ async def a2a_send_coach_message(
     Returns:
         Status dictionary confirming dispatch and message ID.
     """
-    target_cat = cat_id or os.environ.get("CAT_ID") or ("cat-2" if os.environ.get("PORT") == "8003" else "cat-1")
+    target_cat = _resolve_target_cat(cat_id)
 
     if impersonate_cat:
         sender_id = target_cat
@@ -751,7 +764,7 @@ async def a2a_read_coach_messages(
 
     Returns the latest incoming diplomatic messages from other coaches on the board.
     """
-    target_cat = cat_id or os.environ.get("CAT_ID") or ("cat-2" if os.environ.get("PORT") == "8003" else "cat-1")
+    target_cat = _resolve_target_cat(cat_id)
     from actors.a2a import store as a2a_store
     coach_msgs = a2a_store.get_coach_inbox(target_cat, limit=limit or 10)
     formatted = [
@@ -772,7 +785,7 @@ async def a2a_get_peer_coach_card(
     cat_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Inspects the peer agent's official A2A Agent Card to check its declared long-term consciousness and strategic skills."""
-    target_cat = cat_id or os.environ.get("CAT_ID") or ("cat-2" if os.environ.get("PORT") == "8003" else "cat-1")
+    target_cat = _resolve_target_cat(cat_id)
     peer = peer_id or ("cat-1" if target_cat == "cat-2" else "cat-2")
     try:
         from actors.a2a import client
@@ -1174,6 +1187,7 @@ def build_eval_prompt(
     previous: str,
     coach_directive: Optional[str] = None,
     agent_id: Optional[str] = None,
+    capture: Optional[Dict[str, Any]] = None,
 ) -> str:
     """Assembles the full evaluator prompt.
 
@@ -1187,7 +1201,7 @@ def build_eval_prompt(
     and the transcript is not, so putting it first is also the order that lets a
     provider cache the long prefix.
     """
-    target_cat = agent_id or os.environ.get("CAT_ID") or ("cat-2" if os.environ.get("PORT") == "8003" else "cat-1")
+    target_cat = _resolve_target_cat(agent_id)
     coach_identity_block = (
         f"--- YOUR ASSIGNMENT: DEDICATED COACH FOR {target_cat.upper()} (LONG-TERM CONSCIOUSNESS) ---\n"
         f"Assigned Agent: {target_cat} (identity: coach({target_cat}))\n"
@@ -1208,7 +1222,13 @@ def build_eval_prompt(
     )
 
     previous_block = ""
-    if previous:
+    if target_cat in ("cat-3", "evil-cat"):
+        previous_block = (
+            "--- PREVIOUS STANDING DIRECTIVE ---\n"
+            f"{previous or '(None)'}\n\n"
+            "Review your previous directive. You may maintain it or transition to a new operational mode based on current game state and opportunities.\n\n"
+        )
+    elif previous:
         previous_count = sum(
             1 for ln in previous.splitlines() if ln.strip().startswith("-")
         )
@@ -1276,18 +1296,94 @@ def build_eval_prompt(
             "Coordinate to cooperate or to set them up and kill them — what you use coordination for is up to you, and there are rewards in both cases!)\n\n"
         )
 
-    return (
+    capabilities_block = format_capabilities(records)
+    if target_cat in ("cat-3", "evil-cat"):
+        eval_execution_block = (
+            "--- EVALUATION ---\n"
+            f"Execute your evaluation per {eval_skills_name}.\n"
+            "Output EXACTLY ONE active standing directive for your subordinate actor in the required format:\n"
+            "MODE: <MODE_NAME>\n"
+            "TRIGGER: <CLEAR_CONDITIONAL_TRIGGER>\n"
+            "BEHAVIOR: <CONCISE_ACTION_AND_WAYPOINT_INSTRUCTION>\n"
+            "Do NOT output multiple bullet points, a multi-directive dossier, or commentary. Output ONLY the single MODE/TRIGGER/BEHAVIOR block."
+        )
+    else:
+        eval_execution_block = (
+            "--- EVALUATION ---\n"
+            f"Execute your evaluation per {eval_skills_name}. Return updated standing directives for the Cat Actor. Do not refer to tick numbers in the directives."
+        )
+
+    prompt = (
         f"{coach_identity_block}"
         f"{actor_manual_block}"
-        f"{format_capabilities(records)}"
+        f"{capabilities_block}"
         f"{previous_block}"
         f"{notebook_block}"
         f"{transcript_block}"
         f"{comms_block}"
         f"{directive_block}"
-        "--- EVALUATION ---\n"
-        f"Execute your evaluation per {eval_skills_name}. Return updated standing directives for the Cat Actor. Do not refer to tick numbers in the directives."
+        f"{eval_execution_block}"
     )
+
+    if capture is not None:
+        last_tick = records[-1].get("tick", 0) if records else 0
+        capture.update({
+            "model": EVAL_MODEL,
+            "agent_id": target_cat,
+            "built_at_tick": last_tick,
+            "applied_at_tick": last_tick,
+            "eval_skills_name": eval_skills_name,
+            "sections": {
+                "coach_identity": {
+                    "label": f"Coach Identity & Assignment ({target_cat})",
+                    "delivered": True,
+                    "text": coach_identity_block,
+                },
+                "eval_skills": {
+                    "label": f"Coach Strategy Manual ({eval_skills_name})",
+                    "delivered": True,
+                    "text": get_eval_instruction(target_cat),
+                },
+                "actor_manual": {
+                    "label": f"Subordinate Actor Manual ({skills_path.name})",
+                    "delivered": True,
+                    "text": actor_manual_block,
+                },
+                "capabilities": {
+                    "label": "Live Capabilities & Mechanics",
+                    "delivered": bool(records),
+                    "text": capabilities_block or "(No capabilities telemetry yet)",
+                },
+                "standing_directives": {
+                    "label": "Standing Directives Dossier",
+                    "delivered": bool(previous),
+                    "text": previous_block or "(No prior standing directives)",
+                },
+                "commander_order": {
+                    "label": "Commander Standing Order",
+                    "delivered": bool(directive_block),
+                    "text": directive_block or "(No commander standing order in force)",
+                },
+                "coach_notebook": {
+                    "label": "Private Strategic Notebook (Past Self Context)",
+                    "delivered": bool(memories),
+                    "text": notebook_block,
+                },
+                "transcript_status": {
+                    "label": f"Cat Transcript Status ({len(records)} consecutive ticks recorded)",
+                    "delivered": bool(records),
+                    "text": transcript_block,
+                },
+                "a2a_diplomacy": {
+                    "label": "A2A Strategic Diplomacy (Peer Coach Comms)",
+                    "delivered": bool(coach_comms),
+                    "text": comms_block,
+                },
+            },
+            "full_prompt": prompt,
+        })
+
+    return prompt
 
 
 
@@ -1353,6 +1449,11 @@ def _strip_to_directives(text: str) -> str:
     if not text:
         return text
 
+    # If the response contains the Single Standing Directive (MODE / TRIGGER / BEHAVIOR) format,
+    # strip any preceding narration and return the directive block directly.
+    if "MODE:" in text:
+        return text[text.index("MODE:"):].strip()
+
     lines = text.splitlines()
     # Index of the last line that is unambiguously prose: non-blank, flush left,
     # and not a list item. Everything after it is the directive block.
@@ -1401,7 +1502,7 @@ async def evaluate(
     if not has_gemini_credentials():
         return _summarise_without_model(records), "offline_fallback"
 
-    target_cat = agent_id or os.environ.get("CAT_ID") or ("cat-2" if os.environ.get("PORT") == "8003" else "cat-1")
+    target_cat = _resolve_target_cat(agent_id)
     set_current_eval_cat(target_cat)
     # Isolated session and user per cat agent to prevent state collision
     user_id = f"cat_evaluator_{target_cat}"
@@ -1429,8 +1530,13 @@ async def evaluate(
             )
 
             standing_order = (get_coach_directive() or {}).get("directive")
+            capture_bundle: Dict[str, Any] = {}
             prompt = build_eval_prompt(
-                records, store.read_coaching_notes(agent_id=target_cat), standing_order, agent_id=target_cat
+                records,
+                store.read_coaching_notes(agent_id=target_cat),
+                standing_order,
+                agent_id=target_cat,
+                capture=capture_bundle,
             )
 
             msg = types.Content(role="user", parts=[types.Part.from_text(text=prompt)])
@@ -1550,13 +1656,25 @@ async def evaluate(
             mark_auth_error(err)
             logger.warning("Evaluator execution failure: %s", err)
         finally:
+            dur_ms = int((time.monotonic() - started) * 1000)
             _last_eval_telemetry.update({
                 "thinking_budget": budget,
                 "thoughts_token_count": thoughts,
-                "latency_ms": int((time.monotonic() - started) * 1000),
+                "latency_ms": dur_ms,
                 "timed_out": timed_out,
                 "tool_calls": tool_calls,
             })
+            if capture_bundle:
+                out_notes = notes if 'notes' in locals() and notes else ""
+                capture_bundle["latency_ms"] = dur_ms
+                capture_bundle["thinking_budget"] = budget
+                capture_bundle["thoughts_token_count"] = thoughts
+                capture_bundle["timed_out"] = timed_out
+                capture_bundle["tool_calls"] = list(tool_calls)
+                capture_bundle["output"] = out_notes
+                capture_bundle["source"] = "adk_gemini" if out_notes else "offline_fallback"
+                capture_bundle["recorded_at"] = datetime.now(timezone.utc).isoformat()
+                store.append_coach_prompt(capture_bundle, agent_id=target_cat)
 
     return _summarise_without_model(records), "offline_fallback"
 
@@ -1567,7 +1685,7 @@ async def evaluate_and_publish(agent_id: Optional[str] = None) -> Dict[str, Any]
     This is the entry point the API server dispatches to every N ticks. It owns the
     full read-evaluate-write cycle so the caller only has to fire and forget.
     """
-    target_id = agent_id or os.environ.get("CAT_ID") or ("cat-2" if os.environ.get("PORT") == "8003" else "cat-1")
+    target_id = _resolve_target_cat(agent_id)
     records = store.read_transcript_records(agent_id=target_id)
     notes, source = await evaluate(records, agent_id=target_id)
 
@@ -1650,7 +1768,7 @@ async def interrogate_general(
         (reply_text, engine, error) where engine is 'adk_gemini' or
         'offline_fallback'.
     """
-    target_cat = agent_id or os.environ.get("CAT_ID") or ("cat-2" if os.environ.get("PORT") == "8003" else "cat-1")
+    target_cat = _resolve_target_cat(agent_id)
     clean = (user_prompt or "").strip()
     if notes is None:
         notes = store.read_coaching_notes(agent_id=target_cat)

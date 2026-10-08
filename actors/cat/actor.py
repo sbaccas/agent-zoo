@@ -47,9 +47,12 @@ def resolve_skills_path(agent_id: Optional[str] = None) -> Path:
         return p
     target = agent_id or _current_actor_cat or os.environ.get("CAT_ID")
     if target in ("cat-3", "evil-cat"):
-        evil_p = Path(__file__).parent / "evil_skills.md"
+        evil_p = (Path(__file__).resolve().parent.parent / "evil_cat" / "skills.md").resolve()
         if evil_p.exists():
             return evil_p
+        legacy_p = Path(__file__).parent / "evil_skills.md"
+        if legacy_p.exists():
+            return legacy_p
     return globals().get("SKILLS_PATH", Path(__file__).parent / "actor_skills.md")
 
 
@@ -359,18 +362,13 @@ def get_radio_instruction() -> str:
 
 
 def _actor_instruction_provider(_ctx: ReadonlyContext) -> str:
-    """Re-reads actor_skills.md on every decision so edits apply immediately.
-
-    Previously the manual was read once at import. uvicorn's --reload only
-    watches .py files, so editing the markdown changed nothing until an unrelated
-    Python file was touched -- silently, with no error and no warning.
-    """
-    return get_skills_instruction()
+    """Re-reads skills manual on every decision so edits apply immediately."""
+    return get_skills_instruction(_current_actor_cat)
 
 
 def _interrogator_instruction_provider(_ctx: ReadonlyContext) -> str:
     """The same manual, plus the radio persona. Both read fresh from disk."""
-    return get_skills_instruction() + "\n\n" + get_radio_instruction()
+    return get_skills_instruction(_current_actor_cat) + "\n\n" + get_radio_instruction()
 
 
 # Initialize ADK Agent and Runner
@@ -1040,7 +1038,7 @@ def build_decision_prompt(
     # Standing notes published by the evaluator subagent. Delimiter only: how
     # much weight these carry is stated once, in actor_skills.md, under
     # "Chain of Command". Nothing instructional belongs here.
-    coaching_notes = store.read_coaching_notes()
+    coaching_notes = store.read_coaching_notes(agent_id=agent_id)
     coaching_context = ""
     if coaching_notes:
         coaching_context = (

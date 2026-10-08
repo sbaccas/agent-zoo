@@ -11,6 +11,13 @@
   let inspectingTick = null;
   let cachedState = null;
 
+  function getActiveCat() {
+    if (cachedState && cachedState.agent_id) return cachedState.agent_id;
+    if (window.location.port === '8005') return 'cat-3';
+    if (window.location.port === '8003') return 'cat-2';
+    return 'cat-1';
+  }
+
   // DOM Elements - Header
   const statusBadge = document.getElementById('statusBadge');
   const statusText = document.getElementById('statusText');
@@ -728,7 +735,7 @@
       td.style.textAlign = 'center';
       td.style.color = 'var(--text-muted)';
       td.style.padding = '24px';
-      const activeCat = (cachedState && cachedState.agent_id) || (window.location.port === '8003' ? 'cat-2' : 'cat-1');
+      const activeCat = getActiveCat();
       td.textContent = `No conversation history recorded yet. Connect ${activeCat} on the Game Server and advance ticks to stream events.`;
       tr.appendChild(td);
       historyTableBody.replaceChildren(tr);
@@ -925,7 +932,7 @@
   function renderChatHistory(chatList) {
     if (!chatMessagesContainer) return;
 
-    const activeCat = (cachedState && cachedState.agent_id) || (window.location.port === '8003' ? 'cat-2' : 'cat-1');
+    const activeCat = getActiveCat();
 
     if (!chatList || chatList.length === 0) {
       const bubble = document.createElement('div');
@@ -1117,7 +1124,7 @@
   function renderGeneralChat(chatList) {
     if (!generalChatMessages) return;
 
-    const activeCat = (cachedState && cachedState.agent_id) || (window.location.port === '8003' ? 'cat-2' : 'cat-1');
+    const activeCat = getActiveCat();
 
     if (!chatList || chatList.length === 0) {
       const bubble = document.createElement('div');
@@ -1309,6 +1316,35 @@
       });
   }
 
+  function openCoachPromptModal(tick) {
+    if (!promptModal) return;
+    const activeCat = getActiveCat();
+    promptModalTitle.textContent = `🔬 Gemini Coach Payload — ${activeCat} (Long-Term Consciousness)`;
+    promptModalMeta.textContent = 'Loading…';
+    promptModalSections.replaceChildren();
+    promptModal.style.display = 'flex';
+
+    const url = (tick !== undefined && tick !== null)
+      ? `/api/agent/coach/prompt/${tick}`
+      : `/api/agent/coach/prompt/latest`;
+
+    fetch(url)
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.status !== 'ok' || !data.record) {
+          lastPromptRecord = null;
+          promptModalMeta.textContent = data.detail || 'No coach prompt recorded yet. The coach runs every N ticks or when triggered.';
+          return;
+        }
+        lastPromptRecord = data.record;
+        renderPromptRecord(data.record);
+      })
+      .catch((err) => {
+        lastPromptRecord = null;
+        promptModalMeta.textContent = `Failed to load coach prompt: ${err}`;
+      });
+  }
+
   function renderPromptRecord(rec) {
     const built = rec.built_at_tick;
     const applied = rec.applied_at_tick;
@@ -1342,6 +1378,10 @@
       const line2 = document.createElement('div');
       line2.textContent = `Returned: ${(rec.decision.action || '').toUpperCase()} — ${rec.decision.thought || ''}`;
       meta.appendChild(line2);
+    } else if (rec.output) {
+      const line2 = document.createElement('div');
+      line2.textContent = `Published Directive: ${rec.output.replace(/\n+/g, ' ')}`;
+      meta.appendChild(line2);
     }
     promptModalMeta.appendChild(meta);
 
@@ -1353,19 +1393,28 @@
       'commander_directive',
       'history_window',
       'current_observation',
+      'coach_identity',
+      'eval_skills',
+      'actor_manual',
+      'capabilities',
+      'standing_directives',
+      'commander_order',
+      'coach_notebook',
+      'transcript_status',
+      'a2a_diplomacy',
     ];
     const sections = rec.sections || {};
     const blocks = [];
+    const allKeys = [...order, ...Object.keys(sections).filter((k) => !order.includes(k))];
 
-    order.forEach((key) => {
+    allKeys.forEach((key) => {
       const sec = sections[key];
       if (!sec) return;
 
       const details = document.createElement('details');
       details.className = sec.delivered ? 'prompt-section' : 'prompt-section not-delivered';
-      // The skills manual is ~7KB and identical every tick; collapsing it keeps
-      // the parts that actually vary in view.
-      details.open = sec.delivered && key !== 'system_instruction';
+      // The skills manuals are ~7KB and identical every tick; collapsing keeps what varies in view.
+      details.open = sec.delivered && key !== 'system_instruction' && key !== 'eval_skills' && key !== 'actor_manual';
 
       const summary = document.createElement('summary');
       const status = sec.delivered ? '✓' : '✗ NOT SENT';
@@ -1449,6 +1498,7 @@
   const checkEvalEnabled = document.getElementById('checkEvalEnabled');
   const evalNotesContent = document.getElementById('evalNotesContent');
   const btnRunEvalNow = document.getElementById('btnRunEvalNow');
+  const btnCoachPayload = document.getElementById('btnCoachPayload');
   const btnCopyEvalNotes = document.getElementById('btnCopyEvalNotes');
   const btnViewEvalSkills = document.getElementById('btnViewEvalSkills');
   const skillsModalTitle = document.getElementById('skillsModalTitle');
@@ -2881,6 +2931,12 @@
         btnRunEvalNow.disabled = false;
         btnRunEvalNow.textContent = original;
       }
+    });
+  }
+
+  if (btnCoachPayload) {
+    btnCoachPayload.addEventListener('click', () => {
+      openCoachPromptModal();
     });
   }
 

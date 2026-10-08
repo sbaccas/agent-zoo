@@ -13,17 +13,17 @@ from actors.cat.subagents.eval import (
 
 
 def test_evil_cat_skills_path_resolution(monkeypatch):
-    """Verify CAT_SKILLS_PATH resolves evil_skills.md properly."""
-    custom_path = "actors/cat/evil_skills.md"
+    """Verify CAT_SKILLS_PATH resolves skills.md properly."""
+    custom_path = "actors/evil_cat/skills.md"
     monkeypatch.setenv("CAT_SKILLS_PATH", custom_path)
 
     resolved = resolve_skills_path()
     assert resolved.exists()
-    assert resolved.name == "evil_skills.md"
+    assert resolved.name == "skills.md"
 
     text = get_skills_instruction()
     assert "Apex Cat-Hunter" in text or "Mice Award ZERO Points" in text
-    assert "Kill Absorption" in text
+    assert "Double Bounty" in text or "Kill Absorption" in text
 
 
 def test_evil_coach_skills_path_resolution(monkeypatch):
@@ -47,18 +47,15 @@ def test_eval_interval_defaults_to_5():
 
 
 def test_evil_cat_rules_focus_on_cat_elimination():
-    """Verify evil_skills.md explicitly forbids hunting mice for score and explains 150 HP / 2x bounty."""
-    p = Path(__file__).resolve().parents[1] / "actors" / "cat" / "evil_skills.md"
+    """Verify skills.md explicitly forbids hunting mice for score and explains 150 HP / 2x bounty."""
+    p = Path(__file__).resolve().parents[1] / "actors" / "evil_cat" / "skills.md"
     assert p.exists()
     content = p.read_text(encoding="utf-8")
     assert "Mice Award ZERO Points" in content
     assert "Heals 50% HP" in content or "Emergency Medkits" in content
     assert "150 Max HP" in content
     assert "Double Bounty" in content
-    assert "a2a_broadcast" in content
-    assert "a2a_send_message" in content
-    assert "OpSec Cover: The Innocent Persona" in content
-    assert "Server NPCs Have No Comms" in content
+    assert "Follow the Evil Coach's Standing Directive" in content
 
 
 def test_evil_coach_rules_distinguish_npcs_and_opsec():

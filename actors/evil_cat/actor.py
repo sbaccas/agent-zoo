@@ -23,9 +23,12 @@ from google.adk import Runner
 from google.adk.sessions import InMemorySessionService
 from google.genai import types
 
-from actors.auth import get_gcp_id_token
 from actors.models import CatTacticalDecision, Observation
 from actors.cat import store
+from actors.cat.actor import (
+    check_gemini_auth_health,
+    has_gemini_credentials,
+)
 
 logger = logging.getLogger("evil_cat_actor")
 
@@ -100,12 +103,27 @@ def set_thinking_budget(value: Any) -> int:
     return budget
 
 
+_deliberation_timeout_sec: float = DELIBERATION_TIMEOUT_DEFAULT_SEC
+
+
+def coerce_deliberation_timeout(value: Any) -> float:
+    try:
+        val = float(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"deliberation timeout must be a float, got {value!r}")
+    if val < DELIBERATION_TIMEOUT_MIN_SEC or val > DELIBERATION_TIMEOUT_MAX_SEC:
+        raise ValueError(f"deliberation timeout {val} is outside allowed range {DELIBERATION_TIMEOUT_MIN_SEC}..{DELIBERATION_TIMEOUT_MAX_SEC}")
+    return val
+
+
 def get_deliberation_timeout() -> float:
-    return DELIBERATION_TIMEOUT_DEFAULT_SEC
+    return _deliberation_timeout_sec
 
 
 def set_deliberation_timeout(value: Any) -> float:
-    return float(value)
+    global _deliberation_timeout_sec
+    _deliberation_timeout_sec = coerce_deliberation_timeout(value)
+    return _deliberation_timeout_sec
 
 
 # Initialize ADK Agent and Runner (No tools!)
@@ -130,16 +148,6 @@ adk_runner = Runner(
 )
 
 
-def has_gemini_credentials() -> bool:
-    if os.environ.get("GEMINI_API_KEY"):
-        return True
-    if os.environ.get("GOOGLE_GENAI_USE_VERTEXAI") == "True" and os.environ.get("GOOGLE_CLOUD_PROJECT"):
-        return True
-    return bool(get_gcp_id_token())
-
-
-def check_gemini_auth_health() -> Dict[str, Any]:
-    return {"authenticated": has_gemini_credentials(), "mode": "vertex" if os.environ.get("GOOGLE_GENAI_USE_VERTEXAI") == "True" else "api_key"}
 
 
 def format_events(events: List[Dict[str, Any]]) -> str:
@@ -274,7 +282,7 @@ async def query_adk_gemini(
     capture: Optional[Dict[str, Any]] = None,
     timeout_seconds: Optional[float] = None,
     commander_directive: Optional[Dict[str, Any]] = None,
-) -> Tuple[CatTacticalDecision, str, Optional[Dict[str, Any]]]:
+) -> Tuple[Optional[CatTacticalDecision], str, Optional[Dict[str, Any]]]:
     """Runs one tactical deliberation turn with Google ADK Gemini."""
     started = time.monotonic()
     prompt = build_decision_prompt(
@@ -287,7 +295,7 @@ async def query_adk_gemini(
     )
 
     if not has_gemini_credentials():
-        return CatTacticalDecision(thought="Fallback: No Gemini credentials", action="stay", target_id="", strategy="ROAMING"), "heuristic_fallback", None
+        return None, "heuristic_fallback", None
 
     user_id = f"evil_actor_{agent_id}"
     session_id = f"session_evil_actor_{agent_id}"
@@ -302,24 +310,44 @@ async def query_adk_gemini(
         msg = types.Content(role="user", parts=[types.Part.from_text(text=prompt)])
         effective_timeout = timeout_seconds or DELIBERATION_TIMEOUT_DEFAULT_SEC
 
-        async def _run_stream():
-            final_decision = None
-            async for ev in adk_runner.run_async(user_id=user_id, session_id=session_id, message=msg):
-                if ev.is_message():
-                    content = ev.get_message()
-                    for p in getattr(content, "parts", []):
-                        fn_resp = getattr(p, "function_response", None)
-                        if fn_resp and getattr(fn_resp, "response", None):
-                            resp_data = fn_resp.response
-                            if isinstance(resp_data, dict) and "output" in resp_data:
+        async def _run_stream() -> Tuple[Optional[CatTacticalDecision], Optional[int]]:
+            final_decision: Optional[CatTacticalDecision] = None
+            thoughts_tokens: Optional[int] = None
+            agen = adk_runner.run_async(user_id=user_id, session_id=session_id, new_message=msg)
+            try:
+                while True:
+                    ev = await agen.__anext__()
+                    if ev.error_code or ev.error_message:
+                        logger.warning("Evil Cat ADK Error: %s - %s", ev.error_code, ev.error_message)
+                    usage = getattr(ev, "usage_metadata", None)
+                    spent = getattr(usage, "thoughts_token_count", None) if usage else None
+                    if spent is not None:
+                        thoughts_tokens = (thoughts_tokens or 0) + int(spent)
+                    if ev.actions and ev.actions.state_delta and "decision" in ev.actions.state_delta:
+                        final_decision = ev.actions.state_delta["decision"]
+                    elif ev.content and ev.content.parts:
+                        for p in ev.content.parts:
+                            if p.text and not getattr(p, "thought", False):
                                 try:
-                                    final_decision = CatTacticalDecision.model_validate(resp_data["output"])
+                                    final_decision = CatTacticalDecision.model_validate_json(p.text)
                                 except Exception:
                                     pass
-            return final_decision
+            except StopAsyncIteration:
+                pass
 
-        decision = await asyncio.wait_for(_run_stream(), timeout=effective_timeout)
+            if isinstance(final_decision, dict):
+                try:
+                    final_decision = CatTacticalDecision(**final_decision)
+                except Exception:
+                    pass
+            return final_decision, thoughts_tokens
+
+        decision, thoughts_tokens = await asyncio.wait_for(_run_stream(), timeout=effective_timeout)
         duration_ms = round((time.monotonic() - started) * 1000, 1)
+
+        if capture is not None:
+            capture["latency_ms"] = round((time.monotonic() - started) * 1000)
+            capture["thoughts_token_count"] = thoughts_tokens
 
         if decision is not None:
             telemetry = {
@@ -327,9 +355,10 @@ async def query_adk_gemini(
                 "tick": obs.tick,
                 "duration_ms": duration_ms,
                 "thinking_budget": get_thinking_budget(),
+                "thoughts_token_count": thoughts_tokens,
                 "action": decision.action,
-                "strategy": decision.strategy,
-                "target_id": decision.target_id,
+                "strategy": getattr(decision, "strategy", "ROAMING"),
+                "target_id": getattr(decision, "target_id", ""),
             }
             return decision, "adk_gemini", telemetry
 
@@ -338,4 +367,4 @@ async def query_adk_gemini(
     except Exception as exc:
         logger.warning("Evil Cat deliberation error: %s", exc)
 
-    return CatTacticalDecision(thought="Deliberation fallback", action="stay", target_id="", strategy="ROAMING"), "heuristic_fallback", None
+    return None, "heuristic_fallback", None

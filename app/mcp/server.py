@@ -648,15 +648,51 @@ def create_mcp_server(name: str = "cat-and-mouse-mcp", version: str = "0.1.0") -
         return {"status": "ok", "count": len(transmissions), "transmissions": transmissions}
 
     @server.tool(
-        name="get_agent_card",
-        description="Retrieve the authoritative Agent-to-Agent (A2A) Agent Card and declared capabilities for an agent.",
+        name="get_coach_payload",
+        description="Inspect the latest prompt and payload sent to the coach / evaluator (System 2 Long-Term Consciousness), including all prompt sections, standing orders, and telemetry.",
     )
-    async def get_agent_card_tool(agent_id: str = "cat-1") -> Dict[str, Any]:
-        from actors.a2a import client as a2a_client
-        card = await a2a_client.fetch_agent_card(agent_id)
-        if card:
-            return {"status": "ok", "agent_card": card.model_dump()}
-        return {"status": "error", "reason": f"Agent Card for {agent_id} could not be retrieved"}
+    async def get_coach_payload_tool(cat_id: str = "cat-1", tick: Optional[int] = None) -> Dict[str, Any]:
+        start = time.perf_counter()
+        record = store.read_coach_prompt_for_tick(tick=tick, agent_id=cat_id)
+        dur = round((time.perf_counter() - start) * 1000, 2)
+        if record:
+            get_telemetry().record_event(
+                event_type="tool_call",
+                level="info",
+                tool="get_coach_payload",
+                arguments={"cat_id": cat_id, "tick": tick},
+                duration_ms=dur,
+                status="ok",
+                summary=f"Retrieved coach payload for {cat_id} in {dur}ms",
+                details={"model": record.get("model"), "agent_id": cat_id},
+            )
+            return {"status": "ok", "cat_id": cat_id, "record": record}
+        return {"status": "not_found", "cat_id": cat_id, "detail": "No coach prompt recorded yet."}
+
+    @server.tool(
+        name="get_actor_payload",
+        description="Inspect the prompt and payload sent to the tactical cat actor (System 1 fast brain), including all prompt sections and observations.",
+    )
+    async def get_actor_payload_tool(cat_id: str = "cat-1", tick: Optional[int] = None) -> Dict[str, Any]:
+        start = time.perf_counter()
+        if tick is not None:
+            record = store.read_prompt_for_tick(tick)
+        else:
+            paths = store.get_cat_paths(cat_id)
+            p = paths.get("prompts", store.PROMPTS_PATH)
+            record = None
+            if p.exists():
+                try:
+                    with p.open("r", encoding="utf-8") as fh:
+                        lines = [ln.strip() for ln in fh if ln.strip()]
+                        if lines:
+                            record = json.loads(lines[-1])
+                except Exception:
+                    pass
+        dur = round((time.perf_counter() - start) * 1000, 2)
+        if record:
+            return {"status": "ok", "cat_id": cat_id, "record": record}
+        return {"status": "not_found", "cat_id": cat_id, "detail": "No actor prompt recorded yet."}
 
 
     # --------------------------------------------------------------------------
@@ -1276,6 +1312,7 @@ def create_mcp_app(server: Optional[MCPServer] = None):
         roster = sorted(list(discovered_roster))
 
         # 2. Discover cat runtime endpoints / ports for Coach & Commander chats
+        # 2. Discover cat runtime endpoints / ports for Coach & Commander chats
         cat_endpoints = {
             "cat-1": os.environ.get("CAT_1_URL", "http://127.0.0.1:8001"),
             "cat-2": os.environ.get("CAT_2_URL", "http://127.0.0.1:8003"),
@@ -1283,10 +1320,12 @@ def create_mcp_app(server: Optional[MCPServer] = None):
             "evil-cat": os.environ.get("EVIL_CAT_URL", "http://127.0.0.1:8005"),
             "cat-evil": os.environ.get("EVIL_CAT_URL", "http://127.0.0.1:8005"),
         }
-        target_cats = roster if cat_id in ("all", "*") else [cat_id]
+        # Gather across all roster agents so filtering and counting are complete and accurate
         async with httpx.AsyncClient(timeout=1.5) as client:
-            for cid in target_cats:
-                base_url = cat_endpoints.get(cid, "http://127.0.0.1:8001")
+            for cid in roster:
+                base_url = cat_endpoints.get(cid)
+                if not base_url:
+                    continue
                 # General <-> Coach radio chat history
                 try:
                     resp = await client.get(f"{base_url}/api/agent/general/chat-history")
@@ -1324,19 +1363,30 @@ def create_mcp_app(server: Optional[MCPServer] = None):
                 except Exception:
                     pass
 
-        # 3. Merge A2A Coach diplomatic inbox messages
+        # 3. Merge A2A Coach diplomatic inbox & outbox messages across all cats in roster
         try:
             from actors.a2a import store as a2a_store
-            for cid in target_cats:
-                inbox_msgs = a2a_store.get_coach_inbox(cid, limit=50)
-                for im in inbox_msgs:
+            from actors.a2a.store import normalize_agent_id
+            for cid in roster:
+                inbox_msgs = a2a_store.get_coach_inbox(cid, limit=100)
+                outbox_msgs = a2a_store.get_outbox(cid, limit=100)
+                combined = []
+                seen_im_ids = set()
+                for im in (inbox_msgs + outbox_msgs):
+                    imid = im.get("message_id") or f"{im.get('timestamp')}-{im.get('content')}"
+                    if imid in seen_im_ids:
+                        continue
+                    seen_im_ids.add(imid)
+                    combined.append(im)
+
+                for im in combined:
                     snd = im.get("sender_id", "peer_coach")
                     rec = im.get("recipient_id", cid)
                     is_dm = rec not in ("*", "broadcast", "all")
                     is_coach_msg = "coach" in str(snd).lower() or "coach" in str(rec).lower()
                     ch = "coach_a2a" if is_coach_msg else ("cat_dm" if is_dm else "cat_broadcast")
                     all_messages.append({
-                        "id": im.get("message_id") or f"a2a-{im.get('timestamp')}",
+                        "id": im.get("message_id") or f"a2a-{im.get('timestamp')}-{snd}-{rec}",
                         "cat_id": cid,
                         "sender": snd,
                         "recipient_id": rec,
@@ -1369,6 +1419,35 @@ def create_mcp_app(server: Optional[MCPServer] = None):
             seen_keys.add(key)
             deduped_messages.append(m)
         all_messages = deduped_messages
+
+        # Helper to match an agent ID against a message (supporting 'cat-1' matching 'coach(cat-1)', aliases, etc.)
+        from actors.a2a.store import normalize_agent_id
+        def _cat_matches(msg: Dict[str, Any], query_id: str) -> bool:
+            if not query_id or query_id in ("all", "*"):
+                return True
+            q_norm = normalize_agent_id(query_id)
+            aliases = {query_id.lower(), q_norm}
+            if q_norm == "cat-3":
+                aliases.update(["evil-cat", "cat-evil"])
+            elif q_norm in ("evil-cat", "cat-evil"):
+                aliases.update(["cat-3"])
+
+            # Check direct cat_id
+            m_cid = str(msg.get("cat_id") or "").lower()
+            if m_cid in aliases or normalize_agent_id(m_cid) in aliases:
+                return True
+
+            # Check sender
+            m_snd = str(msg.get("sender") or "").lower()
+            if m_snd in aliases or normalize_agent_id(m_snd) in aliases or any(a in m_snd for a in aliases if len(a) > 2):
+                return True
+
+            # Check recipient
+            m_rec = str(msg.get("recipient_id") or "").lower()
+            if m_rec in aliases or normalize_agent_id(m_rec) in aliases or any(a in m_rec for a in aliases if len(a) > 2):
+                return True
+
+            return False
 
         # Apply filtering
         filtered = all_messages
@@ -1403,14 +1482,9 @@ def create_mcp_app(server: Optional[MCPServer] = None):
         elif view_filter in ("general", "general_only"):
             filtered = [m for m in filtered if m.get("channel") in ("general", "commander")]
 
-        # Agent filter
+        # Agent filter (supports cat-1 matching coach(cat-1), etc.)
         if cat_id not in ("all", "*"):
-            filtered = [
-                m for m in filtered
-                if m.get("cat_id") == cat_id
-                or m.get("sender") == cat_id
-                or m.get("recipient_id") == cat_id
-            ]
+            filtered = [m for m in filtered if _cat_matches(m, cat_id)]
 
         # Additional explicit filters (From & To)
         if sender_filter and sender_filter not in ("all", "*"):
@@ -1424,10 +1498,17 @@ def create_mcp_app(server: Optional[MCPServer] = None):
             elif s_low == "all_coaches":
                 filtered = [m for m in filtered if "coach" in str(m.get("sender", "")).lower()]
             else:
+                s_norm = normalize_agent_id(s_low)
+                s_aliases = {s_low, s_norm}
+                if s_norm == "cat-3":
+                    s_aliases.update(["evil-cat", "cat-evil"])
+                elif s_norm in ("evil-cat", "cat-evil"):
+                    s_aliases.update(["cat-3"])
                 filtered = [
                     m for m in filtered
-                    if str(m.get("sender", "")).lower() == s_low
-                    or (s_low in ("cat-1", "cat-2", "evil-cat", "cat-evil") and m.get("cat_id") == s_low and not m.get("sender"))
+                    if str(m.get("sender", "")).lower() in s_aliases
+                    or normalize_agent_id(m.get("sender")) in s_aliases
+                    or any(a in str(m.get("sender", "")).lower() for a in s_aliases if len(a) > 2)
                 ]
 
         if recipient_filter and recipient_filter not in ("all",):
@@ -1451,9 +1532,17 @@ def create_mcp_app(server: Optional[MCPServer] = None):
                     and str(m.get("recipient_id", "")).lower() not in ("general", "commander", "*", "broadcast", "all")
                 ]
             else:
+                r_norm = normalize_agent_id(r_low)
+                r_aliases = {r_low, r_norm}
+                if r_norm == "cat-3":
+                    r_aliases.update(["evil-cat", "cat-evil"])
+                elif r_norm in ("evil-cat", "cat-evil"):
+                    r_aliases.update(["cat-3"])
                 filtered = [
                     m for m in filtered
-                    if str(m.get("recipient_id", "")).lower() == r_low
+                    if str(m.get("recipient_id", "")).lower() in r_aliases
+                    or normalize_agent_id(m.get("recipient_id")) in r_aliases
+                    or any(a in str(m.get("recipient_id", "")).lower() for a in r_aliases if len(a) > 2)
                 ]
 
         if source_filter:
@@ -1500,10 +1589,7 @@ def create_mcp_app(server: Optional[MCPServer] = None):
             "roster": {},
         }
         for c in roster:
-            c_count = sum(
-                1 for m in all_messages
-                if m.get("cat_id") == c or m.get("sender") == c or m.get("recipient_id") == c
-            )
+            c_count = sum(1 for m in all_messages if _cat_matches(m, c))
             counts[c] = c_count
             counts["roster"][c] = c_count
 
