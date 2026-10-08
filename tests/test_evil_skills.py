@@ -96,3 +96,32 @@ def test_a2a_send_message_rejects_npc_cats():
     res = a2a_send_message("cat-4", "Hey cat-4")
     assert "Delivery failed" in res
     assert "Agent Card" in res
+
+
+def test_evil_coach_shares_subordinate_manual_model():
+    """Verify evil coach has evil_skills.md embedded into its model under the proper block header."""
+    from actors.cat.subagents import eval as ev
+
+    coach_skills = Path(ev.resolve_eval_skills_path("cat-3")).read_text(encoding="utf-8")
+    assert ev.EVIL_ACTOR_MANUAL_BLOCK_HEADER in coach_skills
+    assert "Your Model of the Game" in coach_skills
+    assert "You do not carry your own copy of the rules, and you must not invent one." in coach_skills
+
+    records = [{
+        "x": 5, "y": 5, "facing": "east", "score": 0,
+        "action": "attack", "thought": "", "visible": [],
+        "capabilities": {"attack_range": 4, "move_cooldown": 3},
+    }]
+
+    # Eval prompt for cat-3 must carry evil_skills verbatim
+    prompt_evil = ev.build_eval_prompt(records, "", agent_id="cat-3")
+    assert ev.EVIL_ACTOR_MANUAL_BLOCK_HEADER in prompt_evil
+    assert get_skills_instruction("cat-3") in prompt_evil
+    assert "Apex Cat-Hunter" in prompt_evil
+    assert "Mice Award ZERO Points" in prompt_evil
+
+    # Eval prompt for cat-1 must carry actor_skills verbatim
+    prompt_cat1 = ev.build_eval_prompt(records, "", agent_id="cat-1")
+    assert ev.ACTOR_MANUAL_BLOCK_HEADER in prompt_cat1
+    assert get_skills_instruction("cat-1") in prompt_cat1
+    assert "Cat Agent Skills & Tactical Hunting Manual" in prompt_cat1

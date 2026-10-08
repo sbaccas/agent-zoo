@@ -23,8 +23,16 @@ from actors.cat import store
 from actors.a2a.tools import A2A_TOOLS, set_deliberation_context
 from actors.a2a import store as a2a_store
 
+_current_actor_cat: Optional[str] = None
+
+
+def set_current_actor_cat(agent_id: Optional[str]) -> None:
+    global _current_actor_cat
+    _current_actor_cat = agent_id
+
+
 # Skills manual path and loader
-def resolve_skills_path() -> Path:
+def resolve_skills_path(agent_id: Optional[str] = None) -> Path:
     custom = os.environ.get("CAT_SKILLS_PATH")
     if custom:
         p = Path(custom)
@@ -37,6 +45,11 @@ def resolve_skills_path() -> Path:
                 return cat_p
             return cwd_p
         return p
+    target = agent_id or _current_actor_cat or os.environ.get("CAT_ID")
+    if target in ("cat-3", "evil-cat"):
+        evil_p = Path(__file__).parent / "evil_skills.md"
+        if evil_p.exists():
+            return evil_p
     return globals().get("SKILLS_PATH", Path(__file__).parent / "actor_skills.md")
 
 
@@ -319,14 +332,14 @@ def _initial_thinking_budget() -> int:
     return budget
 
 
-def get_skills_instruction() -> str:
+def get_skills_instruction(agent_id: Optional[str] = None) -> str:
     """The actor's entire behavioural specification, read fresh from disk.
 
     There is deliberately no inline fallback. A previous fallback string told
     the cat to "close distance with lunges", contradicting the manual, and
     would have applied silently had the file ever gone missing.
     """
-    path = resolve_skills_path()
+    path = resolve_skills_path(agent_id)
     if not path.exists():
         raise FileNotFoundError(
             f"Actor skills manual missing at {path}. The agent has no "

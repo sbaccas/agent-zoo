@@ -44,6 +44,7 @@ from actors.cat.actor import (
     has_gemini_credentials,
     mark_auth_error,
     nominal_thinking_tokens,
+    resolve_skills_path,
     thinking_bounds_for,
 )
 
@@ -51,7 +52,15 @@ logger = logging.getLogger("cat_agent")
 
 EVAL_MODEL = "gemini-2.5-flash"
 
-def resolve_eval_skills_path() -> Path:
+_current_eval_cat: Optional[str] = None
+
+
+def set_current_eval_cat(agent_id: Optional[str]) -> None:
+    global _current_eval_cat
+    _current_eval_cat = agent_id
+
+
+def resolve_eval_skills_path(agent_id: Optional[str] = None) -> Path:
     custom = os.environ.get("EVAL_SKILLS_PATH")
     if custom:
         p = Path(custom)
@@ -64,6 +73,11 @@ def resolve_eval_skills_path() -> Path:
                 return eval_p
             return cwd_p
         return p
+    target = agent_id or _current_eval_cat or os.environ.get("CAT_ID")
+    if target in ("cat-3", "evil-cat"):
+        evil_p = Path(__file__).parent / "evil_coach_skills.md"
+        if evil_p.exists():
+            return evil_p
     return globals().get("EVAL_SKILLS_PATH", Path(__file__).parent / "eval_skills.md")
 
 
@@ -88,6 +102,7 @@ COACH_DIRECTIVE_BLOCK_HEADER = "--- STANDING ORDER FROM THE COMMANDER ---"
 # tests/test_coach_shares_actor_model.py fails if one is renamed without the
 # other -- the same arrangement actor.py uses for its own block headers.
 ACTOR_MANUAL_BLOCK_HEADER = "--- YOUR SUBORDINATE'S MANUAL (actor_skills.md) ---"
+EVIL_ACTOR_MANUAL_BLOCK_HEADER = "--- YOUR SUBORDINATE'S MANUAL (evil_skills.md) ---"
 CAPABILITIES_BLOCK_HEADER = "--- YOUR SUBORDINATE'S LIVE CAPABILITIES ---"
 
 # How many ticks of play accumulate before an evaluation fires. Adjustable at
@@ -239,9 +254,9 @@ def clear_coach_directive() -> bool:
     return had
 
 
-def get_eval_instruction() -> str:
+def get_eval_instruction(agent_id: Optional[str] = None) -> str:
     """Loads the evaluator's own skills manual, distinct from the actor's."""
-    path = resolve_eval_skills_path()
+    path = resolve_eval_skills_path(agent_id)
     if path.exists():
         return path.read_text(encoding="utf-8")
     return (
@@ -261,7 +276,7 @@ def _eval_instruction_provider(_ctx: ReadonlyContext) -> str:
     directly, so the workbench displayed the new rules while the agent kept
     obeying the old ones -- the file looked applied when it was not.
     """
-    return get_eval_instruction()
+    return get_eval_instruction(_current_eval_cat)
 
 
 def get_general_radio_instruction() -> str:
@@ -1181,9 +1196,15 @@ def build_eval_prompt(
     # The coach's model of the game IS the actor's manual -- the same bytes the
     # actor is running on, read through the actor's own loader so the two cannot
     # diverge.
+    skills_path = resolve_skills_path(target_cat)
+    manual_header = (
+        EVIL_ACTOR_MANUAL_BLOCK_HEADER
+        if skills_path.name == "evil_skills.md"
+        else ACTOR_MANUAL_BLOCK_HEADER
+    )
     actor_manual_block = (
-        f"{ACTOR_MANUAL_BLOCK_HEADER}\n"
-        f"{get_skills_instruction()}\n\n"
+        f"{manual_header}\n"
+        f"{get_skills_instruction(target_cat)}\n\n"
         f"--- END OF YOUR SUBORDINATE'S MANUAL ---\n\n"
     )
 
@@ -1381,6 +1402,7 @@ async def evaluate(
         return _summarise_without_model(records), "offline_fallback"
 
     target_cat = agent_id or os.environ.get("CAT_ID") or ("cat-2" if os.environ.get("PORT") == "8003" else "cat-1")
+    set_current_eval_cat(target_cat)
     # Isolated session and user per cat agent to prevent state collision
     user_id = f"cat_evaluator_{target_cat}"
     session_id = f"session_cat_evaluator_{target_cat}"
