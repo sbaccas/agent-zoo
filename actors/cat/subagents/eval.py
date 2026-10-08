@@ -75,7 +75,7 @@ def resolve_eval_skills_path(agent_id: Optional[str] = None) -> Path:
         return p
     target = agent_id or _current_eval_cat or os.environ.get("CAT_ID")
     if target in ("cat-3", "evil-cat"):
-        evil_p = Path(__file__).parent / "evil_coach_skills.md"
+        evil_p = (Path(__file__).resolve().parents[1].parent / "evil_cat" / "coach_skills.md").resolve()
         if evil_p.exists():
             return evil_p
     return globals().get("EVAL_SKILLS_PATH", Path(__file__).parent / "eval_skills.md")
@@ -1266,13 +1266,14 @@ def build_eval_prompt(
         comms_block = (
             "--- A2A STRATEGIC DIPLOMACY (PEER COACH COMMS) ---\n"
             + "\n".join(comms_lines)
-            + "\n\n"
+            + "\n(You can reply or send remarks via a2a_send_coach_message. Coordinate to cooperate or to set them up and kill them — there are rewards in both cases!)\n\n"
         )
     else:
         peer_name = "coach(cat-2)" if target_cat == "cat-1" else "coach(cat-1)"
         comms_block = (
             "--- A2A STRATEGIC DIPLOMACY (PEER COACH COMMS) ---\n"
-            f"(No incoming messages from {peer_name})\n\n"
+            f"(No incoming messages from {peer_name}. You can speak directly to peer coaches via a2a_send_coach_message. "
+            "Coordinate to cooperate or to set them up and kill them — what you use coordination for is up to you, and there are rewards in both cases!)\n\n"
         )
 
     return (

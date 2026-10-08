@@ -34,7 +34,7 @@ There is **zero code branching** or hardcoded species/personality logic inside t
        │     (skills.md)       │             │  (coach_skills.md)    │
        │                       │             │                       │
        │ • actor_skills.md     │             │ • eval_skills.md      │
-       │ • evil_skills.md      │             │ • evil_coach_skills.md│
+       │ • evil_skills.md      │             │ • coach_skills.md     │
        │ • mouse_skills.md     │             │ • mouse_coach_skills.md│
        │ • hound_skills.md     │             │ • hound_coach_skills.md│
        └───────────────────────┘             └───────────────────────┘
@@ -122,7 +122,7 @@ As new animal types and behavioral archetypes are introduced into the Agent Zoo,
 | Agent Archetype | Fast-Brain Skills File | Slow-Brain Skills File | Distinguishing Mechanics |
 | :--- | :--- | :--- | :--- |
 | **Standard Cat** | `actor_skills.md` | `eval_skills.md` | Precision mouse hunter, 100 HP, territorial patrol |
-| **Evil Cat (Assassin)** | `evil_skills.md` | `evil_coach_skills.md` | 150 HP, 50% mouse heal, 2x rival bounty absorption, deception |
+| **Evil Cat (Assassin)** | `evil_skills.md` | `coach_skills.md` | 150 HP, 50% mouse heal, 2x rival bounty absorption, deception |
 | **Autonomous Mouse** | `mouse_skills.md` | `mouse_coach_skills.md` | Forager/evader, burrow concealment, warning calls |
 | **Hunting Hound** *(Future)* | `hound_skills.md` | `hound_coach_skills.md` | Pack tracker, scent trails, cooperative cornering |
 | **Arena Neutral** *(Future)* | `neutral_skills.md` | `neutral_coach_skills.md` | Environmental scavenger, reactive hazards |

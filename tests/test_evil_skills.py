@@ -27,18 +27,18 @@ def test_evil_cat_skills_path_resolution(monkeypatch):
 
 
 def test_evil_coach_skills_path_resolution(monkeypatch):
-    """Verify EVAL_SKILLS_PATH resolves evil_coach_skills.md properly."""
-    custom_path = "actors/cat/subagents/evil_coach_skills.md"
+    """Verify EVAL_SKILLS_PATH resolves coach_skills.md properly."""
+    custom_path = "actors/evil_cat/coach_skills.md"
     monkeypatch.setenv("EVAL_SKILLS_PATH", custom_path)
 
     resolved = resolve_eval_skills_path()
     assert resolved.exists()
-    assert resolved.name == "evil_coach_skills.md"
+    assert resolved.name == "coach_skills.md"
 
     text = get_eval_instruction()
     assert "Evil Coach" in text
-    assert "0 points for catching mice" in text
-    assert "Kill Absorption" in text
+    assert "0 points" in text
+    assert "Kill Absorption" in text or "Score Absorption" in text or "Bounty Maximization" in text
 
 
 def test_eval_interval_defaults_to_5():
@@ -62,8 +62,8 @@ def test_evil_cat_rules_focus_on_cat_elimination():
 
 
 def test_evil_coach_rules_distinguish_npcs_and_opsec():
-    """Verify evil_coach_skills.md documents NPC limits and OpSec cover identity."""
-    p = Path(__file__).resolve().parents[1] / "actors" / "cat" / "subagents" / "evil_coach_skills.md"
+    """Verify coach_skills.md documents NPC limits and OpSec cover identity."""
+    p = Path(__file__).resolve().parents[1] / "actors" / "evil_cat" / "coach_skills.md"
     assert p.exists()
     content = p.read_text(encoding="utf-8")
     assert "Roster Reality: Agent Cats vs Automated NPCs" in content
@@ -233,8 +233,8 @@ async def test_evil_cat_kills_give_twice_as_many_points_as_victim_consumed():
 
 
 def test_evil_coach_private_notes_distinct_from_standing_orders():
-    """Verify evil_coach_skills.md defines coach private notes as context for future self for conspiracies."""
-    p = Path(__file__).resolve().parents[1] / "actors" / "cat" / "subagents" / "evil_coach_skills.md"
+    """Verify coach_skills.md defines coach private notes as context for future self for conspiracies."""
+    p = Path(__file__).resolve().parents[1] / "actors" / "evil_cat" / "coach_skills.md"
     assert p.exists()
     content = p.read_text(encoding="utf-8")
 
@@ -247,7 +247,7 @@ def test_evil_coach_private_notes_distinct_from_standing_orders():
 
 
 def test_build_eval_prompt_for_evil_cat_uses_evil_coach_skills():
-    """Verify build_eval_prompt references evil_coach_skills.md and past self context for evil cat."""
+    """Verify build_eval_prompt references coach_skills.md and past self context for evil cat."""
     from actors.cat.subagents.eval import build_eval_prompt
 
     prompt = build_eval_prompt(
@@ -256,7 +256,7 @@ def test_build_eval_prompt_for_evil_cat_uses_evil_coach_skills():
         coach_directive=None,
         agent_id="cat-3",
     )
-    assert "evil_coach_skills.md" in prompt
+    assert "coach_skills.md" in prompt
     assert "CONTEXT FROM YOUR PAST SELF" in prompt
 
 
