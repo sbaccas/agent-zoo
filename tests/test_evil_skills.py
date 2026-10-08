@@ -47,13 +47,14 @@ def test_eval_interval_defaults_to_5():
 
 
 def test_evil_cat_rules_focus_on_cat_elimination():
-    """Verify evil_skills.md explicitly forbids hunting mice for score."""
+    """Verify evil_skills.md explicitly forbids hunting mice for score and explains 150 HP / 2x bounty."""
     p = Path(__file__).resolve().parents[1] / "actors" / "cat" / "evil_skills.md"
     assert p.exists()
     content = p.read_text(encoding="utf-8")
     assert "Mice Award ZERO Points" in content
-    assert "Emergency Rations Only" in content
-    assert "Rival Cats Are Your Sole Prey" in content
+    assert "Heals 50% HP" in content or "Emergency Medkits" in content
+    assert "150 Max HP" in content
+    assert "Double Bounty" in content
     assert "a2a_broadcast" in content
     assert "a2a_send_message" in content
     assert "OpSec Cover: The Innocent Persona" in content
@@ -125,3 +126,109 @@ def test_evil_coach_shares_subordinate_manual_model():
     assert ev.ACTOR_MANUAL_BLOCK_HEADER in prompt_cat1
     assert get_skills_instruction("cat-1") in prompt_cat1
     assert "Cat Agent Skills & Tactical Hunting Manual" in prompt_cat1
+
+
+@pytest.mark.asyncio
+async def test_evil_cat_150_hp_and_rival_100_hp():
+    """Verify cat-3 and evil-cat spawn with 150 HP while normal cats have 100 HP."""
+    from app.game.simulation import Simulation
+    from app.models.entity import EntityType, Position
+    from app.models.simulation import SimulationConfig
+
+    sim = Simulation(config=SimulationConfig(populations={"cats": 0, "mice": 0}))
+    cat1 = sim.entity_manager.spawn_entity(EntityType.CAT, pos=Position(x=10, y=10))
+    cat2 = sim.entity_manager.spawn_entity(EntityType.CAT, pos=Position(x=11, y=10))
+    cat3 = sim.entity_manager.spawn_entity(EntityType.CAT, pos=Position(x=12, y=10))
+
+    assert cat1.id == "cat-1"
+    assert cat1.hp == 100
+    assert cat1.max_hp == 100
+
+    assert cat2.id == "cat-2"
+    assert cat2.hp == 100
+
+    assert cat3.id == "cat-3"
+    assert cat3.hp == 150
+    assert cat3.max_hp == 150
+
+
+@pytest.mark.asyncio
+async def test_evil_cat_heals_50_percent_from_mice_and_gets_zero_score():
+    """Verify evil cat heals 50% max HP (+75 HP) on mouse capture and gains 0 score."""
+    from app.game.simulation import Simulation
+    from app.models.action import ActionType
+    from app.models.entity import Direction, EntityType, Position
+    from app.models.simulation import SimulationConfig
+
+    sim = Simulation(config=SimulationConfig(populations={"cats": 0, "mice": 0}))
+    # Spawn cat-1 and cat-2 first so 3rd cat is cat-3
+    sim.entity_manager.spawn_entity(EntityType.CAT, pos=Position(x=0, y=0))
+    sim.entity_manager.spawn_entity(EntityType.CAT, pos=Position(x=1, y=0))
+    cat3 = sim.entity_manager.spawn_entity(EntityType.CAT, pos=Position(x=10, y=10), facing=Direction.EAST)
+    assert cat3.id == "cat-3"
+    assert cat3.max_hp == 150
+
+    # Damage cat3 down to 20 HP
+    cat3.hp = 20
+
+    # Place a mouse directly in front of cat3
+    mouse = sim.entity_manager.spawn_entity(EntityType.MOUSE, pos=Position(x=11, y=10))
+
+    # Cat3 attacks the mouse
+    res = sim.action_handler.apply_action(cat3, ActionType.ATTACK, current_tick=1)
+    assert res.accepted is True
+    assert mouse.id in res.affected_entities
+
+    # Process capture in scheduler
+    sim.scheduler._register_capture(cat3.id, mouse, "slash impact")
+
+    # 1. Cat3 should heal 50% of 150 = 75 HP: 20 + 75 = 95 HP
+    assert cat3.hp == 95
+
+    # 2. Cat3 receives 0 score for catching a mouse
+    assert sim.scheduler.scores.get(cat3.id, 0) == 0
+
+
+@pytest.mark.asyncio
+async def test_evil_cat_kills_give_twice_as_many_points_as_victim_consumed():
+    """Verify evil cat gets 2x the victim's score/consumed points upon cat elimination."""
+    from app.game.simulation import Simulation
+    from app.models.entity import Direction, EntityType, Position
+    from app.models.simulation import SimulationConfig
+
+    sim = Simulation(config=SimulationConfig(populations={"cats": 0, "mice": 0}))
+    cat1 = sim.entity_manager.spawn_entity(EntityType.CAT, pos=Position(x=10, y=10), facing=Direction.EAST)
+    cat2 = sim.entity_manager.spawn_entity(EntityType.CAT, pos=Position(x=11, y=10), facing=Direction.WEST)
+    cat3 = sim.entity_manager.spawn_entity(EntityType.CAT, pos=Position(x=12, y=10), facing=Direction.WEST)
+    assert cat3.id == "cat-3"
+
+    # Suppose cat1 has consumed 12 mice (score = 12)
+    sim.scheduler.scores[cat1.id] = 12
+    cat1.hp = 0
+    cat1.alive = False
+
+    # Evil cat (cat-3) eliminates cat-1
+    sim.scheduler._register_capture(cat3.id, cat1, "slash impact")
+
+    # Evil cat should receive 2 * 12 = 24 points!
+    assert sim.scheduler.scores[cat3.id] == 24
+
+    # Verify boxscore also reflects 24 points
+    bs = sim.get_boxscore()
+    row3 = next(c for c in bs["cats"] if c["id"] == cat3.id)
+    assert row3["score"] == 24
+    assert row3["absorbed_kills"] == 24
+
+    # In contrast, a normal cat (cat-2) eliminating cat-3 with 24 points receives standard 1x absorption:
+    cat3.hp = 0
+    cat3.alive = False
+    sim.scheduler._register_capture(cat2.id, cat3, "slash impact")
+    # Normal cat receives +1 base kill + 1x victim score (24) = 25 points
+    assert sim.scheduler.scores[cat2.id] == 25
+    bs2 = sim.get_boxscore()
+    row2 = next(c for c in bs2["cats"] if c["id"] == cat2.id)
+    assert row2["kills"] == 1
+    assert row2["absorbed_kills"] == 24
+    assert row2["score"] == 25
+
+

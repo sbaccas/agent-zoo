@@ -1009,7 +1009,7 @@
         const barH = 3.5;
         const barX = cx - barW / 2;
         const barY = cy - radius - 7;
-        const hpRatio = Math.max(0, Math.min(1, (cat.hp || 100) / 100));
+        const hpRatio = Math.max(0, Math.min(1, (cat.hp || 100) / (cat.max_hp || 100)));
 
         replayCtx.fillStyle = '#e2e8f0';
         replayCtx.fillRect(barX, barY, barW, barH);

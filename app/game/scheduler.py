@@ -295,6 +295,8 @@ class Scheduler:
 
         self.captures += 1
         absorbed_score = 0
+        is_evil = owner_id in ("cat-3", "evil-cat")
+
         if is_cat:
             cat_cfg = self.entity_manager.species_config.get("cat")
             if cat_cfg is None or getattr(cat_cfg, "absorption", True):
@@ -303,13 +305,27 @@ class Scheduler:
                     victim_stat = self.stats.cats.get(victim.id)
                     if victim_stat:
                         victim_score = victim_stat.kills + victim_stat.absorbed_kills
-                if victim_score > 0:
+                if is_evil:
+                    # Evil cat receives twice as many points as the victim consumed
+                    absorbed_score = 2 * victim_score
+                elif victim_score > 0:
                     absorbed_score = victim_score
 
-        self.scores[owner_id] = self.scores.get(owner_id, 0) + 1 + absorbed_score
+        if is_evil:
+            earned_score = absorbed_score if is_cat else 0
+        else:
+            earned_score = 1 + absorbed_score
+
+        self.scores[owner_id] = self.scores.get(owner_id, 0) + earned_score
         death_record["absorbed_score"] = absorbed_score
         if self.stats is not None:
-            self.stats.record_kill(owner_id, zone_id, absorbed_kills=absorbed_score)
+            self.stats.record_kill(
+                owner_id,
+                zone_id,
+                absorbed_kills=absorbed_score,
+                is_evil=is_evil,
+                is_cat=is_cat,
+            )
 
         owner = self.entity_manager.entities.get(owner_id)
         healed_hp = 0
@@ -318,7 +334,11 @@ class Scheduler:
             if is_cat:
                 heal_target = getattr(cat_cfg, "heal_on_cat_elimination", 90) if cat_cfg else 90
             else:
-                heal_target = getattr(cat_cfg, "heal_on_mouse_capture", 15) if cat_cfg else 15
+                if is_evil:
+                    # Evil cat heals 50% from mice
+                    heal_target = int(round(owner.max_hp * 0.50))
+                else:
+                    heal_target = getattr(cat_cfg, "heal_on_mouse_capture", 15) if cat_cfg else 15
             old_hp = owner.hp
             owner.hp = min(owner.max_hp, owner.hp + heal_target)
             healed_hp = owner.hp - old_hp

@@ -90,6 +90,16 @@ class WsAgentManager:
                     e for e in alive_entities
                     if e.id == requested_id and e.id not in self.active_connections
                 ]
+                if not matching and requested_id == "evil-cat":
+                    matching = [
+                        e for e in alive_entities
+                        if e.id == "cat-3" and e.id not in self.active_connections
+                    ]
+                if not matching and requested_id == "cat-3":
+                    matching = [
+                        e for e in alive_entities
+                        if e.id == "evil-cat" and e.id not in self.active_connections
+                    ]
                 if matching:
                     assigned_id = matching[0].id
 
@@ -105,6 +115,14 @@ class WsAgentManager:
                     f"No available {role} entities to bind to. "
                     f"(Alive {role} count: {len(alive_entities)}, Connected: {len(self.active_connections)})"
                 )
+
+            # Ensure evil cat has 150 max_hp and hp
+            if assigned_id in ("cat-3", "evil-cat"):
+                target_ent = sim.entity_manager.entities.get(assigned_id)
+                if target_ent:
+                    target_ent.max_hp = 150
+                    if target_ent.hp <= 100:
+                        target_ent.hp = 150
 
             self.active_connections[assigned_id] = websocket
             self.connection_agents[websocket] = assigned_id

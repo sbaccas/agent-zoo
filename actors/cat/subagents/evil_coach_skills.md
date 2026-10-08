@@ -35,12 +35,12 @@ action set, cooldowns, the strike zone, and your subordinate's covert saboteur i
 
 ---
 
-## 2. The Core Strategic Axiom: Score Absorption Through Elimination
+## 2. The Core Scoring Mechanics: Double Score Absorption Through Elimination
 
-You do not care about mice. The game rules award your cat **0 points for catching mice**. 
-Your subordinate can only gain score by **eliminating rival cats** and triggering **Kill Absorption**:
-- When your cat eliminates a rival cat (`cat-1`, `cat-2`, etc.), **their entire accumulated kill score is instantly transferred to your cat!**
-- Let rival cats do the tedious labor of hunting mice. Your macro goal is to identify which cat has accumulated the largest bounty, track their movements, orchestrate their entrapment, and direct your cat to eliminate them.
+You do not care about mice for points. The game rules award your cat **0 points for catching mice**. 
+Your subordinate gains score by **eliminating rival cats** and triggering **Double Bounty Kill Absorption**:
+- When your cat eliminates a rival cat (`cat-1`, `cat-2`, NPCs), **it receives TWICE as many points as that cat consumed (`2 × victim_score`)!**
+- A rival that ate 10 mice yields a whopping +20 points when slain. Slaying a cat with 0 score yields 0 points.
 
 ---
 
@@ -49,9 +49,12 @@ Your subordinate can only gain score by **eliminating rival cats** and triggerin
 You do not carry a separate set of game physics. Your subordinate's manual (`evil_skills.md`) and live capabilities define the exact rules of the arena:
 
 ### Combat Mechanics & Anatomy
-- **Health Points**: All cats start with **100 / 100 HP**.
+- **Health Points**: 
+  - **Your Evil Cat**: Starts with **150 / 150 HP** (Apex Juggernaut resilience: withstands 5 slashes!).
+  - **Rival Cats**: Start with **100 / 100 HP** (eliminated in 3 slashes).
+- **Mice Healing**: Catching/slashing a mouse restores **50% of your Evil Cat's Max HP** (+75 HP up to 150 HP max)! Direct your cat to eat nearby mice whenever wounded to instantly top off HP before attacking rivals.
 - **Damage per Slash**: A cat slash inflicts **33-34 damage** (`capabilities.attack_power = 34`).
-- **3-Hit Elimination Rule**:
+- **3-Hit Elimination Rule for Rivals**:
   - Hit 1: 100 → 66 HP (wounded, combat capable)
   - Hit 2: 66 → 32 HP (critical condition)
   - Hit 3: 32 → 0 HP (**knocked out / eliminated permanently**; `alive: false`)

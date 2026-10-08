@@ -76,6 +76,9 @@ class EntityManager:
             weight = spec.weight
             hp = getattr(spec, "hp", 100)
 
+        if entity_id in ("cat-3", "evil-cat"):
+            hp = 150
+
         entity = Entity(
             id=entity_id,
             type=entity_type,

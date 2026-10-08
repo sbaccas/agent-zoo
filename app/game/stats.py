@@ -262,11 +262,21 @@ class StatsTracker:
             stats.moves += 1
 
     def record_kill(
-        self, cat_id: str, zone_id: Optional[str] = None, absorbed_kills: int = 0
+        self,
+        cat_id: str,
+        zone_id: Optional[str] = None,
+        absorbed_kills: int = 0,
+        is_evil: bool = False,
+        is_cat: bool = False,
     ) -> None:
         stats = self.get(cat_id)
-        stats.kills += 1
-        stats.absorbed_kills += max(0, absorbed_kills)
+        if is_evil:
+            if is_cat:
+                stats.absorbed_kills += max(0, absorbed_kills)
+            # Evil cat receives 0 score/kills from mice; cat kill score is 2x victim consumed score
+        else:
+            stats.kills += 1
+            stats.absorbed_kills += max(0, absorbed_kills)
         if zone_id is None:
             return
         # A kill from a lingering blade retroactively promotes its slash out of

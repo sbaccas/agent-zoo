@@ -176,9 +176,10 @@ class Simulation:
                         if killer_id and victim_id and killer_id != victim_id:
                             if d.get("absorbed_score", 0) == 0:
                                 victim_stat = self.stats.cats.get(victim_id)
-                                v_score = victim_stat.kills if victim_stat else self.scheduler.scores.get(victim_id, 0)
+                                v_score = (victim_stat.kills + victim_stat.absorbed_kills) if victim_stat else self.scheduler.scores.get(victim_id, 0)
                                 if v_score > 0:
-                                    d["absorbed_score"] = v_score
+                                    mult = 2 if killer_id in ("cat-3", "evil-cat") else 1
+                                    d["absorbed_score"] = mult * v_score
 
                 for cat_id, cat_stat in self.stats.cats.items():
                     total_absorbed = sum(
