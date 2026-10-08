@@ -766,10 +766,6 @@
         <span class="kpi-label" style="color: #e11d48;">🔒 Direct Messages (DMs)</span>
         <span class="kpi-val" style="color: #e11d48;" id="countDMs">0</span>
       </div>
-      <div class="kpi-card" data-filter-view="broadcasts">
-        <span class="kpi-label" style="color: var(--purple);">📢 Radio Broadcasts</span>
-        <span class="kpi-val" style="color: var(--purple);" id="countBroadcasts">0</span>
-      </div>
       <div class="kpi-card" data-filter-view="coach">
         <span class="kpi-label" style="color: var(--warning);">🎓 Coach Evaluations</span>
         <span class="kpi-val" style="color: var(--warning);" id="countCoach">0</span>
@@ -796,10 +792,6 @@
           <button class="filter-chip chip-dm" data-view="dms" title="View all direct agent-to-agent messages without the coach">
             <span>🔒 Direct Messages (DMs)</span>
             <span class="chip-badge" id="badgeDMs">0</span>
-          </button>
-          <button class="filter-chip" data-view="broadcasts">
-            <span>📢 Radio Broadcasts</span>
-            <span class="chip-badge" id="badgeBroadcasts">0</span>
           </button>
           <button class="filter-chip chip-coach" data-view="coach">
             <span>🎓 Coach Only</span>
@@ -865,7 +857,6 @@
           <label for="selectTo" class="comms-select-label">📥 TO:</label>
           <select id="selectTo" class="comms-select">
             <option value="all">Any Recipient (Everyone)</option>
-            <option value="*">📢 Broadcast (* All Entities)</option>
             <option value="all_dms">🔒 Any Direct Message</option>
             <optgroup label="Agent Cats" id="toGroupCats">
               <option value="all_cats">🐱 All Cats</option>
@@ -1224,8 +1215,8 @@
 
     function createCardElement(m) {
       const ch = m.channel || 'general';
-      const isDm = m.is_dm || ch === 'cat_dm';
       const isBroadcast = ch === 'cat_broadcast';
+      const isDm = m.is_dm || ch === 'cat_dm';
       const isCoachA2A = ch === 'coach_a2a';
       const isCoach = ch === 'coach';
       const isGeneral = ch === 'general' || ch === 'commander';
@@ -1439,7 +1430,8 @@
       if (canAppendOnly) {
         const fragment = document.createDocumentFragment();
         for (let i = lastRenderedKeys.length; i < filtered.length; i++) {
-          fragment.appendChild(createCardElement(filtered[i]));
+          const el = createCardElement(filtered[i]);
+          if (el) fragment.appendChild(el);
         }
         chatMessagesList.appendChild(fragment);
         lastRenderedKeys = newKeys;
@@ -1455,7 +1447,8 @@
       lastRenderedKeys = newKeys;
       const fragment = document.createDocumentFragment();
       filtered.forEach(m => {
-        fragment.appendChild(createCardElement(m));
+        const el = createCardElement(m);
+        if (el) fragment.appendChild(el);
       });
       chatMessagesList.innerHTML = '';
       chatMessagesList.appendChild(fragment);

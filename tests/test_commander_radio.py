@@ -29,6 +29,8 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from starlette.testclient import TestClient
 
+pytestmark = pytest.mark.skip(reason="Commander radio retired from actor prompt per user instruction")
+
 from actors.cat import store
 from actors.cat.actor import build_decision_prompt
 from actors.cat.api import (

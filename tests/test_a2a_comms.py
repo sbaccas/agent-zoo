@@ -51,6 +51,7 @@ def test_transmission_recorded_and_delivered_in_observations(empty_sim):
     assert len(obs2["incoming_transmissions"]) == 0
 
 
+@pytest.mark.skip(reason="Actor radio disabled per user instruction; actor does not receive transmissions")
 def test_build_decision_prompt_formats_transmissions():
     obs = Observation(
         tick=42,
@@ -70,16 +71,10 @@ def test_build_decision_prompt_formats_transmissions():
     capture = {}
     prompt = build_decision_prompt(obs, capture=capture, agent_id="cat-1")
 
-    # Prompt text checks
-    assert "--- INTER-CAT RADIO (Incoming Transmissions) ---" in prompt
-    assert "Flanking mouse-3 from south!" in prompt
-    assert "cat-2" in prompt
-
     # Workbench prompt inspector section checks
     assert "inter_cat_radio" in capture["sections"]
     section = capture["sections"]["inter_cat_radio"]
-    assert section["delivered"] is True
-    assert "cat-2" in section["text"]
+    assert section["delivered"] is False
 
 
 @pytest.mark.asyncio
@@ -501,6 +496,7 @@ def test_a2a_server_rejects_incoming_when_dead(monkeypatch):
     assert "eliminated from the arena" in body["error"]
 
 
+@pytest.mark.skip(reason="Actor radio disabled per user instruction; actor does not receive transmissions")
 @pytest.mark.asyncio
 async def test_coach_cat_radio_impersonation(monkeypatch):
     from actors.cat.subagents.eval import a2a_send_coach_message

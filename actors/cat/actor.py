@@ -382,7 +382,7 @@ adk_agent = LlmAgent(
     name="cat_tactician",
     model=ACTOR_MODEL,
     instruction=_actor_instruction_provider,
-    tools=A2A_TOOLS,
+    tools=[],
     output_schema=CatTacticalDecision,
     output_key="decision",
     generate_content_config=types.GenerateContentConfig(
@@ -1193,78 +1193,10 @@ def build_decision_prompt(
         f"Legal Actions this tick: {legal}"
     )
 
-    # The commander's live radio message. Delimiter, raw text, and two plain
-    # numbers -- nothing else. How to weigh it, how to tell an order from a
-    # question, and when it goes stale are all stated once in actor_skills.md.
-    # Restating any of that here is what produced 100 consecutive lunges from
-    # a message that was only ever a question.
-    commander_context = ""
-    commander_is_fresh = True
-    directive_text = (commander_directive or {}).get("directive") or ""
-    if directive_text.strip():
-        issued_tick = (commander_directive or {}).get("tick")
-        if isinstance(issued_tick, int):
-            age = max(0, obs.tick - issued_tick)
-            issued_line = f"Sent at tick {issued_tick}; {age} tick(s) ago.\n"
-            commander_is_fresh = age <= COMMANDER_FRESH_TICKS
-        else:
-            issued_line = ""
-        commander_context = (
-            f"\n{COMMANDER_BLOCK_HEADER}\n"
-            f"{issued_line}"
-            f'COMMANDER: "{directive_text.strip()}"\n'
-        )
-
-    transmissions_context = ""
-    incoming = list(getattr(obs, "incoming_transmissions", []) or [])
-    # Also incorporate A2A protocol messages delivered to this agent's inbox
-    a2a_msgs = a2a_store.get_inbox(agent_id, limit=8)
-    for m in a2a_msgs:
-        m_id = m.get("message_id")
-        s = str(m.get("sender_id", "")).lower()
-        r = str(m.get("recipient_id", "")).lower()
-        # Inter-coach diplomacy is consumed by the Coach subagent, not the reflexive actor
-        if s.startswith("coach") or r.startswith("coach"):
-            continue
-        if not any(t.get("message_id") == m_id for t in incoming):
-            incoming.append({
-                "tick": m.get("tick", "?"),
-                "sender_id": m.get("sender_id", "peer"),
-                "recipient_id": m.get("recipient_id"),
-                "message": m.get("content", ""),
-                "message_type": m.get("message_type", "DIRECT_MESSAGE"),
-                "protocol": "a2a/v1",
-                "message_id": m_id,
-            })
-
-    if incoming:
-        t_lines = []
-        for t in incoming[-8:]:
-            t_tick = t.get("tick", "?")
-            t_sender = t.get("sender_id", "cat")
-            t_msg = t.get("message", "")
-            t_rec = t.get("recipient_id")
-            if t_rec and t_rec not in ("*", "broadcast", "all"):
-                type_tag = f"[A2A DM from {t_sender}]"
-            else:
-                type_tag = f"[A2A BROADCAST from {t_sender}]"
-            t_lines.append(f'  • [Tick {t_tick}] {type_tag}: "{t_msg}"')
-        transmissions_context = (
-            "--- INTER-CAT RADIO (Incoming Transmissions) ---\n"
-            + "\n".join(t_lines)
-            + "\n\n"
-        )
-
-    # Blocks are emitted in ascending order of influence, because position is
-    # the only lever the prompt has: the model answers immediately after the
-    # final token, so the last block read is the one nearest the decision.
-    #
-    # history -> notice_board -> inter_cat_radio -> coach -> observation -> commander
-    if commander_is_fresh:
-        prompt = f"{history_context}{notice_context}{transmissions_context}{coaching_context}{observation_context}{commander_context}"
-    else:
-        prompt = f"{commander_context}{history_context}{notice_context}{transmissions_context}{coaching_context}{observation_context}"
-
+    # Commander and transmissions are removed from actor prompt per instruction.
+    # The actor does not chat/broadcast and is not commanded via live radio.
+    # Its sole primary focus is the Coach's standing directive.
+    prompt = f"{history_context}{notice_context}{coaching_context}{observation_context}"
 
     if capture is not None:
         # Recorded as separate sections rather than one blob so the
@@ -1275,11 +1207,6 @@ def build_decision_prompt(
             "model": getattr(adk_agent, "model", "unknown"),
             "agent_id": agent_id,
             "history_window_size": window_size,
-            # Stamped per prompt, not just per run. The budget is adjustable
-            # mid-game, so a run_config written at startup cannot say which
-            # setting produced any particular decision -- and a prompt log that
-            # straddles a change is otherwise indistinguishable from one that
-            # does not.
             "thinking_budget": get_thinking_budget(),
             "sections": {
                 "system_instruction": {
@@ -1294,22 +1221,18 @@ def build_decision_prompt(
                 },
                 "inter_cat_radio": {
                     "label": "Inter-cat radio: audible chirps and reports from peer cats",
-                    "delivered": bool(transmissions_context),
-                    "text": transmissions_context or "(no recent incoming transmissions)",
+                    "delivered": False,
+                    "text": "(Disabled - Chat/broadcast removed from actor)",
                 },
                 "coaching_notes": {
-                    "label": "Coach: standing orders from the evaluator",
+                    "label": "Coach: standing orders from the evaluator (PRIMARY OBJECTIVE)",
                     "delivered": bool(coaching_notes),
                     "text": coaching_context or "(no coaching notes published yet)",
                 },
                 "commander_directive": {
                     "label": "Commander: live order from the radio",
-                    "delivered": bool(commander_context),
-                    "text": commander_context or (
-                        "No standing order. The commander has not radioed one, or "
-                        "cancelled the last one. This is an empty radio, not a "
-                        "broken one."
-                    ),
+                    "delivered": False,
+                    "text": "(Disabled - Commander radio removed from actor)",
                 },
                 "history_window": {
                     "label": f"Recent tactical context (last {len(history_lines)} ticks)",

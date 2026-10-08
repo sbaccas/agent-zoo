@@ -408,19 +408,19 @@ def dispatch_evaluation() -> bool:
     return True
 
 
-def maybe_dispatch_evaluation(current_tick: int) -> None:
-    """Requests an evaluation once the configured tick interval has elapsed."""
+def maybe_dispatch_evaluation(current_tick: int, force: bool = False) -> None:
+    """Requests an evaluation once the configured tick interval has elapsed or when forced by event."""
     if not state.eval_enabled:
         return
     interval = max(1, state.eval_interval)
-    if current_tick - state.last_eval_dispatch_tick < interval:
+    if not force and (current_tick - state.last_eval_dispatch_tick < interval):
         return
     # Record the attempt regardless of whether dispatch succeeds, so a busy
     # evaluator cannot cause a retry storm on every subsequent tick.
     state.last_eval_dispatch_tick = current_tick
     if dispatch_evaluation():
         logger.info(
-            "Queued evaluation at tick %s (interval=%s)", current_tick, interval
+            "Queued evaluation at tick %s (interval=%s, force=%s)", current_tick, interval, force
         )
 
 
@@ -710,7 +710,23 @@ async def act_async(obs: Observation, decoupled: bool = False) -> ActionResponse
     # The durable transcript lives on disk, so the evaluator's horizon is not
     # limited by `max_history`.
     store.append_tick(exchange)
-    maybe_dispatch_evaluation(obs.tick)
+
+    # Check if a new rival cat was spotted in FOV that warrants calling the Slow Brain to redirect
+    force_eval = False
+    spotted_rivals = [
+        e.get("id") for e in (obs.visible_entities or [])
+        if e.get("type") == "cat" and e.get("id") != state.agent_id
+    ]
+    if spotted_rivals:
+        current_notes = store.read_coaching_notes(agent_id=state.agent_id) or ""
+        # If any spotted rival is not mentioned in the active coaching notes, request immediate re-evaluation!
+        for rival in spotted_rivals:
+            if rival and rival not in current_notes:
+                force_eval = True
+                logger.info("Rival cat %s spotted in FOV; requesting immediate Slow Brain re-evaluation!", rival)
+                break
+
+    maybe_dispatch_evaluation(obs.tick, force=force_eval)
 
     broadcast_msg = auto_meta.get("broadcast_msg") or ""
     tool_calls = auto_meta.get("tool_calls") or []

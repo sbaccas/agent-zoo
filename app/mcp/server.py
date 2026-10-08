@@ -242,7 +242,7 @@ def create_mcp_server(name: str = "cat-and-mouse-mcp", version: str = "0.1.0") -
         name="get_coverage_map",
         description="Inspects the spatial grid heatmap showing where cats have spent their ticks across the arena.",
     )
-    async def get_coverage_map(sim_id: str = "active") -> Dict[str, Any]:
+    async def get_coverage_map(sim_id: str = "active", cat_id: Optional[str] = None) -> Dict[str, Any]:
         """Fetch spatial coverage heatmap."""
         start = time.perf_counter()
         ok, payload, err = await _fetch_from_game_server(f"/api/simulations/{sim_id}/heatmap")
@@ -255,11 +255,11 @@ def create_mcp_server(name: str = "cat-and-mouse-mcp", version: str = "0.1.0") -
                 event_type="tool_call",
                 level="warn",
                 tool="get_coverage_map",
-                arguments={"sim_id": sim_id},
+                arguments={"sim_id": sim_id, "cat_id": cat_id},
                 duration_ms=dur,
                 status="warning",
                 summary=f"get_coverage_map ({dur}ms): {err}",
-                details={"arguments": {"sim_id": sim_id}, "result": res},
+                details={"arguments": {"sim_id": sim_id, "cat_id": cat_id}, "result": res},
             )
             return res
 
@@ -267,15 +267,25 @@ def create_mcp_server(name: str = "cat-and-mouse-mcp", version: str = "0.1.0") -
             res = {"available": False, "reason": "unexpected payload format"}
             return res
 
+        raw_cats = payload.get("cats", [])
+        if cat_id and isinstance(raw_cats, list):
+            raw_cats = [c for c in raw_cats if c.get("id") == cat_id]
+
+        sanitized_cats = []
+        for c in (raw_cats if isinstance(raw_cats, list) else []):
+            sc = dict(c)
+            sc.pop("path", None)  # Prevent exact coordinate trail leak
+            sanitized_cats.append(sc)
+
         res = {
             "available": True,
             "simulation_id": payload.get("simulation_id"),
             "tick": payload.get("tick"),
-            "ascii": payload.get("ascii"),
+            "ascii": payload.get("ascii") if not cat_id else "\n\n".join(c.get("ascii", "") for c in sanitized_cats),
             "arena": payload.get("arena"),
             "grid_size": payload.get("grid_size"),
             "cell_size": payload.get("cell_size"),
-            "cats": payload.get("cats", {}),
+            "cats": sanitized_cats,
         }
         grid = res.get("grid_size") or "unknown"
         telemetry.record_event(

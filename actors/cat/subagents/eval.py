@@ -440,7 +440,8 @@ async def get_coverage_map() -> Dict[str, Any]:
     try:
         from app.mcp.client import MCPClient
         client = MCPClient(base_url=mcp_url)
-        res = await client.call_tool("get_coverage_map", {"sim_id": BOXSCORE_SIM_ID})
+        target_cat = _current_eval_cat or os.environ.get("CAT_ID") or ("cat-2" if os.environ.get("PORT") == "8003" else "cat-1")
+        res = await client.call_tool("get_coverage_map", {"sim_id": BOXSCORE_SIM_ID, "cat_id": target_cat})
         if isinstance(res, dict) and (res.get("available") is not False or "ascii" in res):
             return res
         if isinstance(res, dict) and res.get("available") is False:
