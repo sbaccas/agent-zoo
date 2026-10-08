@@ -23,6 +23,13 @@ The project explores the spectrum of agent autonomy—ranging from high-speed ru
    - **Circuit Breaker**: 3.0s agent request timeout with automatic fallback to in-memory heuristics if an agent service degrades or disconnects.
    - **Zero-LLM UI Polling**: Workbench and visualization polling operate strictly against in-memory state caches (<1ms), preventing browser polling from inducing cloud API overhead.
 
+4. **Universal Agent Harness (Architecture Standard: October 8, 2026)**:
+   - All agents—regardless of animal species (cats, mice, hounds) or tactical alignment (standard, evil, stealth)—share the **identical Python execution harness**.
+   - Agents are distinguished **exclusively by their injected skills manuals** (`skills.md` for the fast-brain actor, `coach_skills.md` for the slow-brain coach).
+   - Boot-up path resolution injects skills dynamically (`CAT_SKILLS_PATH`, `EVAL_SKILLS_PATH`) without code branching.
+   - Strict dual-channel memory separates **Coach Private Notes** (strategic context for the coach's future self) from **Published Standing Orders** (turn-by-turn directives for the actor).
+   - Full specification: [docs/AGENT_HARNESS_ARCHITECTURE.md](file:///Users/shanebaccas/Desktop/workspace/C+M/docs/AGENT_HARNESS_ARCHITECTURE.md).
+
 ---
 
 ## 🏗️ System Architecture

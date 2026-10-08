@@ -1194,14 +1194,12 @@ def build_eval_prompt(
     )
 
     # The coach's model of the game IS the actor's manual -- the same bytes the
-    # actor is running on, read through the actor's own loader so the two cannot
-    # diverge.
+    # actor is running on, resolved for this agent so the two cannot diverge.
     skills_path = resolve_skills_path(target_cat)
-    manual_header = (
-        EVIL_ACTOR_MANUAL_BLOCK_HEADER
-        if skills_path.name == "evil_skills.md"
-        else ACTOR_MANUAL_BLOCK_HEADER
-    )
+    eval_skills_path = resolve_eval_skills_path(target_cat)
+    eval_skills_name = eval_skills_path.name
+
+    manual_header = f"--- YOUR SUBORDINATE'S MANUAL ({skills_path.name}) ---"
     actor_manual_block = (
         f"{manual_header}\n"
         f"{get_skills_instruction(target_cat)}\n\n"
@@ -1217,7 +1215,7 @@ def build_eval_prompt(
             "--- YOUR STANDING DIRECTIVES SO FAR ---\n"
             f"{previous}\n\n"
             f"You currently have {previous_count} directive(s). "
-            "Per eval_skills.md, update your dossier: CARRY FORWARD active directives, DROP completed ones, and ADD new directives as learned.\n\n"
+            f"Per {eval_skills_name}, update your dossier: CARRY FORWARD active directives, DROP completed ones, and ADD new directives as learned.\n\n"
         )
 
     # The Commander's standing order, if one is in force.
@@ -1237,13 +1235,13 @@ def build_eval_prompt(
             cat = f"[{m.get('category', 'tactical')}]"
             notes_lines.append(f"  • {cat}{tags} {m.get('note', '')}")
         notebook_block = (
-            "--- YOUR PRIVATE STRATEGIC NOTEBOOK ---\n"
+            "--- YOUR PRIVATE STRATEGIC NOTEBOOK (CONTEXT FROM YOUR PAST SELF) ---\n"
             + "\n".join(notes_lines)
             + "\n\n"
         )
     else:
         notebook_block = (
-            "--- YOUR PRIVATE STRATEGIC NOTEBOOK ---\n"
+            "--- YOUR PRIVATE STRATEGIC NOTEBOOK (CONTEXT FROM YOUR PAST SELF) ---\n"
             "(Empty)\n\n"
         )
 
@@ -1286,7 +1284,7 @@ def build_eval_prompt(
         f"{comms_block}"
         f"{directive_block}"
         "--- EVALUATION ---\n"
-        "Execute your evaluation per eval_skills.md. Return updated standing directives for the Cat Actor. Do not refer to tick numbers in the directives."
+        f"Execute your evaluation per {eval_skills_name}. Return updated standing directives for the Cat Actor. Do not refer to tick numbers in the directives."
     )
 
 

@@ -232,3 +232,31 @@ async def test_evil_cat_kills_give_twice_as_many_points_as_victim_consumed():
     assert row2["score"] == 25
 
 
+def test_evil_coach_private_notes_distinct_from_standing_orders():
+    """Verify evil_coach_skills.md defines coach private notes as context for future self for conspiracies."""
+    p = Path(__file__).resolve().parents[1] / "actors" / "cat" / "subagents" / "evil_coach_skills.md"
+    assert p.exists()
+    content = p.read_text(encoding="utf-8")
+
+    assert "Coach Private Notes vs. Published Standing Orders" in content
+    assert "providing context to your future self" in content
+    assert "long-term conspiracies" in content
+    assert "NEVER write standing orders" in content
+    assert "write_coach_note" in content
+    assert "read_coach_notes" in content
+
+
+def test_build_eval_prompt_for_evil_cat_uses_evil_coach_skills():
+    """Verify build_eval_prompt references evil_coach_skills.md and past self context for evil cat."""
+    from actors.cat.subagents.eval import build_eval_prompt
+
+    prompt = build_eval_prompt(
+        records=[],
+        previous="• [OBJECTIVE & BOUNTY] Hunt cat-1",
+        coach_directive=None,
+        agent_id="cat-3",
+    )
+    assert "evil_coach_skills.md" in prompt
+    assert "CONTEXT FROM YOUR PAST SELF" in prompt
+
+
