@@ -815,7 +815,10 @@
             <div class="card-title">
               <span>📢 Standing Orders (coaching_notes.md)</span>
             </div>
-            <span style="font-size: 0.72rem; color: var(--text-dim);">Live Injected Directives</span>
+            <div style="display: flex; gap: 8px; align-items: center;">
+              <button type="button" class="btn-action-sm" id="btnCoachPayload" title="Inspect prompt sections, standing orders, and thinking telemetry sent to Coach">🔬 Coach Payload</button>
+              <span style="font-size: 0.72rem; color: var(--text-dim);">Live Injected Directives</span>
+            </div>
           </div>
           <div class="card-body">
             <div class="standing-tabs">
@@ -1308,6 +1311,161 @@
 
     // Initial Load
     loadNotes();
+
+    // Helper: HTML escaping
+    function escapeHtml(str) {
+      if (!str) return '';
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+    }
+
+    // Coach Payload Modal Logic
+    const coachPromptModal = document.getElementById('coachPromptModal');
+    const btnCoachPayload = document.getElementById('btnCoachPayload');
+    const btnCloseCoachModal = document.getElementById('btnCloseCoachModal');
+    const btnDoneCoachModal = document.getElementById('btnDoneCoachModal');
+    const mcpPayloadCatSelect = document.getElementById('mcpPayloadCatSelect');
+    const mcpPromptModalMeta = document.getElementById('mcpPromptModalMeta');
+    const mcpPromptModalContent = document.getElementById('mcpPromptModalContent');
+    const btnCopyCoachPayload = document.getElementById('btnCopyCoachPayload');
+    let lastLoadedCoachRecord = null;
+
+    async function loadCoachPayload(catId) {
+      mcpPromptModalMeta.textContent = `Loading coach payload for ${catId}...`;
+      mcpPromptModalContent.innerHTML = '';
+      try {
+        const resp = await fetch(`/api/mcp/coach-payload?cat_id=${encodeURIComponent(catId)}`);
+        const data = await resp.json();
+        if (!resp.ok || !data.ok || !data.record) {
+          mcpPromptModalMeta.textContent = `No coach prompts recorded yet for ${catId}.`;
+          mcpPromptModalContent.innerHTML = `<div style="color: var(--text-dim); text-align: center; padding: 24px;">The evaluator runs periodically or upon manual trigger. Once an evaluation runs for ${catId}, its full prompt payload, thinking telemetry, and directives will appear here.</div>`;
+          lastLoadedCoachRecord = null;
+          return;
+        }
+        const rec = data.record;
+        lastLoadedCoachRecord = rec;
+        const tickBuilt = rec.built_at_tick ?? rec.applied_at_tick ?? '--';
+        const model = rec.model || 'gemini-2.5-flash';
+        const latency = rec.latency_ms ? `${rec.latency_ms}ms` : '--';
+        const budget = (rec.thinking_budget !== undefined && rec.thinking_budget !== null) ? `${rec.thinking_budget} tokens` : 'Default';
+        const spent = rec.thoughts_token_count ? `${Number(rec.thoughts_token_count).toLocaleString()} spent` : '';
+
+        mcpPromptModalMeta.innerHTML = `
+          <div style="display: flex; flex-wrap: wrap; gap: 12px; align-items: center;">
+            <span>Target: <strong>${rec.agent_id || catId}</strong></span>
+            <span>Tick: <strong>#${tickBuilt}</strong></span>
+            <span>Model: <strong>${model}</strong></span>
+            <span>Latency: <strong>${latency}</strong></span>
+            <span>Thinking: <strong>${budget}</strong> ${spent ? `(${spent})` : ''}</span>
+          </div>
+        `;
+
+        // Render Directive Output
+        let html = '';
+        if (rec.output !== undefined && rec.output !== null) {
+          const outText = typeof rec.output === 'string' ? rec.output : JSON.stringify(rec.output, null, 2);
+          html += `
+            <div style="background: rgba(16, 185, 129, 0.08); border: 1px solid rgba(16, 185, 129, 0.3); border-radius: 8px; padding: 12px;">
+              <div style="font-weight: 700; font-size: 0.82rem; color: var(--success); margin-bottom: 6px;">📢 Published Standing Orders / Directives</div>
+              <pre style="margin: 0; font-family: var(--font-mono); font-size: 0.8rem; white-space: pre-wrap; word-break: break-word;">${escapeHtml(outText)}</pre>
+            </div>
+          `;
+        }
+
+        // Render Sections
+        if (rec.sections && typeof rec.sections === 'object') {
+          html += `<div style="font-weight: 700; font-size: 0.85rem; margin-top: 4px;">Prompt Sections (${Object.keys(rec.sections).length})</div>`;
+          for (const [key, sec] of Object.entries(rec.sections)) {
+            const secText = (sec && sec.text !== undefined && sec.text !== null) ? String(sec.text) : '';
+            const secLabel = (sec && sec.label) ? sec.label : key;
+            const isManual = key.includes('manual') || key.includes('skills') || key.includes('system');
+            html += `
+              <details ${!isManual ? 'open' : ''} style="background: var(--feed-bg); border: 1px solid var(--card-border); border-radius: 8px; padding: 8px 12px;">
+                <summary style="font-size: 0.8rem; font-weight: 600; cursor: pointer; display: flex; justify-content: space-between; align-items: center;">
+                  <span>${escapeHtml(secLabel)}</span>
+                  <span style="font-size: 0.72rem; color: var(--text-dim); font-family: var(--font-mono);">${secText.length.toLocaleString()} chars</span>
+                </summary>
+                <pre style="margin: 8px 0 0 0; padding: 8px; background: var(--card-bg); border-radius: 6px; font-family: var(--font-mono); font-size: 0.75rem; white-space: pre-wrap; word-break: break-word; max-height: 250px; overflow-y: auto;">${escapeHtml(secText)}</pre>
+              </details>
+            `;
+          }
+        }
+
+        mcpPromptModalContent.innerHTML = html;
+      } catch (err) {
+        mcpPromptModalMeta.textContent = `Error fetching coach payload: ${err.message}`;
+        mcpPromptModalContent.innerHTML = '';
+      }
+    }
+
+    if (btnCoachPayload) {
+      btnCoachPayload.addEventListener('click', () => {
+        if (coachPromptModal) {
+          coachPromptModal.style.display = 'flex';
+          mcpPayloadCatSelect.value = activeStandingCat || 'cat-1';
+          loadCoachPayload(mcpPayloadCatSelect.value);
+        }
+      });
+    }
+
+    if (mcpPayloadCatSelect) {
+      mcpPayloadCatSelect.addEventListener('change', () => {
+        loadCoachPayload(mcpPayloadCatSelect.value);
+      });
+    }
+
+    const closeModal = () => {
+      if (coachPromptModal) coachPromptModal.style.display = 'none';
+    };
+    if (btnCloseCoachModal) btnCloseCoachModal.addEventListener('click', closeModal);
+    if (btnDoneCoachModal) btnDoneCoachModal.addEventListener('click', closeModal);
+    if (btnCopyCoachPayload) {
+      btnCopyCoachPayload.addEventListener('click', () => {
+        if (!lastLoadedCoachRecord) return;
+        const text = lastLoadedCoachRecord.full_prompt || JSON.stringify(lastLoadedCoachRecord, null, 2);
+        navigator.clipboard.writeText(text).then(() => {
+          const original = btnCopyCoachPayload.textContent;
+          btnCopyCoachPayload.textContent = '✅ Copied!';
+          setTimeout(() => { btnCopyCoachPayload.textContent = original; }, 1500);
+        });
+      });
+    }
   </script>
+
+  <!-- Coach Prompt Payload Inspector Modal -->
+  <div id="coachPromptModal" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.65); z-index: 1000; align-items: center; justify-content: center; backdrop-filter: blur(2px);">
+    <div style="background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 12px; width: 90%; max-width: 960px; max-height: 85vh; display: flex; flex-direction: column; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.5);">
+      <div style="padding: 16px 20px; border-bottom: 1px solid var(--card-border); display: flex; justify-content: space-between; align-items: center;">
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <span style="font-size: 1.2rem;">🔬</span>
+          <div>
+            <h3 style="margin: 0; font-size: 1rem; font-weight: 700;">Coach Payload Inspector</h3>
+            <div style="font-size: 0.75rem; color: var(--text-dim);">System 2 Long-Term Consciousness Prompt Capture</div>
+          </div>
+        </div>
+        <div style="display: flex; gap: 8px; align-items: center;">
+          <select id="mcpPayloadCatSelect" class="form-select" style="padding: 4px 8px; font-size: 0.78rem; width: auto;">
+            <option value="cat-1">Cat-1</option>
+            <option value="cat-2">Cat-2</option>
+            <option value="cat-3">Cat-3</option>
+          </select>
+          <button id="btnCloseCoachModal" class="btn-action-sm" style="font-size: 1.1rem; line-height: 1; padding: 4px 10px; cursor: pointer;">&times;</button>
+        </div>
+      </div>
+      <div id="mcpPromptModalMeta" style="padding: 10px 20px; background: var(--feed-bg); border-bottom: 1px solid var(--card-border); font-size: 0.78rem; font-family: var(--font-mono); color: var(--text-dim);">
+        Loading coach payload...
+      </div>
+      <div id="mcpPromptModalContent" style="padding: 16px 20px; overflow-y: auto; flex: 1; display: flex; flex-direction: column; gap: 12px;">
+      </div>
+      <div style="padding: 12px 20px; border-top: 1px solid var(--card-border); display: flex; justify-content: flex-end; gap: 8px;">
+        <button id="btnCopyCoachPayload" class="btn-action-sm">📋 Copy Full Payload</button>
+        <button id="btnDoneCoachModal" class="btn-action-sm" style="background: var(--accent); color: white; border-color: var(--accent);">Done</button>
+      </div>
+    </div>
+  </div>
 </body>
 </html>

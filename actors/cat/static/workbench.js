@@ -1324,16 +1324,18 @@
     promptModalSections.replaceChildren();
     promptModal.style.display = 'flex';
 
-    const url = (tick !== undefined && tick !== null)
-      ? `/api/agent/coach/prompt/${tick}`
+    const targetTick = (tick !== undefined && tick !== null) ? tick : inspectingTick;
+    const baseUrl = (targetTick !== undefined && targetTick !== null)
+      ? `/api/agent/coach/prompt/${targetTick}`
       : `/api/agent/coach/prompt/latest`;
+    const url = `${baseUrl}?cat_id=${encodeURIComponent(activeCat)}&agent_id=${encodeURIComponent(activeCat)}`;
 
     fetch(url)
       .then((r) => r.json())
       .then((data) => {
         if (data.status !== 'ok' || !data.record) {
           lastPromptRecord = null;
-          promptModalMeta.textContent = data.detail || 'No coach prompt recorded yet. The coach runs every N ticks or when triggered.';
+          promptModalMeta.textContent = data.detail || `No coach prompt recorded yet for ${activeCat}. The coach runs every N ticks or when triggered.`;
           return;
         }
         lastPromptRecord = data.record;
@@ -1348,7 +1350,7 @@
   function renderPromptRecord(rec) {
     const built = rec.built_at_tick;
     const applied = rec.applied_at_tick;
-    const lagNote = (built !== applied)
+    const lagNote = (built !== undefined && applied !== undefined && built !== applied)
       // Worth calling out explicitly: the model reasoned about an older world
       // than the one its decision was applied to.
       ? ` — built from tick ${built}'s observation, applied ${applied - built} tick(s) later`
@@ -1357,7 +1359,7 @@
     promptModalMeta.replaceChildren();
     const meta = document.createElement('div');
     const line1 = document.createElement('div');
-    line1.textContent = `${rec.model} · ${rec.latency_ms ?? '?'}ms${lagNote}`;
+    line1.textContent = `${rec.model || 'gemini-2.5-flash'} · ${rec.latency_ms ?? '?'}ms${lagNote}`;
     meta.appendChild(line1);
 
     // What this particular decision was allowed to think, and what it actually
@@ -1368,7 +1370,7 @@
       const spent = rec.thoughts_token_count;
       const spentText = (spent === null || spent === undefined)
         ? 'not reported by the API'
-        : `${spent.toLocaleString()} spent`;
+        : `${Number(spent).toLocaleString()} spent`;
       const line = document.createElement('div');
       line.textContent = `Thinking budget: ${formatBudget(rec.thinking_budget)} · ${spentText}`;
       meta.appendChild(line);
@@ -1378,9 +1380,10 @@
       const line2 = document.createElement('div');
       line2.textContent = `Returned: ${(rec.decision.action || '').toUpperCase()} — ${rec.decision.thought || ''}`;
       meta.appendChild(line2);
-    } else if (rec.output) {
+    } else if (rec.output !== undefined && rec.output !== null) {
       const line2 = document.createElement('div');
-      line2.textContent = `Published Directive: ${rec.output.replace(/\n+/g, ' ')}`;
+      const outStr = typeof rec.output === 'string' ? rec.output : JSON.stringify(rec.output);
+      line2.textContent = `Published Directive: ${outStr.replace(/\n+/g, ' ')}`;
       meta.appendChild(line2);
     }
     promptModalMeta.appendChild(meta);
@@ -1418,12 +1421,14 @@
 
       const summary = document.createElement('summary');
       const status = sec.delivered ? '✓' : '✗ NOT SENT';
-      summary.textContent = `${status}  ${sec.label}  (${sec.text.length} chars)`;
+      const secText = (sec.text !== undefined && sec.text !== null) ? String(sec.text) : '';
+      const secLabel = sec.label || key;
+      summary.textContent = `${status}  ${secLabel}  (${secText.length} chars)`;
       details.appendChild(summary);
 
       const pre = document.createElement('pre');
       pre.className = 'prompt-section-body';
-      pre.textContent = sec.text;
+      pre.textContent = secText;
       details.appendChild(pre);
 
       blocks.push(details);
@@ -2936,7 +2941,7 @@
 
   if (btnCoachPayload) {
     btnCoachPayload.addEventListener('click', () => {
-      openCoachPromptModal();
+      openCoachPromptModal(inspectingTick);
     });
   }
 

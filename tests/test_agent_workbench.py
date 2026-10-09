@@ -25,6 +25,10 @@ def reset_agent_state():
     state.last_eval_result = None
     state.eval_pending = False
     state.is_evaluating = False
+    state.agent_id = "cat-1"
+    from actors.cat.api import ws_client
+    ws_client.requested_cat_id = "cat-1"
+    ws_client.assigned_id = None
 
 
 def test_workbench_html_served():

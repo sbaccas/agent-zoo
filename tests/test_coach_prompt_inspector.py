@@ -19,10 +19,13 @@ from actors.cat import store
 from actors.cat.api import app
 from actors.cat.subagents.eval import build_eval_prompt
 from actors.evil_cat.api import app as evil_app
+from app.mcp.server import create_mcp_app
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKBENCH_JS = ROOT / "actors/cat/static/workbench.js"
 INDEX_HTML = ROOT / "actors/cat/static/index.html"
+MCP_INDEX_HTML = ROOT / "app/mcp/static/index.html"
+MCP_NOTES_HTML = ROOT / "app/mcp/static/notes.html"
 
 JSC = Path("/System/Library/Frameworks/JavaScriptCore.framework/Versions/A/Helpers/jsc")
 jsc_only = pytest.mark.skipif(
@@ -305,3 +308,40 @@ def test_render_coach_prompt_record_in_jsc():
             assert s["open"] is False
         elif "coach_identity" in label or "standing_directives" in label:
             assert s["open"] is True
+
+
+def test_mcp_coach_payload_endpoint():
+    mcp_app = create_mcp_app()
+    client = TestClient(mcp_app)
+
+    # Empty returns 404
+    res = client.get("/api/mcp/coach-payload?cat_id=cat-1")
+    assert res.status_code == 404
+    assert res.json()["status"] == "not_found"
+
+    # Populate cat-1 record
+    store.append_coach_prompt(_sample_coach_record(built=25, agent_id="cat-1"), agent_id="cat-1")
+
+    # Fetch latest
+    res = client.get("/api/mcp/coach-payload?cat_id=cat-1")
+    assert res.status_code == 200
+    data = res.json()
+    assert data["ok"] is True
+    assert data["record"]["built_at_tick"] == 25
+
+    # Other cat still not found
+    res2 = client.get("/api/mcp/coach-payload?cat_id=cat-2")
+    assert res2.status_code == 404
+
+
+def test_mcp_ui_wiring_for_coach_payload():
+    idx_content = MCP_INDEX_HTML.read_text(encoding="utf-8")
+    assert 'value="get_coach_payload"' in idx_content
+    assert 'value="get_actor_payload"' in idx_content
+    assert "get_coach_payload:" in idx_content
+    assert "get_actor_payload:" in idx_content
+
+    notes_content = MCP_NOTES_HTML.read_text(encoding="utf-8")
+    assert 'id="btnCoachPayload"' in notes_content
+    assert 'id="coachPromptModal"' in notes_content
+    assert "/api/mcp/coach-payload" in notes_content

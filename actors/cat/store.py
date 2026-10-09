@@ -39,9 +39,11 @@ def get_cat_paths(agent_id: str) -> Dict[str, Path]:
     """Returns file paths for a specific cat agent."""
     cid = agent_id or "cat-1"
     if os.environ.get("CAT_AGENT_RUNTIME_DIR"):
-        cat_dir = Path(os.environ["CAT_AGENT_RUNTIME_DIR"])
-        if agent_id and (Path(os.environ["CAT_AGENT_RUNTIME_DIR"]) / agent_id).is_dir():
-            cat_dir = Path(os.environ["CAT_AGENT_RUNTIME_DIR"]) / agent_id
+        base_dir = Path(os.environ["CAT_AGENT_RUNTIME_DIR"])
+        if agent_id and agent_id != "cat-1" and not base_dir.name.endswith(f"_{cid}"):
+            cat_dir = base_dir / cid
+        else:
+            cat_dir = base_dir
     else:
         # Check active workbench temp runtime directory
         tmp_dir = Path(tempfile.gettempdir()) / f"cm_runtime_{cid}"
@@ -424,39 +426,54 @@ def read_coach_prompt_for_tick(tick: Optional[int] = None, agent_id: Optional[st
     If `tick` is provided, finds the coach prompt whose built_at_tick <= tick (most recent evaluation up to that tick).
     If `tick` is None, returns the most recent captured coach prompt record.
     """
-    active_cat = agent_id or os.environ.get("CAT_ID") or "cat-1"
-    paths = get_cat_paths(active_cat)
-    target_path = paths.get("coach_prompts", COACH_PROMPTS_PATH)
-    if not target_path.exists():
-        fallback_path = LOCAL_RUNTIME_DIR / "coach_prompts.jsonl"
-        if fallback_path.exists():
-            target_path = fallback_path
-        else:
-            return None
+    active_cat = agent_id or os.environ.get("CAT_ID")
+    candidate_paths: List[Path] = []
+    if active_cat:
+        paths = get_cat_paths(active_cat)
+        target_path = paths.get("coach_prompts", COACH_PROMPTS_PATH)
+        if target_path.exists():
+            candidate_paths.append(target_path)
+        elif active_cat == "cat-1":
+            fallback = LOCAL_RUNTIME_DIR / "coach_prompts.jsonl"
+            if fallback.exists():
+                candidate_paths.append(fallback)
+    else:
+        # Check all known cat paths
+        for cid in list_known_cat_ids():
+            cp = get_cat_paths(cid).get("coach_prompts")
+            if cp and cp.exists() and cp not in candidate_paths:
+                candidate_paths.append(cp)
+        fallback = LOCAL_RUNTIME_DIR / "coach_prompts.jsonl"
+        if fallback.exists() and fallback not in candidate_paths:
+            candidate_paths.append(fallback)
 
-    try:
-        with target_path.open("r", encoding="utf-8") as fh:
-            lines = fh.readlines()
-    except Exception as exc:
-        logger.warning("Failed to read coach prompt log: %s", exc)
-        return None
-
-    for line in reversed(lines):
-        line = line.strip()
-        if not line:
-            continue
+    for p in candidate_paths:
         try:
-            rec = json.loads(line)
-        except json.JSONDecodeError:
+            with p.open("r", encoding="utf-8") as fh:
+                lines = fh.readlines()
+        except Exception:
             continue
-        if tick is None:
-            return rec
-        built = rec.get("built_at_tick")
-        applied = rec.get("applied_at_tick")
-        if built == tick or applied == tick:
-            return rec
-        if built is not None and built <= tick:
-            return rec
+
+        for line in reversed(lines):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            rec_agent = rec.get("agent_id") or rec.get("cat_id")
+            if rec_agent and active_cat and rec_agent != active_cat:
+                continue
+            if tick is None:
+                return rec
+            built = rec.get("built_at_tick")
+            applied = rec.get("applied_at_tick")
+            if built == tick or applied == tick:
+                return rec
+            if built is not None and built <= tick:
+                return rec
+
     return None
 
 
@@ -639,12 +656,13 @@ def get_transcript_ticks_snapshot(ticks: List[int], agent_id: Optional[str] = No
 
 def list_known_cat_ids() -> List[str]:
     """Discovers available cat agent IDs across active runtime directories."""
+    found: List[str] = ["cat-1", "cat-2", "cat-3"]
     if os.environ.get("CAT_AGENT_RUNTIME_DIR"):
-        return [os.environ.get("CAT_ID") or "cat-1"]
+        cid = os.environ.get("CAT_ID")
+        if cid and cid not in found:
+            found.append(cid)
+        return found
     tmp_base = Path(tempfile.gettempdir())
-    found: List[str] = []
-    for default_id in ["cat-1", "cat-2", "cat-3"]:
-        found.append(default_id)
     try:
         for p in tmp_base.glob("cm_runtime_*"):
             if p.is_dir():

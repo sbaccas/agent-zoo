@@ -1407,6 +1407,8 @@
             <option value="read_coach_notes">read_coach_notes (Query Memories)</option>
             <option value="update_coach_note">update_coach_note (Edit Memory Note)</option>
             <option value="delete_coach_note">delete_coach_note (Delete Memory Note)</option>
+            <option value="get_coach_payload">get_coach_payload (Coach Prompt &amp; Telemetry)</option>
+            <option value="get_actor_payload">get_actor_payload (Tactical Cat Prompt &amp; Observation)</option>
             <option value="pull_transcript">pull_transcript (Pull Transcript Records)</option>
           </select>
         </div>
@@ -1898,6 +1900,14 @@
         { name: 'last_n', label: 'Last N Ticks', type: 'number', default: '50' },
         { name: 'limit', label: 'Limit (optional)', type: 'number', default: '' },
         { name: 'offset', label: 'Offset (optional)', type: 'number', default: '' }
+      ],
+      get_coach_payload: [
+        { name: 'cat_id', label: 'Cat ID', type: 'select', options: ['cat-1', 'cat-2', 'cat-3'], default: 'cat-1' },
+        { name: 'tick', label: 'Tick (optional, blank = latest)', type: 'number', default: '' }
+      ],
+      get_actor_payload: [
+        { name: 'cat_id', label: 'Cat ID', type: 'select', options: ['cat-1', 'cat-2', 'cat-3'], default: 'cat-1' },
+        { name: 'tick', label: 'Tick (optional, blank = latest)', type: 'number', default: '' }
       ]
     };
 

@@ -1203,6 +1203,23 @@ def create_mcp_app(server: Optional[MCPServer] = None):
             "standing_notes": standing,
         })
 
+    # Coach Payload Inspection endpoint
+    async def coach_payload_endpoint(request: Request) -> JSONResponse:
+        cat_id = request.query_params.get("cat_id") or request.query_params.get("agent_id") or "cat-1"
+        tick_param = request.query_params.get("tick")
+        tick = int(tick_param) if tick_param and tick_param.isdigit() else None
+        record = store.read_coach_prompt_for_tick(tick=tick, agent_id=cat_id)
+        if record:
+            return JSONResponse({"ok": True, "status": "ok", "cat_id": cat_id, "tick": tick, "record": record})
+        return JSONResponse({
+            "ok": False,
+            "status": "not_found",
+            "cat_id": cat_id,
+            "tick": tick,
+            "record": None,
+            "detail": f"No coach prompt recorded yet for {cat_id}.",
+        }, status_code=404)
+
     # 8. Notice Board REST API
     async def notice_board_endpoint(request: Request) -> JSONResponse:
         sim_id = request.query_params.get("sim_id", "active")
@@ -1683,6 +1700,7 @@ def create_mcp_app(server: Optional[MCPServer] = None):
     app.add_route("/api/mcp/coach-notes", coach_notes_create_endpoint, methods=["POST"])
     app.add_route("/api/mcp/coach-notes/{id}", coach_notes_item_endpoint, methods=["PUT", "DELETE"])
     app.add_route("/api/mcp/coach-standing-notes", coach_standing_notes_endpoint, methods=["GET", "POST", "PUT"])
+    app.add_route("/api/mcp/coach-payload", coach_payload_endpoint, methods=["GET"])
     app.add_route("/api/mcp/coach-chat", coach_chat_list_endpoint, methods=["GET"])
     app.add_route("/api/mcp/game-chat", coach_chat_list_endpoint, methods=["GET"])
     app.add_route("/api/mcp/coach-chat/send", coach_chat_send_endpoint, methods=["POST"])

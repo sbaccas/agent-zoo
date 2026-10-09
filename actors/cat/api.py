@@ -1883,33 +1883,6 @@ def set_evaluator_interval(req: EvalIntervalRequest) -> Dict[str, Any]:
     }
 
 
-@app.get("/api/agent/prompt/{tick}")
-def get_prompt_for_tick(tick: int) -> Dict[str, Any]:
-    """Returns the full model input behind the decision applied at `tick`.
-
-    A miss is not an error. Most ticks are decided by the System-1 reflex, which
-    never calls Gemini and therefore has no prompt to show. The response
-    distinguishes that expected case from an empty log so the UI can say
-    something truthful instead of just failing.
-    """
-    record = store.read_prompt_for_tick(tick)
-    if record:
-        return {"status": "ok", "tick": tick, "record": record}
-
-    size = store.prompt_log_size()
-    if size["records"] == 0:
-        detail = (
-            "No prompts have been captured yet. The log is wiped on game reset, "
-            "and only ticks decided by Gemini produce a record."
-        )
-    else:
-        detail = (
-            f"Tick {tick} has no captured prompt. It was almost certainly decided "
-            f"by the System-1 reflex heuristic, which never calls Gemini."
-        )
-    return {"status": "not_found", "tick": tick, "record": None, "detail": detail}
-
-
 @app.get("/api/agent/prompt/latest")
 def get_prompt_latest() -> Dict[str, Any]:
     """Returns the most recent model input behind an actor decision."""
@@ -1925,7 +1898,9 @@ def get_prompt_latest() -> Dict[str, Any]:
         return {"status": "ok", "record": record}
     # Fallback to reading the latest record in prompt log
     try:
-        with store.PROMPTS_PATH.open("r", encoding="utf-8") as fh:
+        paths = store.get_cat_paths(state.agent_id)
+        target = paths.get("prompts", store.PROMPTS_PATH)
+        with target.open("r", encoding="utf-8") as fh:
             lines = [ln.strip() for ln in fh if ln.strip()]
             if lines:
                 return {"status": "ok", "record": json.loads(lines[-1])}
@@ -1938,6 +1913,33 @@ def get_prompt_latest() -> Dict[str, Any]:
     }
 
 
+@app.get("/api/agent/prompt/{tick}")
+def get_prompt_for_tick(tick: int) -> Dict[str, Any]:
+    """Returns the full model input behind the decision applied at `tick`.
+
+    A miss is not an error. Most ticks are decided by the System-1 reflex, which
+    never calls Gemini and therefore has no prompt to show. The response
+    distinguishes that expected case from an empty log so the UI can say
+    something truthful instead of just failing.
+    """
+    record = store.read_prompt_for_tick(tick, agent_id=state.agent_id)
+    if record:
+        return {"status": "ok", "tick": tick, "record": record}
+
+    size = store.prompt_log_size(agent_id=state.agent_id)
+    if size["records"] == 0:
+        detail = (
+            "No prompts have been captured yet. The log is wiped on game reset, "
+            "and only ticks decided by Gemini produce a record."
+        )
+    else:
+        detail = (
+            f"Tick {tick} has no captured prompt. It was almost certainly decided "
+            f"by the System-1 reflex heuristic, which never calls Gemini."
+        )
+    return {"status": "not_found", "tick": tick, "record": None, "detail": detail}
+
+
 @app.get("/api/agent/prompt-log/stats")
 def get_prompt_log_stats() -> Dict[str, Any]:
     """Size of the prompt log, so the UI can show growth without downloading it."""
@@ -1946,40 +1948,71 @@ def get_prompt_log_stats() -> Dict[str, Any]:
 
 @app.get("/api/agent/coach/prompt/latest")
 @app.get("/api/workbench/coach/prompt/latest")
-def get_coach_prompt_latest() -> Dict[str, Any]:
+def get_coach_prompt_latest(
+    cat_id: Optional[str] = None,
+    agent_id: Optional[str] = None,
+) -> Dict[str, Any]:
     """Returns the most recent prompt and payload received by the strategic coach."""
-    record = store.read_coach_prompt_for_tick(tick=None, agent_id=state.agent_id)
+    target_id = cat_id or agent_id
+    if target_id:
+        record = store.read_coach_prompt_for_tick(tick=None, agent_id=target_id)
+    else:
+        default_id = ("cat-3" if os.environ.get("PORT") == "8005" else ("cat-2" if os.environ.get("PORT") == "8003" else (os.environ.get("CAT_ID") or state.agent_id or "cat-1")))
+        record = store.read_coach_prompt_for_tick(tick=None, agent_id=default_id)
+        if not record:
+            record = store.read_coach_prompt_for_tick(tick=None, agent_id=None)
+        target_id = (record.get("agent_id") if record else default_id)
+
     if record:
-        return {"status": "ok", "record": record}
+        return {"status": "ok", "cat_id": target_id, "record": record}
     return {
         "status": "not_found",
+        "cat_id": target_id,
         "record": None,
-        "detail": "No coach prompts have been captured yet. The coach runs every N ticks or when triggered.",
+        "detail": f"No coach prompts have been captured yet for {target_id}. The coach runs every N ticks or when triggered.",
     }
 
 
 @app.get("/api/agent/coach/prompt/{tick}")
 @app.get("/api/workbench/coach/prompt/{tick}")
-def get_coach_prompt_for_tick(tick: int) -> Dict[str, Any]:
+def get_coach_prompt_for_tick(
+    tick: int,
+    cat_id: Optional[str] = None,
+    agent_id: Optional[str] = None,
+) -> Dict[str, Any]:
     """Returns the prompt and payload behind the coach evaluation at or before `tick`."""
-    record = store.read_coach_prompt_for_tick(tick=tick, agent_id=state.agent_id)
+    target_id = cat_id or agent_id
+    if target_id:
+        record = store.read_coach_prompt_for_tick(tick=tick, agent_id=target_id)
+    else:
+        default_id = ("cat-3" if os.environ.get("PORT") == "8005" else ("cat-2" if os.environ.get("PORT") == "8003" else (os.environ.get("CAT_ID") or state.agent_id or "cat-1")))
+        record = store.read_coach_prompt_for_tick(tick=tick, agent_id=default_id)
+        if not record:
+            record = store.read_coach_prompt_for_tick(tick=tick, agent_id=None)
+        target_id = (record.get("agent_id") if record else default_id)
+
     if record:
-        return {"status": "ok", "tick": tick, "record": record}
+        return {"status": "ok", "tick": tick, "cat_id": target_id, "record": record}
     return {
         "status": "not_found",
         "tick": tick,
+        "cat_id": target_id,
         "record": None,
-        "detail": f"No coach prompt found for tick {tick}.",
+        "detail": f"No coach prompt found for tick {tick} ({target_id}).",
     }
 
 
 @app.get("/api/agent/coach/prompt-log/stats")
 @app.get("/api/workbench/coach/prompt-log/stats")
-def get_coach_prompt_log_stats() -> Dict[str, Any]:
+def get_coach_prompt_log_stats(
+    cat_id: Optional[str] = None,
+    agent_id: Optional[str] = None,
+) -> Dict[str, Any]:
     """Size of the coach prompt log."""
-    paths = store.get_cat_paths(state.agent_id)
+    target_id = cat_id or agent_id or state.agent_id or ("cat-3" if os.environ.get("PORT") == "8005" else ("cat-2" if os.environ.get("PORT") == "8003" else "cat-1"))
+    paths = store.get_cat_paths(target_id)
     p = paths.get("coach_prompts", store.COACH_PROMPTS_PATH)
-    return {"status": "ok", **store.coach_prompt_log_size(state.agent_id), "path": str(p)}
+    return {"status": "ok", "cat_id": target_id, **store.coach_prompt_log_size(target_id), "path": str(p)}
 
 
 @app.get("/api/agent/directive")
@@ -2263,6 +2296,7 @@ static_dir.mkdir(exist_ok=True)
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
 
+@app.head("/")
 @app.get("/")
 async def get_workbench():
     return FileResponse(static_dir / "index.html")
