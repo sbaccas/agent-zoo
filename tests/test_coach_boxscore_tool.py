@@ -40,7 +40,6 @@ def _cat_row(cat_id, **overrides):
         "id": cat_id,
         "mode": "ws" if cat_id == "cat-1" else "auto",
         "alive": True,
-        "position": {"x": 21, "y": 55},
         "kills": 9,
         "kills_per_100_ticks": 3.46,
         "tiles_per_kill": 9.44,
@@ -666,4 +665,27 @@ def test_eval_agent_has_both_tools():
     tool_names = [getattr(t, "__name__", None) or getattr(t, "name", None) for t in ev.eval_agent.tools]
     assert "get_boxscore" in tool_names
     assert "get_coverage_map" in tool_names
+
+
+@pytest.mark.asyncio
+async def test_boxscore_strips_cat_positions(allow_fetch, monkeypatch):
+    """Box score must not reveal individual cat positions so location deception remains viable."""
+    from actors.evil_cat import eval as evil_ev
+
+    monkeypatch.setenv(evil_ev.BOXSCORE_FETCH_ENV, "1")
+    payload = _payload(
+        cats=[
+            _cat_row("cat-1", position={"x": 10, "y": 20}),
+            _cat_row("cat-2", position={"x": 80, "y": 90}),
+            _cat_row("cat-3", position={"x": 50, "y": 50}),
+        ]
+    )
+    patcher, _ = _patch_get(payload=payload)
+    with patcher:
+        cat_res = await ev.get_boxscore()
+        evil_res = await evil_ev.get_boxscore()
+
+    assert all("position" not in c for c in cat_res["cats"])
+    assert all("position" not in c for c in evil_res["cats"])
+
 

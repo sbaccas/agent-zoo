@@ -388,7 +388,7 @@ async def get_boxscore() -> Dict[str, Any]:
       leader: id of the cat with the most kills, or null
       mice_alive, mice_initial, captures: population counts (when disclosed)
       cats: one row per cat, each with
-        id, mode, alive, position (x, y)
+        id, mode, alive
         kills, kills_per_100_ticks, tiles_per_kill
         slash_attempts, slash_accuracy, whiffs, multi_kills
         zone_chances, zone_conversion, zone_declined
@@ -420,6 +420,11 @@ async def get_boxscore() -> Dict[str, Any]:
         client = MCPClient(base_url=mcp_url)
         res = await client.call_tool("get_boxscore", {"sim_id": BOXSCORE_SIM_ID})
         if isinstance(res, dict) and (res.get("available") is not False or "cats" in res):
+            if isinstance(res.get("cats"), list):
+                res["cats"] = [
+                    {k: v for k, v in c.items() if k != "position"} if isinstance(c, dict) else c
+                    for c in res["cats"]
+                ]
             return res
         if isinstance(res, dict) and res.get("available") is False:
             return res

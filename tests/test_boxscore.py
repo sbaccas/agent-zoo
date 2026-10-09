@@ -376,7 +376,7 @@ async def test_boxscore_endpoint_returns_a_row_per_cat():
     assert body["arena"]["tiles"] == body["arena"]["width"] * body["arena"]["height"]
     assert len(body["cats"]) == 10
     expected = {
-        "id", "mode", "alive", "position", "kills", "kills_per_100_ticks",
+        "id", "mode", "alive", "kills", "kills_per_100_ticks",
         "tiles_per_kill", "slash_attempts", "slash_accuracy", "whiffs",
         "multi_kills", "zone_chances", "zone_conversion", "zone_declined",
         "tiles_run", "unique_tiles", "ground_covered", "speed_tiles_per_tick",
@@ -384,6 +384,7 @@ async def test_boxscore_endpoint_returns_a_row_per_cat():
         "ticks_free", "ticks_locked", "locked_pct", "prey_in_sight_pct",
     }
     assert expected <= set(body["cats"][0]), "box score contract lost a field"
+    assert all("position" not in c for c in body["cats"]), "box score must not reveal cat positions"
 
 
 @pytest.mark.asyncio

@@ -306,13 +306,15 @@ document.addEventListener('DOMContentLoaded', () => {
 
     th.appendChild(badgeRow);
 
+    const hpVal = (cat.hp !== undefined && cat.hp !== null) ? cat.hp : (cat.alive ? 100 : 0);
+    const pos = document.createElement('div');
+    pos.className = 'boxscore-cat-pos';
     if (cat.position && isNum(cat.position.x) && isNum(cat.position.y)) {
-      const pos = document.createElement('div');
-      pos.className = 'boxscore-cat-pos';
-      const hpVal = (cat.hp !== undefined && cat.hp !== null) ? cat.hp : (cat.alive ? 100 : 0);
       pos.textContent = `(${cat.position.x}, ${cat.position.y}) · ${hpVal} HP`;
-      th.appendChild(pos);
+    } else {
+      pos.textContent = `${hpVal} HP`;
     }
+    th.appendChild(pos);
     return th;
   }
 

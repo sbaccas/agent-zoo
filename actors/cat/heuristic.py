@@ -23,7 +23,10 @@ def compute_heuristic_decision(
     if cmd_override is not None:
         return cmd_override
 
-    self_info = obs.self
+    self_info = obs.self or {}
+    if self_info.get("id") in ("cat-3", "evil-cat"):
+        from actors.evil_cat.heuristic import compute_heuristic_decision as _evil_heuristic
+        return _evil_heuristic(obs, commander_directive=commander_directive)
 
     pos = self_info.get("position", {"x": 0, "y": 0})
     facing = self_info.get("facing", "north")
@@ -444,7 +447,15 @@ def compute_reflex_decision(
     if cmd_override is not None:
         return cmd_override
 
-    self_info = obs.self
+    self_info = obs.self or {}
+    if self_info.get("id") in ("cat-3", "evil-cat"):
+        from actors.evil_cat.heuristic import compute_reflex_decision as _evil_reflex
+        return _evil_reflex(
+            obs,
+            locked_target_id=locked_target_id,
+            strategy=strategy,
+            commander_directive=commander_directive,
+        )
     pos = self_info.get("position", {"x": 0, "y": 0})
     facing = self_info.get("facing", "north")
     legal = obs.legal_actions or ["stay", "north", "south", "east", "west"]

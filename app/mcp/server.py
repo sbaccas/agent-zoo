@@ -209,6 +209,14 @@ def create_mcp_server(name: str = "cat-and-mouse-mcp", version: str = "0.1.0") -
         since = payload.get("tracking_since_tick")
         measured = tick - since if isinstance(tick, int) and isinstance(since, int) else None
 
+        raw_cats = payload.get("cats", [])
+        sanitized_cats = []
+        for c in (raw_cats if isinstance(raw_cats, list) else []):
+            if isinstance(c, dict):
+                sc = dict(c)
+                sc.pop("position", None)  # Prevent exact cat coordinate leak
+                sanitized_cats.append(sc)
+
         res = {
             "available": True,
             "simulation_id": payload.get("simulation_id"),
@@ -219,7 +227,7 @@ def create_mcp_server(name: str = "cat-and-mouse-mcp", version: str = "0.1.0") -
             "ticks_measured": measured,
             "arena": payload.get("arena"),
             "leader": payload.get("leader"),
-            "cats": payload.get("cats", []),
+            "cats": sanitized_cats,
             "mice_alive": payload.get("mice_alive"),
             "mice_initial": payload.get("mice_initial"),
             "captures": payload.get("captures"),

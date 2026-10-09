@@ -338,7 +338,6 @@ class StatsTracker:
                 "alive": cat.alive,
                 "hp": getattr(cat, "hp", 100),
                 "max_hp": getattr(cat, "max_hp", 100),
-                "position": {"x": cat.position.x, "y": cat.position.y},
 
                 "kills": s.kills,
                 "absorbed_kills": s.absorbed_kills,

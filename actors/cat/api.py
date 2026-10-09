@@ -2310,6 +2310,12 @@ async def favicon():
     return Response(content=FAVICON_SVG, media_type="image/svg+xml")
 
 
+# If a running uvicorn --reload process was launched with `actors.cat.api:app`
+# and CAT_ID=cat-3, seamlessly bind `app` to the dedicated Evil Cat FastAPI app.
+if os.environ.get("CAT_ID") in ("cat-3", "evil-cat"):
+    from actors.evil_cat.api import app  # noqa: F811
+
+
 if __name__ == "__main__":
     host = os.environ.get("HOST", "127.0.0.1")
     port = int(sys.argv[1]) if len(sys.argv) > 1 else int(os.environ.get("PORT", "8001"))
@@ -2320,3 +2326,4 @@ if __name__ == "__main__":
     print(f"   • API Observation Endpoint: http://{host}:{port}/act", flush=True)
     print(f"=======================================================\n", flush=True)
     uvicorn.run("actors.cat.api:app", host=host, port=port, reload=True, log_level="warning")
+
