@@ -1,6 +1,7 @@
 """Evil Cat Tactical Fast Brain (actor.py).
 
 Responsible purely for tick-by-tick tactical execution on the grid:
+- Completely self-contained (zero imports from `actors.cat`).
 - No chatting or broadcasting tools (zero network tool latency overhead).
 - Lean prompt focusing on immediate perception and the Coach's standing directive.
 - Executes the Coach's active Mode, Trigger, and Behavior.
@@ -12,23 +13,20 @@ import asyncio
 from datetime import datetime, timezone
 import json
 import logging
+import math
 import os
 from pathlib import Path
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
+from google.adk import Runner
 from google.adk.agents import LlmAgent
 from google.adk.agents.readonly_context import ReadonlyContext
-from google.adk import Runner
 from google.adk.sessions import InMemorySessionService
 from google.genai import types
 
+from actors.evil_cat import store
 from actors.models import CatTacticalDecision, Observation
-from actors.cat import store
-from actors.cat.actor import (
-    check_gemini_auth_health,
-    has_gemini_credentials,
-)
 
 logger = logging.getLogger("evil_cat_actor")
 
@@ -39,14 +37,50 @@ ACTOR_MODEL = os.environ.get("CAT_MODEL", DEFAULT_ACTOR_MODEL)
 SKILLS_PATH = Path(__file__).resolve().parent / "skills.md"
 
 THINKING_BUDGET_OFF = 0
+THINKING_BUDGET_AUTO = -1
 THINKING_BUDGET_MIN = 0
 THINKING_BUDGET_MAX = 24576
+THINKING_BUDGET_CAN_BE_DISABLED = True
+THINKING_CAN_BE_DISABLED = True
 THINKING_BUDGET_DEFAULT = 512
 DEFAULT_THINKING_BUDGET_ENV = "CAT_THINKING_BUDGET"
+COMMANDER_FRESH_TICKS = 10
 
 DELIBERATION_TIMEOUT_DEFAULT_SEC = 8.0
 DELIBERATION_TIMEOUT_MIN_SEC = 1.0
 DELIBERATION_TIMEOUT_MAX_SEC = 120.0
+DELIBERATION_TIMEOUT_SECONDS = DELIBERATION_TIMEOUT_DEFAULT_SEC
+
+_OUTPUT_TOKENS_PER_SEC = 150.0
+_BASELINE_LATENCY_SEC = 1.3
+_AUTO_TYPICAL_CEILING = 8192
+
+_MODEL_THINKING_BOUNDS: Dict[str, Tuple[int, int, bool]] = {
+    "gemini-2.5-flash": (0, 24576, True),
+    "gemini-2.5-flash-lite": (512, 24576, True),
+    "gemini-2.5-pro": (128, 32768, False),
+}
+
+
+def thinking_bounds_for(model: str) -> Tuple[int, int, bool]:
+    """Returns `(min_tokens, max_tokens, can_be_disabled)` for `model`."""
+    for prefix, bounds in sorted(
+        _MODEL_THINKING_BOUNDS.items(), key=lambda kv: -len(kv[0])
+    ):
+        if model.startswith(prefix):
+            return bounds
+    return (0, 24576, True)
+
+
+def resolve_skills_path(agent_id: Optional[str] = None) -> Path:
+    custom = os.environ.get("CAT_SKILLS_PATH")
+    if custom:
+        p = Path(custom)
+        if not p.is_absolute():
+            p = (Path(__file__).resolve().parents[2] / p).resolve()
+        if p.exists():
+            return p
+    return SKILLS_PATH
 
 
 def _initial_thinking_budget() -> int:
@@ -64,13 +98,36 @@ def coerce_thinking_budget(value: Any, model: Optional[str] = None) -> int:
         val = int(value)
     except (TypeError, ValueError):
         raise ValueError(f"thinking budget must be an integer, got {value!r}")
+    if val == THINKING_BUDGET_AUTO:
+        return val
     if val < 0 or val > THINKING_BUDGET_MAX:
         raise ValueError(f"thinking budget {val} is outside allowed range 0..{THINKING_BUDGET_MAX}")
     return val
 
 
+def describe_thinking_budget(budget: Optional[int]) -> str:
+    if budget is None or budget == THINKING_BUDGET_OFF:
+        return "off (0 tokens)"
+    if budget == THINKING_BUDGET_AUTO:
+        return "auto (model decides)"
+    return f"{budget:,} tokens"
+
+
+def summarize_agent(agent: LlmAgent) -> Dict[str, Any]:
+    budget: Optional[int] = None
+    cfg = getattr(agent, "generate_content_config", None)
+    if cfg and getattr(cfg, "thinking_config", None):
+        budget = cfg.thinking_config.thinking_budget
+    return {
+        "name": agent.name,
+        "model": str(agent.model),
+        "thinking_budget": budget,
+        "thinking_budget_label": describe_thinking_budget(budget),
+    }
+
+
 def get_skills_instruction(agent_id: Optional[str] = None) -> str:
-    path = SKILLS_PATH
+    path = resolve_skills_path(agent_id)
     try:
         if path.exists():
             return path.read_text(encoding="utf-8")
@@ -87,7 +144,8 @@ def get_thinking_budget() -> int:
     try:
         cfg = getattr(adk_agent, "generate_content_config", None)
         if cfg and getattr(cfg, "thinking_config", None):
-            return int(cfg.thinking_config.thinking_budget or 0)
+            val = cfg.thinking_config.thinking_budget
+            return int(val) if val is not None else 0
     except Exception:
         pass
     return THINKING_BUDGET_DEFAULT
@@ -112,7 +170,10 @@ def coerce_deliberation_timeout(value: Any) -> float:
     except (TypeError, ValueError):
         raise ValueError(f"deliberation timeout must be a float, got {value!r}")
     if val < DELIBERATION_TIMEOUT_MIN_SEC or val > DELIBERATION_TIMEOUT_MAX_SEC:
-        raise ValueError(f"deliberation timeout {val} is outside allowed range {DELIBERATION_TIMEOUT_MIN_SEC}..{DELIBERATION_TIMEOUT_MAX_SEC}")
+        raise ValueError(
+            f"deliberation timeout {val} is outside allowed range "
+            f"{DELIBERATION_TIMEOUT_MIN_SEC}..{DELIBERATION_TIMEOUT_MAX_SEC}"
+        )
     return val
 
 
@@ -124,6 +185,176 @@ def set_deliberation_timeout(value: Any) -> float:
     global _deliberation_timeout_sec
     _deliberation_timeout_sec = coerce_deliberation_timeout(value)
     return _deliberation_timeout_sec
+
+
+def estimate_affordable_tokens(timeout_sec: float, baseline_latency_sec: float) -> int:
+    return int(max(0.0, timeout_sec - baseline_latency_sec) * _OUTPUT_TOKENS_PER_SEC)
+
+
+def estimate_required_timeout(
+    tokens: int, baseline_latency_sec: float, max_timeout_sec: Optional[float] = None
+) -> float:
+    needed = baseline_latency_sec + (tokens / _OUTPUT_TOKENS_PER_SEC)
+    if max_timeout_sec is None:
+        return float(math.ceil(needed))
+    return float(min(max_timeout_sec, math.ceil(needed)))
+
+
+def nominal_thinking_tokens(budget: Optional[int]) -> Optional[int]:
+    if budget is None or budget == THINKING_BUDGET_OFF:
+        return None
+    return _AUTO_TYPICAL_CEILING if budget == THINKING_BUDGET_AUTO else budget
+
+
+def affordable_thinking_tokens(timeout_sec: Optional[float] = None) -> int:
+    if timeout_sec is None:
+        timeout_sec = get_deliberation_timeout()
+    return estimate_affordable_tokens(timeout_sec, _BASELINE_LATENCY_SEC)
+
+
+def suggested_deliberation_timeout(budget: Optional[int]) -> Optional[float]:
+    tokens = nominal_thinking_tokens(budget)
+    if tokens is None or tokens <= affordable_thinking_tokens():
+        return None
+    return estimate_required_timeout(
+        tokens, _BASELINE_LATENCY_SEC, DELIBERATION_TIMEOUT_MAX_SEC
+    )
+
+
+def thinking_budget_warning(budget: Optional[int]) -> Optional[str]:
+    if budget is None or budget == THINKING_BUDGET_OFF:
+        return None
+    timeout_sec = get_deliberation_timeout()
+    affordable = affordable_thinking_tokens(timeout_sec)
+    suggested = suggested_deliberation_timeout(budget)
+    if suggested is None:
+        return None
+    subject = (
+        f"Auto can spend up to ~{_AUTO_TYPICAL_CEILING:,} thinking tokens, which"
+        if budget == THINKING_BUDGET_AUTO
+        else f"{budget:,} thinking tokens is"
+    )
+    return (
+        f"{subject} unlikely to fit inside the {timeout_sec:g}s deliberation "
+        f"timeout (~{affordable:,} tokens of headroom at current latency). "
+        f"Raise the timeout to about {suggested:g}s to give this budget room to land."
+    )
+
+
+_auth_cache: Dict[str, Any] = {"timestamp": 0.0, "result": None}
+
+
+def is_auth_error(error_msg: str) -> bool:
+    if not error_msg:
+        return False
+    low = error_msg.lower()
+    return any(
+        kw in low
+        for kw in (
+            "unauthenticated",
+            "invalid authentication",
+            "credentials",
+            "reauthentication",
+            "refresherror",
+            "defaultcredentialserror",
+            "application default credentials",
+            "api_key_invalid",
+            "api key not valid",
+            "access token",
+            "401",
+            "403",
+        )
+    )
+
+
+def mark_auth_error(error_msg: str) -> bool:
+    if not is_auth_error(error_msg):
+        return False
+    _auth_cache["timestamp"] = time.time()
+    _auth_cache["result"] = {
+        "authenticated": False,
+        "mode": "error",
+        "error": error_msg,
+    }
+    return True
+
+
+def clear_auth_error() -> None:
+    if _auth_cache.get("result") and _auth_cache["result"].get("mode") == "error":
+        _auth_cache["timestamp"] = 0.0
+        _auth_cache["result"] = None
+
+
+def check_gemini_auth_health(force: bool = False, force_refresh: bool = False) -> Dict[str, Any]:
+    now = time.time()
+    if not (force or force_refresh) and _auth_cache["result"] is not None and (now - _auth_cache["timestamp"] < 5.0):
+        return _auth_cache["result"]
+
+    api_key = os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY")
+    if api_key and api_key.strip():
+        res = {"authenticated": True, "mode": "api_key", "status": "ok", "error": None}
+        _auth_cache["timestamp"] = now
+        _auth_cache["result"] = res
+        return res
+
+    use_vertex = os.environ.get("GOOGLE_GENAI_USE_VERTEXAI", "").lower() in ("true", "1", "yes")
+    project = os.environ.get("GOOGLE_CLOUD_PROJECT")
+    if use_vertex or project:
+        try:
+            import google.auth
+            from google.auth.transport.requests import Request
+
+            credentials, detected_project = google.auth.default()
+            if not credentials.valid:
+                credentials.refresh(Request())
+            res = {
+                "authenticated": True,
+                "mode": "vertex_ai",
+                "status": "ok",
+                "project": project or detected_project,
+                "error": None,
+            }
+            _auth_cache["timestamp"] = now
+            _auth_cache["result"] = res
+            return res
+        except Exception as exc:
+            res = {
+                "authenticated": False,
+                "mode": "vertex_ai",
+                "status": "error",
+                "error": f"Vertex AI ADC expired or invalid: {exc}",
+            }
+            _auth_cache["timestamp"] = now
+            _auth_cache["result"] = res
+            return res
+
+    res = {
+        "authenticated": False,
+        "mode": "none",
+        "status": "unconfigured",
+        "error": "No GOOGLE_API_KEY or Vertex AI configuration found",
+    }
+    _auth_cache["timestamp"] = now
+    _auth_cache["result"] = res
+    return res
+
+
+def has_gemini_credentials() -> bool:
+    if os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY"):
+        return True
+    if os.environ.get("GOOGLE_GENAI_USE_VERTEXAI", "").lower() in ("true", "1", "yes"):
+        return True
+    if os.environ.get("GOOGLE_CLOUD_PROJECT"):
+        return True
+    return False
+
+
+def get_gemini_auth_mode() -> str:
+    return check_gemini_auth_health().get("mode", "none")
+
+
+def is_gemini_authenticated() -> bool:
+    return bool(check_gemini_auth_health().get("authenticated", False))
 
 
 # Initialize ADK Agent and Runner (No tools!)
@@ -140,14 +371,37 @@ adk_agent = LlmAgent(
         )
     ),
 )
+adk_interrogator_agent = LlmAgent(
+    name="evil_cat_interrogator",
+    model=ACTOR_MODEL,
+    instruction="You are Evil Cat (cat-3), a ruthless 150 HP apex cat-hunter. Answer your Commander concisely in character.",
+    tools=[],
+    generate_content_config=types.GenerateContentConfig(
+        thinking_config=types.ThinkingConfig(thinking_budget=0)
+    ),
+)
 session_service = InMemorySessionService()
 adk_runner = Runner(
     agent=adk_agent,
     app_name="evil_cat_agent_app",
     session_service=session_service,
 )
+adk_interrogator_runner = Runner(
+    agent=adk_interrogator_agent,
+    app_name="evil_cat_agent_app",
+    session_service=session_service,
+)
 
 
+async def reset_adk_session(agent_id: str = "cat-3") -> None:
+    user_id = f"evil_actor_{agent_id}"
+    session_id = f"session_evil_actor_{agent_id}"
+    try:
+        await session_service.delete_session(
+            app_name="evil_cat_agent_app", user_id=user_id, session_id=session_id
+        )
+    except Exception:
+        pass
 
 
 def format_events(events: List[Dict[str, Any]]) -> str:
@@ -282,7 +536,7 @@ async def query_adk_gemini(
     capture: Optional[Dict[str, Any]] = None,
     timeout_seconds: Optional[float] = None,
     commander_directive: Optional[Dict[str, Any]] = None,
-) -> Tuple[Optional[CatTacticalDecision], str, Optional[Dict[str, Any]]]:
+) -> Tuple[Optional[CatTacticalDecision], str, Optional[str]]:
     """Runs one tactical deliberation turn with Google ADK Gemini."""
     started = time.monotonic()
     prompt = build_decision_prompt(
@@ -291,11 +545,11 @@ async def query_adk_gemini(
         agent_id=agent_id,
         history_window_size=history_window_size,
         capture=capture,
-        commander_directive=None,
+        commander_directive=commander_directive,
     )
 
     if not has_gemini_credentials():
-        return None, "heuristic_fallback", None
+        return None, "heuristic_fallback", "no Gemini credentials configured"
 
     user_id = f"evil_actor_{agent_id}"
     session_id = f"session_evil_actor_{agent_id}"
@@ -308,7 +562,7 @@ async def query_adk_gemini(
         await session_service.create_session(app_name="evil_cat_agent_app", user_id=user_id, session_id=session_id)
 
         msg = types.Content(role="user", parts=[types.Part.from_text(text=prompt)])
-        effective_timeout = timeout_seconds or DELIBERATION_TIMEOUT_DEFAULT_SEC
+        effective_timeout = timeout_seconds or get_deliberation_timeout()
 
         async def _run_stream() -> Tuple[Optional[CatTacticalDecision], Optional[int]]:
             final_decision: Optional[CatTacticalDecision] = None
@@ -343,28 +597,99 @@ async def query_adk_gemini(
             return final_decision, thoughts_tokens
 
         decision, thoughts_tokens = await asyncio.wait_for(_run_stream(), timeout=effective_timeout)
-        duration_ms = round((time.monotonic() - started) * 1000, 1)
 
         if capture is not None:
             capture["latency_ms"] = round((time.monotonic() - started) * 1000)
             capture["thoughts_token_count"] = thoughts_tokens
 
         if decision is not None:
-            telemetry = {
-                "agent_id": agent_id,
-                "tick": obs.tick,
-                "duration_ms": duration_ms,
-                "thinking_budget": get_thinking_budget(),
-                "thoughts_token_count": thoughts_tokens,
-                "action": decision.action,
-                "strategy": getattr(decision, "strategy", "ROAMING"),
-                "target_id": getattr(decision, "target_id", ""),
-            }
-            return decision, "adk_gemini", telemetry
+            clear_auth_error()
+            return decision, "adk_gemini", None
 
     except asyncio.TimeoutError:
-        logger.warning("Evil Cat deliberation timed out after %ss", timeout_seconds or DELIBERATION_TIMEOUT_DEFAULT_SEC)
+        reason = f"Evil Cat deliberation timed out after {timeout_seconds or get_deliberation_timeout()}s"
+        logger.warning(reason)
+        return None, "heuristic_fallback", reason
     except Exception as exc:
-        logger.warning("Evil Cat deliberation error: %s", exc)
+        err = str(exc)
+        mark_auth_error(err)
+        logger.warning("Evil Cat deliberation error: %s", err)
+        return None, "heuristic_fallback", err
 
-    return None, "heuristic_fallback", None
+    return None, "heuristic_fallback", "Gemini returned empty decision"
+
+
+async def interrogate_adk_gemini(
+    user_prompt: str,
+    obs: Optional[Observation] = None,
+    history: Optional[List[Dict[str, Any]]] = None,
+    agent_id: str = "cat-3",
+    history_window_size: int = 5,
+    active_directive: Optional[Dict[str, Any]] = None,
+) -> Tuple[str, str, Optional[str]]:
+    """Answers a Commander radio interrogation in character as Evil Cat."""
+    clean = (user_prompt or "").strip()
+    if not clean:
+        return ("Commander, I received an empty transmission.", "heuristic_fallback", None)
+
+    if "PYTEST_CURRENT_TEST" in os.environ and not os.environ.get("ENABLE_LIVE_LLM_TESTS"):
+        return (
+            f"Commander, Evil Cat ({agent_id}) reporting in offline mode. Hunting high-value rival cats.",
+            "heuristic_fallback",
+            None,
+        )
+
+    if not has_gemini_credentials():
+        return (
+            f"Commander, Evil Cat ({agent_id}) is on System-1 reflex (no Gemini credentials). Hunting rival cats.",
+            "heuristic_fallback",
+            None,
+        )
+
+    user_id = f"evil_interrogator_{agent_id}"
+    session_id = f"session_evil_interrogator_{agent_id}"
+    try:
+        try:
+            await session_service.delete_session(
+                app_name="evil_cat_agent_app", user_id=user_id, session_id=session_id
+            )
+        except Exception:
+            pass
+        await session_service.create_session(
+            app_name="evil_cat_agent_app", user_id=user_id, session_id=session_id
+        )
+
+        pos = obs.self.get("position", {}) if obs else {}
+        hp = obs.self.get("hp", 150) if obs else 150
+        prompt = (
+            f"Identity: {agent_id} (Evil Cat | {hp}/150 HP | Pos {pos})\n"
+            f"Active Directive: {active_directive or '(None)'}\n"
+            f"Commander Question: \"{clean}\"\n"
+            "Reply concisely in character."
+        )
+        msg = types.Content(role="user", parts=[types.Part.from_text(text=prompt)])
+        chunks: List[str] = []
+        async with asyncio.timeout(10.0):
+            agen = adk_interrogator_runner.run_async(
+                user_id=user_id, session_id=session_id, new_message=msg
+            )
+            try:
+                while True:
+                    ev = await agen.__anext__()
+                    if ev.content and ev.content.parts:
+                        for p in ev.content.parts:
+                            if p.text and not getattr(p, "thought", False):
+                                chunks.append(p.text)
+            except StopAsyncIteration:
+                pass
+        reply = "".join(chunks).strip()
+        if reply:
+            return reply, "adk_gemini", None
+        return ("Commander, standing by to eliminate rival cats.", "adk_gemini", None)
+    except Exception as exc:
+        return (
+            f"Commander, radio interference ({exc}). Continuing hunt on System-1 reflex.",
+            "heuristic_fallback",
+            str(exc),
+        )
+

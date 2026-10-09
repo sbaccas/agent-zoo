@@ -21,6 +21,7 @@ export CAT_ID="${CAT_ID:-cat-3}"
 export CAT_SKILLS_PATH="${CAT_SKILLS_PATH:-actors/evil_cat/skills.md}"
 export EVAL_SKILLS_PATH="${EVAL_SKILLS_PATH:-actors/evil_cat/coach_skills.md}"
 export CAT_EVAL_INTERVAL="${CAT_EVAL_INTERVAL:-5}"
+export CAT_EVAL_TIMEOUT_SEC="${CAT_EVAL_TIMEOUT_SEC:-none}"
 export CAT_HOST="${HOST:-127.0.0.1}"
 
 if [ -z "${CAT_AGENT_RUNTIME_DIR}" ]; then
@@ -45,6 +46,7 @@ echo "   • Workbench Dashboard:        http://${CAT_HOST}:${PORT}"
 echo "   • Tactical Skills:            ${CAT_SKILLS_PATH}"
 echo "   • Conductor Skills:           ${EVAL_SKILLS_PATH}"
 echo "   • Evaluation Interval:        ${CAT_EVAL_INTERVAL} ticks (non-blocking)"
+echo "   • Coach Timeout:              ${CAT_EVAL_TIMEOUT_SEC} (unlimited)"
 echo "================================================================="
 
-exec python -m uvicorn actors.cat.api:app --host "${CAT_HOST}" --port "${PORT}" --reload --no-access-log
+exec python -m uvicorn actors.evil_cat.api:app --host "${CAT_HOST}" --port "${PORT}" --reload --no-access-log

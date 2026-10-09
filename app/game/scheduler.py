@@ -4,6 +4,7 @@ import random
 from typing import Any, Dict, List, Optional, Set
 import httpx
 from actors.cat.api import act as cat_agent_act, Observation as CatObservation
+from actors.evil_cat.api import act as evil_cat_agent_act
 from actors.mouse.heuristic import act as mouse_agent_act, Observation as MouseObservation
 from app.game.actions import ActionHandler
 from app.game.entities import EntityManager
@@ -688,7 +689,10 @@ class Scheduler:
             if not action_val:
                 obs_payload = self._build_observation_payload(cat)
                 cat_obs = CatObservation(**obs_payload)
-                act_res = cat_agent_act(cat_obs, use_llm=False)
+                if cat.id in ("cat-3", "evil-cat"):
+                    act_res = evil_cat_agent_act(cat_obs, use_llm=False)
+                else:
+                    act_res = cat_agent_act(cat_obs, use_llm=False)
                 action_val = act_res.action
                 b_msg = getattr(act_res, "broadcast_msg", None)
                 if b_msg and str(b_msg).strip():
