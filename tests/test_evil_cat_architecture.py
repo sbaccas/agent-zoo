@@ -182,3 +182,45 @@ def test_evil_cat_api_standalone_endpoints_and_unlimited_timeout():
     assert reset_res.status_code == 200
     assert reset_res.json()["timeout_sec"] is None
 
+
+def test_evaluator_keeps_previous_notes_when_returning_empty_notes(monkeypatch, tmp_path):
+    """If the evaluator returns empty notes, it must keep the previous note as before."""
+    import asyncio
+    from actors.evil_cat import eval as evil_eval, store as evil_store
+    from actors.cat.subagents import eval as cat_eval
+    from actors.cat import store as cat_store
+
+    monkeypatch.setenv("CAT_AGENT_RUNTIME_DIR", str(tmp_path))
+
+    async def _empty_agen(*_args, **_kwargs):
+        if False:
+            yield None
+
+    # 1. Evil Coach evaluator
+    prior_evil_note = "MODE: AMBUSH\nTRIGGER: cat-1 within 2 tiles -> slash\nBEHAVIOR: Hold (45, 50) facing North."
+    evil_store.write_coaching_notes(prior_evil_note, tick_range="1-20", agent_id="cat-3")
+    monkeypatch.setattr(evil_eval, "has_gemini_credentials", lambda: True)
+    monkeypatch.setattr(evil_eval.eval_runner, "run_async", _empty_agen)
+
+    notes, source = asyncio.run(
+        evil_eval.evaluate([{"tick": 25, "observation": {"self": {"hp": 150}}}], agent_id="cat-3")
+    )
+    assert source == "retained_previous"
+    assert notes == prior_evil_note
+    assert evil_store.read_coaching_notes(agent_id="cat-3") == prior_evil_note
+
+    # 2. Regular Cat evaluator
+    prior_cat_note = "- **Flank East**: Sweep column x=80 southward."
+    cat_store.write_coaching_notes(prior_cat_note, tick_range="1-20", agent_id="cat-1")
+    monkeypatch.setenv("ENABLE_LIVE_LLM_TESTS", "1")
+    monkeypatch.setattr(cat_eval, "has_gemini_credentials", lambda: True)
+    monkeypatch.setattr(cat_eval.eval_runner, "run_async", _empty_agen)
+
+    c_notes, c_source = asyncio.run(
+        cat_eval.evaluate([{"tick": 25, "x": 10, "y": 10}], agent_id="cat-1")
+    )
+    assert c_source == "retained_previous"
+    assert c_notes == prior_cat_note
+    assert cat_store.read_coaching_notes(agent_id="cat-1") == prior_cat_note
+
+

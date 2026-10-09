@@ -1530,10 +1530,11 @@ async def evaluate(
             )
 
             standing_order = (get_coach_directive() or {}).get("directive")
+            previous_notes = store.read_coaching_notes(agent_id=target_cat)
             capture_bundle: Dict[str, Any] = {}
             prompt = build_eval_prompt(
                 records,
-                store.read_coaching_notes(agent_id=target_cat),
+                previous_notes,
                 standing_order,
                 agent_id=target_cat,
                 capture=capture_bundle,
@@ -1565,6 +1566,7 @@ async def evaluate(
             final_chunks: List[str] = []
             all_chunks: List[str] = []
             tool_calls: List[Dict[str, Any]] = []
+            out_source = "adk_gemini"
 
             async with asyncio.timeout(timeout_sec):
                 agen = eval_runner.run_async(
@@ -1639,8 +1641,15 @@ async def evaluate(
                     )
 
             notes = _strip_to_directives(notes)
+            if not notes and previous_notes and previous_notes.strip():
+                logger.warning(
+                    "Evaluator returned empty notes for %s; keeping previous standing directives.",
+                    target_cat,
+                )
+                notes = previous_notes.strip()
+                out_source = "retained_previous"
             if notes:
-                return notes, "adk_gemini"
+                return notes, out_source
             logger.warning("Evaluator returned empty notes; using offline fallback.")
 
         except asyncio.TimeoutError:
@@ -1665,17 +1674,23 @@ async def evaluate(
                 "tool_calls": tool_calls,
             })
             if capture_bundle:
-                out_notes = notes if 'notes' in locals() and notes else ""
+                out_notes = notes if 'notes' in locals() and notes else (previous_notes.strip() if previous_notes and previous_notes.strip() else "")
                 capture_bundle["latency_ms"] = dur_ms
                 capture_bundle["thinking_budget"] = budget
                 capture_bundle["thoughts_token_count"] = thoughts
                 capture_bundle["timed_out"] = timed_out
                 capture_bundle["tool_calls"] = list(tool_calls)
                 capture_bundle["output"] = out_notes
-                capture_bundle["source"] = "adk_gemini" if out_notes else "offline_fallback"
+                capture_bundle["source"] = (
+                    out_source
+                    if ('notes' in locals() and notes)
+                    else ("retained_previous" if out_notes else "offline_fallback")
+                )
                 capture_bundle["recorded_at"] = datetime.now(timezone.utc).isoformat()
                 store.append_coach_prompt(capture_bundle, agent_id=target_cat)
 
+    if previous_notes and previous_notes.strip():
+        return previous_notes.strip(), "retained_previous"
     return _summarise_without_model(records), "offline_fallback"
 
 
@@ -1687,12 +1702,17 @@ async def evaluate_and_publish(agent_id: Optional[str] = None) -> Dict[str, Any]
     """
     target_id = _resolve_target_cat(agent_id)
     records = store.read_transcript_records(agent_id=target_id)
+    previous_notes = store.read_coaching_notes(agent_id=target_id).strip()
     notes, source = await evaluate(records, agent_id=target_id)
+    if not (notes or "").strip() and previous_notes:
+        notes = previous_notes
+        source = "retained_previous"
 
     tick_range = None
     if records:
         tick_range = f"{records[0].get('tick')}-{records[-1].get('tick')}"
-    store.write_coaching_notes(notes, tick_range=tick_range, agent_id=target_id)
+    if (notes or "").strip():
+        store.write_coaching_notes(notes, tick_range=tick_range, agent_id=target_id)
 
     result = {
         "agent_id": target_id,

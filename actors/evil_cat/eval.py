@@ -775,7 +775,10 @@ async def evaluate(records: List[Dict[str, Any]], agent_id: str = "cat-3") -> Tu
         except Exception:
             pass
 
+    previous_notes = store.read_coaching_notes(agent_id=agent_id).strip()
     if not records or not has_gemini_credentials():
+        if previous_notes:
+            return previous_notes, "retained_previous"
         return (
             "MODE: STALK\n"
             "TRIGGER: rival cat in strike zone -> attack immediately\n"
@@ -793,6 +796,7 @@ async def evaluate(records: List[Dict[str, Any]], agent_id: str = "cat-3") -> Tu
     timed_out = False
     tool_calls: List[Dict[str, Any]] = []
     capture: Dict[str, Any] = {}
+    out_source = "adk_gemini"
 
     async with _eval_lock:
         try:
@@ -848,6 +852,10 @@ async def evaluate(records: List[Dict[str, Any]], agent_id: str = "cat-3") -> Tu
 
             text = "".join(final_chunks).strip() or "".join(all_chunks).strip()
             text = _strip_to_directives(text)
+            if not text and previous_notes:
+                logger.warning("Evil Coach returned empty notes for %s; keeping previous standing directive.", agent_id)
+                text = previous_notes
+                out_source = "retained_previous"
             if text:
                 dur_ms = int((time.monotonic() - started) * 1000)
                 _last_eval_telemetry.update({
@@ -864,10 +872,10 @@ async def evaluate(records: List[Dict[str, Any]], agent_id: str = "cat-3") -> Tu
                     capture["timed_out"] = False
                     capture["tool_calls"] = list(tool_calls)
                     capture["output"] = text
-                    capture["source"] = "adk_gemini"
+                    capture["source"] = out_source
                     capture["recorded_at"] = datetime.now(timezone.utc).isoformat()
                     store.append_coach_prompt(capture, agent_id=agent_id)
-                return text, "adk_gemini"
+                return text, out_source
 
         except asyncio.TimeoutError:
             timed_out = True
@@ -885,16 +893,23 @@ async def evaluate(records: List[Dict[str, Any]], agent_id: str = "cat-3") -> Tu
                 "tool_calls": tool_calls,
             })
             if capture and capture.get("output") is None:
+                fallback_out = (
+                    previous_notes
+                    if previous_notes
+                    else "MODE: STALK\nTRIGGER: rival cat in strike zone -> attack immediately\nBEHAVIOR: Hunt highest bounty rival cat."
+                )
                 capture["latency_ms"] = dur_ms
                 capture["thinking_budget"] = budget
                 capture["thoughts_token_count"] = thoughts
                 capture["timed_out"] = timed_out
                 capture["tool_calls"] = list(tool_calls)
-                capture["output"] = "MODE: STALK\nTRIGGER: rival cat in strike zone -> attack immediately\nBEHAVIOR: Hunt highest bounty rival cat."
-                capture["source"] = "offline_fallback"
+                capture["output"] = fallback_out
+                capture["source"] = "retained_previous" if previous_notes else "offline_fallback"
                 capture["recorded_at"] = datetime.now(timezone.utc).isoformat()
                 store.append_coach_prompt(capture, agent_id=agent_id)
 
+    if previous_notes:
+        return previous_notes, "retained_previous"
     return (
         "MODE: STALK\n"
         "TRIGGER: rival cat in strike zone -> attack immediately\n"
@@ -905,12 +920,17 @@ async def evaluate(records: List[Dict[str, Any]], agent_id: str = "cat-3") -> Tu
 
 async def evaluate_and_publish(agent_id: str = "cat-3") -> Dict[str, Any]:
     records = store.read_transcript_records(agent_id=agent_id)
+    previous_notes = store.read_coaching_notes(agent_id=agent_id).strip()
     notes, source = await evaluate(records, agent_id=agent_id)
+    if not (notes or "").strip() and previous_notes:
+        notes = previous_notes
+        source = "retained_previous"
 
     tick_range = None
     if records:
         tick_range = f"{records[0].get('tick')}-{records[-1].get('tick')}"
-    store.write_coaching_notes(notes, tick_range=tick_range, agent_id=agent_id)
+    if (notes or "").strip():
+        store.write_coaching_notes(notes, tick_range=tick_range, agent_id=agent_id)
 
     result = {
         "agent_id": agent_id,
