@@ -388,8 +388,18 @@ async def act_async(obs: Observation, decoupled: bool = False) -> ActionResponse
     auth_err = None if is_authenticated else (auth_health.get("error") or state.last_engine_error)
     fallback_reason: Optional[str] = None
 
+    self_cooldown = int(obs.self.get("action_cooldown", 0) or 0)
+    can_act = obs.self.get("can_act")
+    if can_act is None:
+        is_locked = self_cooldown > 0
+    else:
+        is_locked = not can_act
+
     if decoupled and is_authenticated:
-        if state.latest_deliberated_decision and state.latest_deliberated_decision.action in legal:
+        has_ready_decision = bool(
+            state.latest_deliberated_decision and state.latest_deliberated_decision.action in legal
+        )
+        if not is_locked and has_ready_decision:
             llm_decision = state.latest_deliberated_decision
             state.latest_deliberated_decision = None
             _record_prompt(state.latest_deliberated_prompt, obs.tick, "adk_gemini")
@@ -418,11 +428,16 @@ async def act_async(obs: Observation, decoupled: bool = False) -> ActionResponse
             auto_meta["strategy"] = active_strat
             auto_meta["target_id"] = locked_target
             auto_meta["phase"] = active_strat
-            state.last_engine_source = "heuristic_reflex"
+            if not is_locked:
+                state.last_engine_source = "heuristic_reflex"
             fallback_reason = (
-                "Gemini still deliberating; acted on Evil Cat System-1 reflex within tick budget"
-                if state.is_deliberating
-                else "no completed Gemini decision available for this tick"
+                "cooldown tick; holding staged Gemini decision for next playable turn"
+                if (is_locked and has_ready_decision)
+                else (
+                    "Gemini still deliberating; acted on Evil Cat System-1 reflex within tick budget"
+                    if state.is_deliberating
+                    else "no completed Gemini decision available for this tick"
+                )
             )
 
         if state.deliberation_task and state.deliberation_task.done():
@@ -437,7 +452,14 @@ async def act_async(obs: Observation, decoupled: bool = False) -> ActionResponse
                 state.is_deliberating = False
                 state.deliberation_started_at = None
 
-        if not state.is_deliberating and (state.deliberation_task is None or state.deliberation_task.done()):
+        has_staged_for_next_play = bool(
+            is_locked and state.latest_deliberated_decision and state.latest_deliberated_decision.action in legal
+        )
+        if (
+            not has_staged_for_next_play
+            and not state.is_deliberating
+            and (state.deliberation_task is None or state.deliberation_task.done())
+        ):
             state.deliberation_task = asyncio.create_task(_run_background_deliberation(obs))
     else:
         auto_action, auto_thought, auto_meta = compute_heuristic_decision(

@@ -387,3 +387,98 @@ def test_evil_cat_multimodal_viewport_png_and_cardinal_legend(monkeypatch, tmp_p
     assert vp_sec["delivered"] is True
     assert vp_sec["image_data_uri"].startswith("data:image/png;base64,")
 
+
+def test_all_evil_coach_tools_are_async_and_broadcast_never_self_posts(monkeypatch):
+    """All Evil Coach tools must be async coroutines and A2A broadcast must never self-POST to :8005."""
+    import asyncio
+    import inspect
+    from types import SimpleNamespace
+    from actors.a2a import client as a2a_client
+
+    for tool_fn in eval_agent.tools:
+        assert inspect.iscoroutinefunction(tool_fn), (
+            f"Evil Coach tool {getattr(tool_fn, '__name__', tool_fn)} must be async def so it never blocks the event loop"
+        )
+
+    posted_urls = []
+
+    class _DummyAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def post(self, url, json=None):
+            posted_urls.append(url)
+            return SimpleNamespace(status_code=200, text="ok", json=lambda: {"status": "delivered"})
+
+    monkeypatch.setattr(a2a_client.httpx, "AsyncClient", _DummyAsyncClient)
+    monkeypatch.setattr(a2a_client, "_report_transmission_to_engine", lambda *a, **kw: asyncio.sleep(0))
+
+    resp = asyncio.run(
+        a2a_client.send_a2a_message(
+            sender_id="coach(cat-3)",
+            recipient_id="*",
+            content="Testing non-blocking broadcast",
+            message_type="BROADCAST",
+        )
+    )
+    assert resp.status == "delivered"
+    # Must only hit cat-1 (:8001) and cat-2 (:8003), never self-POST to :8005 (cat-3 / evil-cat)
+    assert all("8005" not in u for u in posted_urls), f"Broadcast self-posted to :8005: {posted_urls}"
+    assert len(posted_urls) == len(set(posted_urls)), f"Duplicate broadcast POSTs: {posted_urls}"
+
+
+def test_locked_cooldown_tick_preserves_staged_gemini_decision_for_next_playable_tick(monkeypatch):
+    """A locked cooldown tick (can_act=False) must hold latest_deliberated_decision for the next playable tick."""
+    import asyncio
+    from unittest.mock import AsyncMock
+    from actors.evil_cat import api as evil_api
+
+    staged = CatTacticalDecision(
+        strategy="STALK",
+        target_id="cat-1",
+        target_mouse_id="cat-1",
+        thought="Staged Gemini decision ready for next free turn",
+        action="east",
+    )
+    evil_api.state.latest_deliberated_decision = staged
+    evil_api.state.latest_deliberated_prompt = {"tick": 10, "prompt": "test"}
+    evil_api.state.is_deliberating = False
+    evil_api.state.deliberation_task = None
+
+    monkeypatch.setattr(
+        evil_api,
+        "check_gemini_auth_health",
+        lambda: {"authenticated": True, "mode": "vertex_ai", "status": "ok"},
+    )
+    bg_mock = AsyncMock()
+    monkeypatch.setattr(evil_api, "_run_background_deliberation", bg_mock)
+
+    # 1. Locked tick (can_act=False): must NOT consume `staged`
+    locked_obs = Observation(
+        tick=11,
+        round=2,
+        self={"id": "cat-3", "position": {"x": 10, "y": 10}, "facing": "east", "hp": 150, "can_act": False, "action_cooldown": 1},
+        legal_actions=["stay", "north", "south", "east", "west"],
+    )
+    asyncio.run(evil_api.act_async(locked_obs, decoupled=True))
+    assert evil_api.state.latest_deliberated_decision is staged
+    assert bg_mock.await_count == 0
+
+    # 2. Next playable tick (can_act=True): consumes `staged` and credits `adk_gemini`
+    free_obs = Observation(
+        tick=12,
+        round=2,
+        self={"id": "cat-3", "position": {"x": 10, "y": 10}, "facing": "east", "hp": 150, "can_act": True, "action_cooldown": 0},
+        legal_actions=["stay", "north", "south", "east", "west"],
+    )
+    res = asyncio.run(evil_api.act_async(free_obs, decoupled=True))
+    assert res.action == "east"
+    assert evil_api.state.last_engine_source == "adk_gemini"
+    assert evil_api.state.latest_deliberated_decision is None
+

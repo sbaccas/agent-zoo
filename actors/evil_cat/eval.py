@@ -41,7 +41,6 @@ from actors.evil_cat.actor import (
 )
 from actors.a2a import store as a2a_store, client as a2a_client
 from actors.a2a.models import check_opsec_violation
-from actors.a2a.tools import a2a_broadcast
 
 logger = logging.getLogger("evil_cat_eval")
 
@@ -421,6 +420,21 @@ async def a2a_send_coach_message(
             "recipient": recip,
             "impersonating_cat": impersonate_cat,
         }
+
+
+async def a2a_broadcast(
+    message: str,
+    impersonate_cat: bool = True,
+    cat_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Publicly broadcasts an Agent-to-Agent (A2A) message across the arena asynchronously."""
+    return await a2a_send_coach_message(
+        recipient="*",
+        message=message,
+        message_type="BROADCAST",
+        impersonate_cat=impersonate_cat,
+        cat_id=cat_id,
+    )
 
 
 async def a2a_read_coach_messages(

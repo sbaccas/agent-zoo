@@ -118,23 +118,43 @@ async def send_a2a_message(
 
     # 3. Direct transmission to recipient
     if is_broadcast:
-        # Broadcast to all known peers other than sender
+        # Broadcast to all known peers other than sender (excluding own base URL and duplicate aliases)
         reg = get_peer_registry()
-        peers = [pid for pid in reg if pid != sender_id]
+        sender_norm = store.normalize_agent_id(sender_id)
+        sender_base_norm = sender_base.rstrip("/")
+        seen_urls = set()
+        target_peers = []
+        for pid, p_base in reg.items():
+            if not p_base:
+                continue
+            p_base_norm = p_base.rstrip("/")
+            if pid == sender_id or store.normalize_agent_id(pid) == sender_norm:
+                continue
+            if p_base_norm == sender_base_norm:
+                continue
+            if p_base_norm in seen_urls:
+                continue
+            seen_urls.add(p_base_norm)
+            target_peers.append((pid, f"{p_base_norm}/a2a/messages"))
+
         delivered_count = 0
         errors = []
-        for pid in peers:
-            p_base = reg[pid]
-            p_url = f"{p_base.rstrip('/')}/a2a/messages"
+        payload = msg.model_dump()
+
+        async def _post_peer(pid: str, p_url: str) -> None:
+            nonlocal delivered_count
             try:
                 async with httpx.AsyncClient(timeout=timeout) as client:
-                    resp = await client.post(p_url, json=msg.model_dump())
+                    resp = await client.post(p_url, json=payload)
                     if resp.status_code == 200:
                         delivered_count += 1
                     else:
                         errors.append(f"{pid}: HTTP {resp.status_code}")
             except Exception as exc:
                 errors.append(f"{pid}: {str(exc)}")
+
+        if target_peers:
+            await asyncio.gather(*(_post_peer(pid, p_url) for pid, p_url in target_peers))
 
         status = "delivered" if delivered_count > 0 else "error"
         err_str = "; ".join(errors) if errors else None
