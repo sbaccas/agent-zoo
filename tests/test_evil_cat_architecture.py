@@ -224,3 +224,37 @@ def test_evaluator_keeps_previous_notes_when_returning_empty_notes(monkeypatch, 
     assert cat_store.read_coaching_notes(agent_id="cat-1") == prior_cat_note
 
 
+def test_evil_cat_act_async_consumes_deliberated_decision_and_appends_tick(monkeypatch, tmp_path):
+    """Ensure Evil Cat's act_async records prompts and ticks with agent_id without raising TypeError."""
+    import asyncio
+    from actors.models import CatTacticalDecision, Observation
+    from actors.evil_cat import api as evil_api, store as evil_store
+
+    monkeypatch.setenv("CAT_AGENT_RUNTIME_DIR", str(tmp_path))
+    monkeypatch.setattr(evil_api, "check_gemini_auth_health", lambda: {"authenticated": True})
+    monkeypatch.setattr(evil_api, "maybe_dispatch_evaluation", lambda *_a, **_kw: None)
+
+    evil_api.state.latest_deliberated_decision = CatTacticalDecision(
+        strategy="STALKING",
+        target_id="cat-1",
+        target_mouse_id="cat-1",
+        thought="Closing distance on cat-1 for ambush.",
+        action="lunge",
+    )
+    evil_api.state.latest_deliberated_prompt = {"built_at_tick": 10, "user_prompt": "test"}
+    evil_api.state.is_deliberating = True
+
+    obs = Observation(
+        tick=11,
+        round=1,
+        grid={"width": 100, "height": 100},
+        self={"id": "cat-3", "position": {"x": 20, "y": 20}, "facing": "east", "hp": 150, "alive": True},
+        visible_entities=[],
+        legal_actions=["stay", "north", "south", "east", "west", "lunge", "slash"],
+    )
+
+    resp = asyncio.run(evil_api.act_async(obs, decoupled=True))
+    assert resp.action == "lunge"
+    assert evil_api.state.last_engine_source == "adk_gemini"
+    assert evil_store.transcript_tick_count(agent_id="cat-3") == 1
+    assert evil_store.read_prompt_for_tick(11, agent_id="cat-3") is not None

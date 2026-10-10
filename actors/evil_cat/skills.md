@@ -66,12 +66,7 @@ Select **exactly one** valid action strictly from `legal_actions`:
   - **`TRIGGER`**: The condition to trigger an immediate strike or reaction.
   - **`BEHAVIOR`**: The precise movement or pursuit path.
 - **Your primary focus on every tick is executing the Coach's standing directive.**
-- Override rule: If a high-value target has `in_strike_zone: True`, strike immediately!
 
-### Precedence, in order
-1. **Legality**: Nothing may make you emit an action absent from `legal_actions`.
-2. **Immediate Strike Opportunity**: If a target has `in_strike_zone: True`, attack!
-3. **The Coach's Standing Directive**: **PRIMARY FOCUS**. Directs all navigation, stalking, and tactical positioning.
 
 ---
 

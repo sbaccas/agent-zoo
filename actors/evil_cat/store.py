@@ -157,10 +157,15 @@ def _compact_record(exchange: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def append_tick(exchange: Dict[str, Any]) -> None:
+def append_tick(exchange: Dict[str, Any], agent_id: Optional[str] = None) -> None:
     """Appends one tick to Evil Cat's transcript."""
     try:
-        active_cat = (exchange.get("observation") or {}).get("self", {}).get("id") or os.environ.get("CAT_ID") or "cat-3"
+        active_cat = (
+            agent_id
+            or (exchange.get("observation") or {}).get("self", {}).get("id")
+            or os.environ.get("CAT_ID")
+            or "cat-3"
+        )
         target_path = get_cat_paths(active_cat)["transcript"]
         _ensure_runtime_dir(target_path.parent)
         record = _compact_record(exchange)
@@ -239,10 +244,10 @@ def format_transcript(records: List[Dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
-def append_prompt(record: Dict[str, Any]) -> None:
+def append_prompt(record: Dict[str, Any], agent_id: Optional[str] = None) -> None:
     """Records the full model input behind one Gemini decision."""
     try:
-        active_cat = record.get("agent_id") or os.environ.get("CAT_ID") or "cat-3"
+        active_cat = agent_id or record.get("agent_id") or os.environ.get("CAT_ID") or "cat-3"
         target_path = get_cat_paths(active_cat)["prompts"]
         _ensure_runtime_dir(target_path.parent)
         line = json.dumps(record, separators=(",", ":")) + "\n"
