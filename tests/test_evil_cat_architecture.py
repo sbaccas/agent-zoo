@@ -258,3 +258,132 @@ def test_evil_cat_act_async_consumes_deliberated_decision_and_appends_tick(monke
     assert evil_api.state.last_engine_source == "adk_gemini"
     assert evil_store.transcript_tick_count(agent_id="cat-3") == 1
     assert evil_store.read_prompt_for_tick(11, agent_id="cat-3") is not None
+
+
+def test_evil_cat_multimodal_viewport_png_and_cardinal_legend(monkeypatch, tmp_path):
+    """Verify cat-3 renders a <=384x384 PNG viewport cutout and attaches image/png + text parts to Gemini ADK."""
+    import asyncio
+    import struct
+    from types import SimpleNamespace
+    from actors.models import CatTacticalDecision, Observation
+    from actors.evil_cat import actor as evil_actor
+    from actors.evil_cat.vision import (
+        format_cardinal_target_legend,
+        render_viewport_data_uri,
+        render_viewport_png,
+    )
+
+    monkeypatch.setenv("CAT_AGENT_RUNTIME_DIR", str(tmp_path))
+
+    obs = Observation(
+        tick=42,
+        round=6,
+        grid={"width": 100, "height": 100},
+        self={
+            "id": "cat-3",
+            "position": {"x": 50, "y": 43},
+            "facing": "east",
+            "hp": 150,
+            "max_hp": 150,
+            "alive": True,
+        },
+        capabilities={"vision_radius": 4, "vision_rear": 2, "vision_half_width": 5, "attack_range": 4},
+        scoreboard={"cat-3": 30, "cat-9": 44, "cat-2": 18},
+        visible_entities=[
+            {
+                "id": "cat-9",
+                "type": "cat",
+                "position": {"x": 53, "y": 43},
+                "hp": 66,
+                "max_hp": 100,
+                "forward": 3,
+                "offaxis": 0,
+                "in_strike_zone": True,
+            },
+            {
+                "id": "mouse-12",
+                "type": "mouse",
+                "position": {"x": 53, "y": 40},
+                "forward": 3,
+                "offaxis": -3,
+                "in_strike_zone": False,
+            },
+        ],
+        legal_actions=["stay", "north", "south", "east", "west", "lunge", "attack"],
+    )
+
+    # 1. Verify PNG header and single-tile Gemini dimensions (<= 384x384)
+    png_bytes, data_uri = render_viewport_data_uri(obs, agent_id="cat-3")
+    assert png_bytes.startswith(b"\x89PNG\r\n\x1a\n")
+    assert data_uri.startswith("data:image/png;base64,")
+    width, height = struct.unpack(">II", png_bytes[16:24])
+    assert 0 < width <= 384
+    assert 0 < height <= 384
+
+    # Check all 4 facings render cleanly including near wall boundaries
+    for facing in ("north", "south", "east", "west"):
+        wall_obs = Observation(
+            tick=43,
+            round=6,
+            grid={"width": 100, "height": 100},
+            self={"id": "cat-3", "position": {"x": 1, "y": 98}, "facing": facing, "hp": 150, "alive": True},
+            visible_entities=[],
+            legal_actions=["stay", "north", "east"],
+        )
+        b = render_viewport_png(wall_obs, agent_id="cat-3")
+        assert b.startswith(b"\x89PNG\r\n\x1a\n")
+
+    # 2. Verify Cardinal Target Legend output
+    legend = format_cardinal_target_legend(obs, agent_id="cat-3")
+    assert "[C9] cat-9" in legend
+    assert "3 EAST, 0 N/S" in legend
+    assert "IN STRIKE ZONE" in legend
+    assert "[M12] mouse-12" in legend
+    assert "3 EAST, 3 NORTH" in legend
+    assert "step NORTH/EAST" in legend
+
+    # 3. Verify query_adk_gemini sends multimodal image/png Part + text Part and captures image_data_uri
+    captured_messages = []
+
+    async def _fake_run_async(*, user_id, session_id, new_message):
+        captured_messages.append(new_message)
+        yield SimpleNamespace(
+            error_code=None,
+            error_message=None,
+            usage_metadata=SimpleNamespace(thoughts_token_count=64),
+            actions=SimpleNamespace(
+                state_delta={
+                    "decision": CatTacticalDecision(
+                        strategy="ATTACK",
+                        target_id="cat-9",
+                        target_mouse_id="cat-9",
+                        thought="cat-9 is locked in strike zone 3 tiles East; attacking for +88 bounty.",
+                        action="attack",
+                    )
+                }
+            ),
+            content=None,
+        )
+
+    monkeypatch.setattr(evil_actor, "has_gemini_credentials", lambda: True)
+    monkeypatch.setattr(evil_actor.adk_runner, "run_async", _fake_run_async)
+
+    capture_bundle = {}
+    decision, source, err = asyncio.run(
+        evil_actor.query_adk_gemini(obs, agent_id="cat-3", capture=capture_bundle)
+    )
+    assert err is None
+    assert source == "adk_gemini"
+    assert decision is not None and decision.action == "attack"
+    assert len(captured_messages) == 1
+
+    msg = captured_messages[0]
+    assert len(msg.parts) == 2
+    assert msg.parts[0].inline_data.mime_type == "image/png"
+    assert msg.parts[0].inline_data.data.startswith(b"\x89PNG\r\n\x1a\n")
+    assert "Visible Targets in Sight (2)" in msg.parts[1].text
+
+    vp_sec = capture_bundle["sections"]["viewport_image"]
+    assert vp_sec["delivered"] is True
+    assert vp_sec["image_data_uri"].startswith("data:image/png;base64,")
+

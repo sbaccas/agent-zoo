@@ -1393,9 +1393,14 @@
       'notice_board',
       'inter_cat_radio',
       'coaching_notes',
+      'standing_order',
       'commander_directive',
       'history_window',
+      'history',
+      'viewport_image',
       'current_observation',
+      'observation',
+      'skills',
       'coach_identity',
       'eval_skills',
       'actor_manual',
@@ -1417,7 +1422,7 @@
       const details = document.createElement('details');
       details.className = sec.delivered ? 'prompt-section' : 'prompt-section not-delivered';
       // The skills manuals are ~7KB and identical every tick; collapsing keeps what varies in view.
-      details.open = sec.delivered && key !== 'system_instruction' && key !== 'eval_skills' && key !== 'actor_manual';
+      details.open = sec.delivered && key !== 'system_instruction' && key !== 'skills' && key !== 'eval_skills' && key !== 'actor_manual';
 
       const summary = document.createElement('summary');
       const status = sec.delivered ? '✓' : '✗ NOT SENT';
@@ -1425,6 +1430,26 @@
       const secLabel = sec.label || key;
       summary.textContent = `${status}  ${secLabel}  (${secText.length} chars)`;
       details.appendChild(summary);
+
+      if (typeof sec.image_data_uri === 'string' && sec.image_data_uri.startsWith('data:image/png;base64,')) {
+        const imgWrap = document.createElement('div');
+        imgWrap.style.padding = '10px 12px 4px 12px';
+        imgWrap.style.background = '#0b0f19';
+        imgWrap.style.display = 'flex';
+        imgWrap.style.justifyContent = 'center';
+        imgWrap.style.borderBottom = '1px solid #1e293b';
+
+        const img = document.createElement('img');
+        img.setAttribute('src', sec.image_data_uri);
+        img.setAttribute('alt', 'Evil Cat 2D Viewport Cutout');
+        img.style.imageRendering = 'pixelated';
+        img.style.maxWidth = '100%';
+        img.style.height = 'auto';
+        img.style.border = '1px solid #334155';
+        img.style.borderRadius = '6px';
+        imgWrap.appendChild(img);
+        details.appendChild(imgWrap);
+      }
 
       const pre = document.createElement('pre');
       pre.className = 'prompt-section-body';

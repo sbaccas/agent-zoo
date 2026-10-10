@@ -26,6 +26,11 @@ from google.adk.sessions import InMemorySessionService
 from google.genai import types
 
 from actors.evil_cat import store
+from actors.evil_cat.vision import (
+    format_cardinal_target_legend,
+    render_viewport_data_uri,
+    render_viewport_png,
+)
 from actors.models import CatTacticalDecision, Observation
 
 logger = logging.getLogger("evil_cat_actor")
@@ -497,6 +502,8 @@ def build_decision_prompt(
         rival_entries.append(f"{cid}: {sc} score {status}")
     rival_text = ", ".join(rival_entries) if rival_entries else "none"
 
+    target_legend = format_cardinal_target_legend(obs, agent_id=agent_id)
+
     observation_context = (
         f"--- CURRENT OBSERVATION (Tick #{obs.tick}) ---\n"
         f"Identity: {agent_id} (Evil Cat | 150 HP Tank)\n"
@@ -505,21 +512,34 @@ def build_decision_prompt(
         f"Action State: {lock_status} (cooldown: {self_cd})\n"
         f"Your Current Score: {obs.score}\n"
         f"Rivals & Bounties: {rival_text}\n"
-        f"Visible Entities in Sight: {json.dumps(entities)}\n"
+        f"2D Viewport Image: Attached as multimodal image/png (North-Up | YOU=Purple, Strike Cone=Orange, Hit Lock-On=Green, Rival Cat=Red C#, Mouse=Blue M#, Wall=Dark #)\n"
+        f"{target_legend}\n"
+        f"Visible Entities in Sight (Raw JSON): {json.dumps(entities)}\n"
         f"Legal Actions: {legal}\n"
     )
 
     prompt = f"{history_context}{notice_context}{coaching_context}{observation_context}"
 
     if capture is not None:
+        viewport_png_bytes, viewport_data_uri = render_viewport_data_uri(obs, agent_id=agent_id)
         capture.update({
             "built_at_tick": obs.tick,
             "model": ACTOR_MODEL,
             "thinking_budget": get_thinking_budget(),
+            "multimodal_viewport_bytes": len(viewport_png_bytes),
             "sections": {
                 "skills": {"label": "Evil Cat Skills", "delivered": True, "text": get_skills_instruction(agent_id)},
                 "history": {"label": "Recent History", "delivered": bool(history_context), "text": history_context},
                 "standing_order": {"label": "Coach Standing Directive (PRIMARY OBJECTIVE)", "delivered": True, "text": coaching_context},
+                "viewport_image": {
+                    "label": "Multimodal 2D Viewport Cutout (image/png -> Gemini Vision)",
+                    "delivered": True,
+                    "text": (
+                        f"Attached North-Up 2D Viewport PNG ({len(viewport_png_bytes)} bytes, ~258 vision tokens)\n"
+                        f"{target_legend}"
+                    ),
+                    "image_data_uri": viewport_data_uri,
+                },
                 "observation": {"label": "Current Observation", "delivered": True, "text": observation_context},
             },
             "full_prompt": prompt,
@@ -537,7 +557,7 @@ async def query_adk_gemini(
     timeout_seconds: Optional[float] = None,
     commander_directive: Optional[Dict[str, Any]] = None,
 ) -> Tuple[Optional[CatTacticalDecision], str, Optional[str]]:
-    """Runs one tactical deliberation turn with Google ADK Gemini."""
+    """Runs one tactical deliberation turn with Google ADK Gemini (multimodal 2D viewport + text)."""
     started = time.monotonic()
     prompt = build_decision_prompt(
         obs=obs,
@@ -561,7 +581,14 @@ async def query_adk_gemini(
             pass
         await session_service.create_session(app_name="evil_cat_agent_app", user_id=user_id, session_id=session_id)
 
-        msg = types.Content(role="user", parts=[types.Part.from_text(text=prompt)])
+        viewport_png = render_viewport_png(obs, agent_id=agent_id)
+        msg = types.Content(
+            role="user",
+            parts=[
+                types.Part.from_bytes(data=viewport_png, mime_type="image/png"),
+                types.Part.from_text(text=prompt),
+            ],
+        )
         effective_timeout = timeout_seconds or get_deliberation_timeout()
 
         async def _run_stream() -> Tuple[Optional[CatTacticalDecision], Optional[int]]:
