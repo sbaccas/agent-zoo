@@ -433,3 +433,59 @@ def test_all_evil_coach_tools_are_async_and_broadcast_never_self_posts(monkeypat
     assert len(posted_urls) == len(set(posted_urls)), f"Duplicate broadcast POSTs: {posted_urls}"
 
 
+def test_check_gemini_auth_health_reuses_credentials_object_across_ttl(monkeypatch):
+    """check_gemini_auth_health must reuse google.auth Credentials across 5s TTL expirations so it does not refresh OAuth every 5s."""
+    import google.auth
+    from actors.cat import actor as cat_actor
+    from actors.evil_cat import actor as evil_actor
+
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.setenv("GOOGLE_GENAI_USE_VERTEXAI", "true")
+    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "catz-app-prod")
+
+    default_calls = 0
+    refresh_calls = 0
+
+    class _FakeCreds:
+        def __init__(self):
+            self.valid = False
+
+        def refresh(self, _req):
+            nonlocal refresh_calls
+            refresh_calls += 1
+            self.valid = True
+
+    def _fake_default():
+        nonlocal default_calls
+        default_calls += 1
+        return _FakeCreds(), "catz-app-prod"
+
+    monkeypatch.setattr(google.auth, "default", _fake_default)
+
+    for mod in (evil_actor, cat_actor):
+        default_calls = 0
+        refresh_calls = 0
+        mod._auth_cache["timestamp"] = 0.0
+        mod._auth_cache["result"] = None
+        mod._auth_cache["credentials"] = None
+        mod._auth_cache["detected_project"] = None
+
+        # 1. Cold check: loads default() once and refreshes once
+        res1 = mod.check_gemini_auth_health()
+        assert res1["authenticated"] is True
+        assert default_calls == 1
+        assert refresh_calls == 1
+
+        # 2. Expire the 5-second result cache TTL: must reuse in-memory valid creds with 0 refreshes!
+        mod._auth_cache["timestamp"] = 0.0
+        res2 = mod.check_gemini_auth_health()
+        assert res2["authenticated"] is True
+        assert default_calls == 1, f"{mod.__name__} re-called google.auth.default() when creds were already valid"
+        assert refresh_calls == 1, f"{mod.__name__} re-called creds.refresh() when creds.valid was True"
+
+        # 3. Explicit force_refresh=True reloads from disk
+        res3 = mod.check_gemini_auth_health(force_refresh=True)
+        assert res3["authenticated"] is True
+        assert default_calls == 2
+        assert refresh_calls == 2

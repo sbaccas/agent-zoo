@@ -604,7 +604,12 @@ def thinking_budget_warning(budget: Optional[int]) -> Optional[str]:
 
 _llm_lock = asyncio.Lock()
 
-_auth_cache: Dict[str, Any] = {"timestamp": 0.0, "result": None}
+_auth_cache: Dict[str, Any] = {
+    "timestamp": 0.0,
+    "result": None,
+    "credentials": None,
+    "detected_project": None,
+}
 
 
 def is_auth_error(error_msg: str) -> bool:
@@ -666,6 +671,8 @@ def mark_auth_error(error_msg: str) -> bool:
         "details": error_msg,
     }
     _auth_cache["timestamp"] = now
+    _auth_cache["credentials"] = None
+    _auth_cache["detected_project"] = None
     _auth_cache["result"] = res
     return True
 
@@ -673,7 +680,9 @@ def mark_auth_error(error_msg: str) -> bool:
 def check_gemini_auth_health(force_refresh: bool = False) -> Dict[str, Any]:
     """
     Truthfully checks if Gemini authentication credentials exist and are currently valid.
-    Caches results for 5 seconds unless force_refresh is True or environment variables change.
+    Caches results for 5 seconds unless force_refresh is True or environment variables change,
+    and reuses the underlying google.auth Credentials object so OAuth token refresh only
+    executes when the ~1-hour access token actually expires.
     """
     cache_key = (
         os.environ.get("GEMINI_API_KEY"),
@@ -682,7 +691,8 @@ def check_gemini_auth_health(force_refresh: bool = False) -> Dict[str, Any]:
         os.environ.get("GOOGLE_GENAI_USE_VERTEXAI"),
     )
     now = time.time()
-    if not force_refresh and _auth_cache.get("key") == cache_key and (now - _auth_cache.get("timestamp", 0) < 5.0):
+    key_changed = _auth_cache.get("key") != cache_key
+    if not force_refresh and not key_changed and _auth_cache.get("result") is not None and (now - _auth_cache.get("timestamp", 0) < 5.0):
         return dict(_auth_cache["result"])
 
     api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
@@ -708,26 +718,46 @@ def check_gemini_auth_health(force_refresh: bool = False) -> Dict[str, Any]:
             import google.auth
             from google.auth.transport.requests import Request
 
-            creds, proj = google.auth.default()
+            creds = None if (force_refresh or key_changed) else _auth_cache.get("credentials")
+            proj = _auth_cache.get("detected_project")
+            loaded_fresh = False
+            if creds is None:
+                creds, proj = google.auth.default()
+                loaded_fresh = True
+
             if not creds.valid:
                 try:
                     creds.refresh(Request())
                 except Exception as exc:
-                    err_str = str(exc)
-                    res = {
-                        "mode": "vertex_ai",
-                        "authenticated": False,
-                        "status": "expired",
-                        "error": err_str,
-                        "project": project or proj,
-                        "reauth_command": "gcloud auth application-default login",
-                        "details": f"Vertex AI ADC token expired ({err_str})",
-                    }
-                    _auth_cache["key"] = cache_key
-                    _auth_cache["timestamp"] = now
-                    _auth_cache["result"] = res
-                    return res
+                    if not loaded_fresh:
+                        try:
+                            creds, proj = google.auth.default()
+                            if not creds.valid:
+                                creds.refresh(Request())
+                        except Exception as reload_exc:
+                            exc = reload_exc
+                        else:
+                            exc = None
+                    if exc is not None:
+                        err_str = str(exc)
+                        _auth_cache["credentials"] = None
+                        _auth_cache["detected_project"] = None
+                        res = {
+                            "mode": "vertex_ai",
+                            "authenticated": False,
+                            "status": "expired",
+                            "error": err_str,
+                            "project": project or proj,
+                            "reauth_command": "gcloud auth application-default login",
+                            "details": f"Vertex AI ADC token expired ({err_str})",
+                        }
+                        _auth_cache["key"] = cache_key
+                        _auth_cache["timestamp"] = now
+                        _auth_cache["result"] = res
+                        return res
 
+            _auth_cache["credentials"] = creds
+            _auth_cache["detected_project"] = proj
             res = {
                 "mode": "vertex_ai",
                 "authenticated": True,
@@ -744,6 +774,8 @@ def check_gemini_auth_health(force_refresh: bool = False) -> Dict[str, Any]:
 
         except Exception as exc:
             err_str = str(exc)
+            _auth_cache["credentials"] = None
+            _auth_cache["detected_project"] = None
             res = {
                 "mode": "vertex_ai",
                 "authenticated": False,

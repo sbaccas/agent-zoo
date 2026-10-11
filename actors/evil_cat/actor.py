@@ -246,7 +246,12 @@ def thinking_budget_warning(budget: Optional[int]) -> Optional[str]:
     )
 
 
-_auth_cache: Dict[str, Any] = {"timestamp": 0.0, "result": None}
+_auth_cache: Dict[str, Any] = {
+    "timestamp": 0.0,
+    "result": None,
+    "credentials": None,
+    "detected_project": None,
+}
 
 
 def is_auth_error(error_msg: str) -> bool:
@@ -276,6 +281,8 @@ def mark_auth_error(error_msg: str) -> bool:
     if not is_auth_error(error_msg):
         return False
     _auth_cache["timestamp"] = time.time()
+    _auth_cache["credentials"] = None
+    _auth_cache["detected_project"] = None
     _auth_cache["result"] = {
         "authenticated": False,
         "mode": "error",
@@ -292,7 +299,8 @@ def clear_auth_error() -> None:
 
 def check_gemini_auth_health(force: bool = False, force_refresh: bool = False) -> Dict[str, Any]:
     now = time.time()
-    if not (force or force_refresh) and _auth_cache["result"] is not None and (now - _auth_cache["timestamp"] < 5.0):
+    do_force = bool(force or force_refresh)
+    if not do_force and _auth_cache["result"] is not None and (now - _auth_cache["timestamp"] < 5.0):
         return _auth_cache["result"]
 
     api_key = os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY")
@@ -309,9 +317,26 @@ def check_gemini_auth_health(force: bool = False, force_refresh: bool = False) -
             import google.auth
             from google.auth.transport.requests import Request
 
-            credentials, detected_project = google.auth.default()
+            credentials = None if do_force else _auth_cache.get("credentials")
+            detected_project = _auth_cache.get("detected_project")
+            loaded_fresh = False
+            if credentials is None:
+                credentials, detected_project = google.auth.default()
+                loaded_fresh = True
+
             if not credentials.valid:
-                credentials.refresh(Request())
+                try:
+                    credentials.refresh(Request())
+                except Exception:
+                    if not loaded_fresh:
+                        credentials, detected_project = google.auth.default()
+                        if not credentials.valid:
+                            credentials.refresh(Request())
+                    else:
+                        raise
+
+            _auth_cache["credentials"] = credentials
+            _auth_cache["detected_project"] = detected_project
             res = {
                 "authenticated": True,
                 "mode": "vertex_ai",
@@ -323,6 +348,8 @@ def check_gemini_auth_health(force: bool = False, force_refresh: bool = False) -
             _auth_cache["result"] = res
             return res
         except Exception as exc:
+            _auth_cache["credentials"] = None
+            _auth_cache["detected_project"] = None
             res = {
                 "authenticated": False,
                 "mode": "vertex_ai",
