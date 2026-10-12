@@ -222,8 +222,8 @@ class Scheduler:
             "hp": entity.hp,
             "max_hp": entity.max_hp,
             "attack_power": spec_cfg.attack_power if spec_cfg else (34 if entity.type == EntityType.CAT else 0),
-            "heal_on_mouse_capture": getattr(spec_cfg, "heal_on_mouse_capture", 15) if entity.type == EntityType.CAT else 0,
-            "heal_on_cat_elimination": getattr(spec_cfg, "heal_on_cat_elimination", 90) if entity.type == EntityType.CAT else 0,
+            "heal_on_mouse_capture": getattr(spec_cfg, "heal_on_mouse_capture", 40) if entity.type == EntityType.CAT else 0,
+            "heal_on_cat_elimination": getattr(spec_cfg, "heal_on_cat_elimination", 100) if entity.type == EntityType.CAT else 0,
         }
 
         return {
@@ -341,13 +341,9 @@ class Scheduler:
         if owner and owner.type == EntityType.CAT and owner.alive:
             cat_cfg = self.entity_manager.species_config.get("cat")
             if is_cat:
-                heal_target = getattr(cat_cfg, "heal_on_cat_elimination", 90) if cat_cfg else 90
+                heal_target = getattr(cat_cfg, "heal_on_cat_elimination", 100) if cat_cfg else 100
             else:
-                if is_evil:
-                    # Evil cat heals 50% from mice
-                    heal_target = int(round(owner.max_hp * 0.50))
-                else:
-                    heal_target = getattr(cat_cfg, "heal_on_mouse_capture", 15) if cat_cfg else 15
+                heal_target = getattr(cat_cfg, "heal_on_mouse_capture", 40) if cat_cfg else 40
             old_hp = owner.hp
             owner.hp = min(owner.max_hp, owner.hp + heal_target)
             healed_hp = owner.hp - old_hp

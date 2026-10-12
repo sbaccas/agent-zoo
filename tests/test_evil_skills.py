@@ -150,8 +150,8 @@ async def test_evil_cat_150_hp_and_rival_100_hp():
 
 
 @pytest.mark.asyncio
-async def test_evil_cat_heals_50_percent_from_mice_and_gets_zero_score():
-    """Verify evil cat heals 50% max HP (+75 HP) on mouse capture and gains 0 score."""
+async def test_evil_cat_heals_40_hp_from_mice_and_gets_zero_score():
+    """Verify evil cat heals +40 HP on mouse capture and gains 0 score."""
     from app.game.simulation import Simulation
     from app.models.action import ActionType
     from app.models.entity import Direction, EntityType, Position
@@ -179,8 +179,8 @@ async def test_evil_cat_heals_50_percent_from_mice_and_gets_zero_score():
     # Process capture in scheduler
     sim.scheduler._register_capture(cat3.id, mouse, "slash impact")
 
-    # 1. Cat3 should heal 50% of 150 = 75 HP: 20 + 75 = 95 HP
-    assert cat3.hp == 95
+    # 1. Cat3 should heal +40 HP: 20 + 40 = 60 HP
+    assert cat3.hp == 60
 
     # 2. Cat3 receives 0 score for catching a mouse
     assert sim.scheduler.scores.get(cat3.id, 0) == 0

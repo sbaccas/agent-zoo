@@ -489,3 +489,34 @@ def test_check_gemini_auth_health_reuses_credentials_object_across_ttl(monkeypat
         assert res3["authenticated"] is True
         assert default_calls == 2
         assert refresh_calls == 2
+
+
+def test_evil_cat_observation_payload_matches_standard_cat_capabilities():
+    """Evil Cat prompt includes the same Capabilities block as standard cats without movement instructions."""
+    obs = Observation(
+        tick=360,
+        round=2,
+        self={
+            "id": "cat-3",
+            "position": {"x": 35, "y": 35},
+            "facing": "west",
+            "hp": 150,
+            "max_hp": 150,
+            "action_cooldown": 0,
+            "can_act": True,
+        },
+        visible_entities=[
+            {"id": "cat-2", "type": "cat", "position": {"x": 28, "y": 33}, "alive": True},
+        ],
+        legal_actions=["stay", "north", "south", "east", "west", "attack", "lunge"],
+        capabilities={"attack_range": 4, "lunge_cooldown": 2, "move_cooldown": 3, "attack_cooldown": 3},
+        scoreboard={"cat-2": 31, "cat-3": 50},
+    )
+    prompt = build_decision_prompt(obs=obs, agent_id="cat-3")
+    assert "Capabilities this tick:" in prompt
+    assert "• move_cooldown: 3 tick(s)" in prompt
+    assert "• attack_cooldown: 3 tick(s)" in prompt
+    assert "• lunge_cooldown: 2 tick(s)" in prompt
+    assert "• attack_range: 4 tiles deep, strike zone 3 tiles wide" in prompt
+
+

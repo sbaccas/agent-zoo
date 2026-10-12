@@ -88,8 +88,8 @@ async def _build_notice_board_data(sim_id: str = "active") -> Tuple[Dict[str, An
 
     absorption_active = bool(cat_species.get("absorption", False))
     aim_assist_active = bool(cat_species.get("aim_assist", False))
-    mouse_heal = int(cat_species.get("heal_on_mouse_capture", 15))
-    cat_heal = int(cat_species.get("heal_on_cat_elimination", 90))
+    mouse_heal = int(cat_species.get("heal_on_mouse_capture", 40))
+    cat_heal = int(cat_species.get("heal_on_cat_elimination", 100))
     healing_active = mouse_heal > 0 or cat_heal > 0
 
     # Format bulletin

@@ -22,13 +22,14 @@ That manual is the authoritative single source of truth for the arena, perceptio
 - Eliminating a rival cat absorbs **TWICE their lifetime score** (`2 × victim_score`).
 - Always track the scoreboard: identify which rival cat has consumed the most cheese/mice and designate them as the High-Value Target (HVT).
 
-### Strategic Cognition: Proximity, Time-to-Target & Subordinate Alerts
+### Strategic Cognition: Proximity, Turn-Then-Lunge Speed & Subordinate Alerts
+- **Turn-Then-Lunge Traversal Speed (`1.00 tiles/tick` vs `0.33 tiles/tick`)**: Remember that `lunge` moves 2 tiles in 2 ticks (**3× faster** than walking 1 tile in 3 ticks with cardinal moves). When writing `BEHAVIOR` instructions for `STALK` or `TRAVEL`, **always instruct your subordinate to align facing and `lunge` continuously** toward distant coordinates (e.g., *"Turn West then lunge continuously to (4, 35)"*), rather than phrasing orders as *"Move West"* or setting tiny 5-tile intermediate waypoints that cause the cat to walk 1 tile at a time.
 - **Proximity & Travel Time**: When providing advice to your subordinate, keep in mind proximity and how many ticks it will take to reach a destination. Long journeys across the arena consume valuable ticks and leave your flanks unmonitored.
 - **Subordinate Alert Signals**: If your subordinate cat forces a coach evaluation, it means there is something in the immediate area it thinks you might want to see (such as a rival cat entering its field of view).
 - **Your Call on Redirection**: As the higher-order reasoning brain, it is your decision whether to redirect to engage an immediate local opportunity or maintain your stated primary objective. Evaluate the immediate scope against the travel cost of distant objectives when making this call.
 
 ### Emergency Healing (Mice are Medkits)
-- Eating a mouse heals your cat for **50% of max HP** (+75 HP).
+- Eating a mouse heals your cat for **+40 HP** (and eliminating a rival cat restores **+100 HP**).
 - If your cat is below 40 HP, issue an emergency healing directive to consume the nearest mouse before re-engaging rivals.
 
 ---
@@ -92,40 +93,40 @@ BEHAVIOR: <CONCISE_ACTION_AND_WAYPOINT_INSTRUCTION>
 ```
 
 ### Core Mode Ideas (Feel free to innovate custom modes):
-- **`STALK`**: Pursue high-value rival cat (`cat-1` or `cat-2`).
+- **`STALK`**: Pursue high-value rival cat (`cat-1`, `cat-2`, or high-bounty NPC).
   - *Example*:
     ```text
     MODE: STALK
-    TRIGGER: cat-1 in strike zone -> attack immediately
-    BEHAVIOR: Close distance on cat-1 at (24, 15); lunge down corridors; flank from rear blind spot.
+    TRIGGER: cat-2 in strike zone -> attack immediately
+    BEHAVIOR: Turn to align facing and lunge continuously toward cat-2 at (4, 35); use single steps only to turn or fine-tune strike alignment.
     ```
-- **`TRAVEL`**: Move to strategic sector or choke point.
+- **`TRAVEL`**: Sprint to a strategic sector or intercept lane using `lunge`.
   - *Example*:
     ```text
     MODE: TRAVEL
     TRIGGER: reached waypoint (18, 12) or rival spotted
-    BEHAVIOR: Step toward central junction (18, 12); lunge through open corridors.
+    BEHAVIOR: Align facing and lunge continuously toward (18, 12) (2 tiles/2 ticks); do not walk 1 tile at a time down open corridors.
     ```
-- **`AMBUSH`**: Lurk behind corner or obstacle.
+- **`AMBUSH`**: Intercept a rival along their sweep lane with zero-lock readiness.
   - *Example*:
     ```text
     MODE: AMBUSH
-    TRIGGER: rival enters corridor -> strike
-    BEHAVIOR: Hold position at corner (10, 8) facing East; do not step into line of sight.
+    TRIGGER: rival enters strike zone -> attack immediately (free hit while they are on move cooldown!)
+    BEHAVIOR: Hold position at (4, 35) facing SOUTH with `stay` (0 cooldown) directly looking down the target's x=4 sweep lane so you land the first slash before they can swing.
     ```
 - **`HEAL`**: Emergency HP recovery.
   - *Example*:
     ```text
     MODE: HEAL
     TRIGGER: mouse in strike zone -> attack to consume
-    BEHAVIOR: HP critical; disengage combat and step to mouse at (14, 9) for +75 HP.
+    BEHAVIOR: HP critical; disengage combat, lunge toward nearest mouse at (14, 9) and slash for +40 HP.
     ```
-- **`EVADE`**: Retreat from disadvantageous encounter.
+- **`EVADE`**: Retreat from disadvantageous encounter using high-speed lunges.
   - *Example*:
     ```text
     MODE: EVADE
     TRIGGER: distance to pursuer >= 4
-    BEHAVIOR: Retreat South-West breaking line of sight around pillar (6, 12).
+    BEHAVIOR: Turn away from pursuer and lunge continuously to break contact.
     ```
 
 Keep the directive concise, direct, and actionable for all ticks until the next cycle.

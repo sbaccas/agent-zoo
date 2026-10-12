@@ -498,7 +498,7 @@ def format_cardinal_target_legend(obs: Observation, agent_id: str = "cat-3") -> 
             bounty = int(scores.get(eid, 0)) * 2
             role_desc = f"RIVAL CAT | HP: {hp}/{max_hp} | 2x Bounty: +{bounty} pts"
         else:
-            role_desc = "mouse | Emergency +75 HP heal if wounded, 0 pts"
+            role_desc = "mouse | Emergency +40 HP heal if wounded, 0 pts"
 
         if in_strike:
             strike_status = "🎯 IN STRIKE ZONE (GREEN LOCK-ON — `attack` connects this tick!)"

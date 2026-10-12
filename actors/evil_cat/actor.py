@@ -482,8 +482,19 @@ def build_decision_prompt(
         h_resp = h.get("response", {})
         h_act = (h_resp.get("action") or "stay").upper()
         h_th = h_resp.get("thought", "")
+        h_cd = int(h_self.get("action_cooldown", 0) or 0)
+        h_can_act = h_self.get("can_act")
+        h_locked = (h_cd > 0) if h_can_act is None else (not h_can_act)
+        outcome = "REJECTED - you were locked" if h_locked else "executed"
+        rp = h_resp.get("resulting_posture") if isinstance(h_resp, dict) else None
+        if rp and rp.get("position"):
+            rp_pos = rp.get("position", {})
+            rp_facing = (rp.get("facing") or h_facing).upper()
+            posture_str = f"({h_pos.get('x')}, {h_pos.get('y')}) [{h_facing.upper()}] ➔ ({rp_pos.get('x')}, {rp_pos.get('y')}) [{rp_facing}]"
+        else:
+            posture_str = f"Pos ({h_pos.get('x')}, {h_pos.get('y')}) facing {h_facing.upper()}"
         history_lines.append(
-            f"- Tick {h_tick}: Pos ({h_pos.get('x')}, {h_pos.get('y')}) facing {h_facing.upper()} | Score: {h_score} | Move: {h_act} | Thought: {h_th[:75]}"
+            f"- Tick {h_tick}: {posture_str} | Score: {h_score} | Move: {h_act} [{outcome}] | Thought: {h_th[:90]}"
         )
     history_context = ""
     if history_lines:
@@ -509,15 +520,69 @@ def build_decision_prompt(
     notice_board = store.read_notice_board()
     notice_context = ""
     if notice_board:
-        notice_context = f"--- ARENA NOTICE BOARD ---\n{notice_board}\n\n"
+        notice_context = f"--- GLOBAL ARENA NOTICE BOARD ---\n{notice_board}\n\n"
 
-    # Observation
+    # Observation & Live Capabilities (matching actors/cat/actor.py)
+    caps = obs.capabilities or {}
+    atk_range = caps.get("attack_range", 2)
+    vision_rad = caps.get("vision_radius", 4)
+    vision_rear = caps.get("vision_rear", 2)
+    vision_half = caps.get("vision_half_width", 3)
+    move_cd = caps.get("move_cooldown", 3)
+    atk_cd = caps.get("attack_cooldown", 3)
+    lunge_cd = caps.get("lunge_cooldown", 2)
+
     self_hp = obs.self.get("hp", 150)
     self_max_hp = obs.self.get("max_hp", 150)
+    self_atk_power = caps.get("attack_power", 34)
+    self_alive = obs.self.get("alive", True)
+
     self_cd = int(obs.self.get("action_cooldown", 0) or 0)
+    self_locked_action = obs.self.get("locked_action")
     _can_act = obs.self.get("can_act")
     self_locked = (self_cd > 0) if _can_act is None else (not _can_act)
-    lock_status = "LOCKED (recovering, action will buffer as standing intent)" if self_locked else "FREE (action executes immediately)"
+    if not self_alive or self_hp <= 0:
+        lock_text = "ELIMINATED / DEAD. You have been knocked out and cannot act."
+    elif self_locked:
+        recovering = f" from '{self_locked_action}'" if self_locked_action else ""
+        remaining = (
+            f" You are free again in {self_cd} tick(s)."
+            if self_cd > 0
+            else " This is the last tick of the lock; you are free next tick."
+        )
+        lock_text = (
+            f"LOCKED. You are still recovering{recovering} and cannot act this tick."
+            f"{remaining}\n"
+            f"  No action can be executed on this tick.\n"
+            f"  What you return is recorded as your standing intent: it is what will\n"
+            f"  be applied the moment your lock clears. Answer the question \"what do\n"
+            f"  I do the instant I am free?\", using what you can see right now."
+        )
+    else:
+        lock_text = (
+            "FREE. Your lock has cleared and you are acting this tick.\n"
+            "  What you return becomes your standing intent for your next opportunity."
+        )
+
+    aim_line = ""
+    if caps.get("aim_assist"):
+        aim_line = (
+            f"  • aim_assist: ON. Each visible entity below carries forward, offaxis\n"
+            f"    and in_strike_zone, computed by the engine in your frame. forward is\n"
+            f"    tiles ahead of you (negative = behind); offaxis is tiles to your side,\n"
+            f"    either sign. in_strike_zone is true exactly when\n"
+            f"    1 <= forward <= {atk_range} AND |offaxis| <= 1, both inclusive -- the zone\n"
+            f"    is 3 tiles wide, so offaxis of -1 or +1 is a legal hit, not a miss.\n"
+            f"    These are the engine's own numbers. Trust them over any distance you\n"
+            f"    work out yourself, and do not re-derive them: if in_strike_zone is\n"
+            f"    true, ATTACK connects; if it is false, ATTACK cannot connect.\n"
+        )
+
+    absorption_line = ""
+    if caps.get("absorption"):
+        absorption_line = (
+            "  • kill_absorption: ACTIVE. Eliminating a rival predator transfers their entire kill score to you.\n"
+        )
 
     # Rivals and bounty status
     rivals = {k: v for k, v in (obs.scoreboard or {}).items() if k != agent_id}
@@ -530,19 +595,33 @@ def build_decision_prompt(
     rival_text = ", ".join(rival_entries) if rival_entries else "none"
 
     target_legend = format_cardinal_target_legend(obs, agent_id=agent_id)
+    events_heraldry = format_event_heraldry(obs.events, obs.tick) if obs.events else ""
 
     observation_context = (
-        f"--- CURRENT OBSERVATION (Tick #{obs.tick}) ---\n"
-        f"Identity: {agent_id} (Evil Cat | 150 HP Tank)\n"
+        f"{events_heraldry}"
+        f"--- CURRENT OBSERVATION (Tick {obs.tick}, Round {obs.round}) ---\n"
+        f"Agent ID: {obs.self.get('id', agent_id)} (Evil Cat | 150 HP Tank)\n"
+        f"Action State: {lock_text}\n"
+        f"Current Position: (x={pos.get('x', 0)}, y={pos.get('y', 0)})\n"
+        f"Current Facing: {facing}\n"
         f"Health: {self_hp}/{self_max_hp} HP\n"
-        f"Position: x={pos.get('x')}, y={pos.get('y')} | Facing: {facing.upper()}\n"
-        f"Action State: {lock_status} (cooldown: {self_cd})\n"
-        f"Your Current Score: {obs.score}\n"
-        f"Rivals & Bounties: {rival_text}\n"
-        f"2D Viewport Image: Attached as multimodal image/png (North-Up | YOU=Purple, Strike Cone=Orange, Hit Lock-On=Green, Rival Cat=Red C#, Mouse=Blue M#, Wall=Dark #)\n"
+        f"Your Score: {obs.score}\n"
+        f"Rival Cats: {rival_text}\n"
+        f"Capabilities this tick:\n"
+        f"  • health: {self_hp}/{self_max_hp} HP\n"
+        f"  • attack_power: {self_atk_power}/100 damage per slash\n"
+        f"  • attack_range: {atk_range} tiles deep, strike zone 3 tiles wide\n"
+        f"  • vision_radius: {vision_rad} tiles ahead, plus {vision_rear} behind and "
+        f"{vision_half} either side (a box around you, {2 * vision_half + 1} tiles wide)\n"
+        f"  • move_cooldown: {move_cd} tick(s)\n"
+        f"  • attack_cooldown: {atk_cd} tick(s)\n"
+        f"  • lunge_cooldown: {lunge_cd} tick(s)\n"
+        f"{aim_line}"
+        f"{absorption_line}"
+        f"2D Viewport Image: Attached as multimodal image/png\n"
         f"{target_legend}\n"
-        f"Visible Entities in Sight (Raw JSON): {json.dumps(entities)}\n"
-        f"Legal Actions: {legal}\n"
+        f"Visible Entities in Viewport: {entities}\n"
+        f"Legal Actions this tick: {legal}"
     )
 
     prompt = f"{history_context}{notice_context}{coaching_context}{observation_context}"

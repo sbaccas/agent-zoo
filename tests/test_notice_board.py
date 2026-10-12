@@ -139,18 +139,18 @@ async def test_mcp_get_notice_board_tool(monkeypatch):
     assert result["active_modifiers"]["absorption"]["status"] == "ACTIVE"
     assert "KILL ABSORPTION" in result["bulletin"]
     assert "PREDATION HP RESTORATION" in result["bulletin"]
-    assert "+15 HP" in result["bulletin"]
-    assert "+90 HP" in result["bulletin"]
+    assert "+40 HP" in result["bulletin"]
+    assert "+100 HP" in result["bulletin"]
     assert result["active_modifiers"]["predation_healing"]["enabled"] is True
-    assert result["active_modifiers"]["predation_healing"]["mouse_heal"] == 15
-    assert result["active_modifiers"]["predation_healing"]["cat_heal"] == 90
+    assert result["active_modifiers"]["predation_healing"]["mouse_heal"] == 40
+    assert result["active_modifiers"]["predation_healing"]["cat_heal"] == 100
     # Check that it automatically synced to store
     assert store.read_notice_board() == result["bulletin"]
 
 
 @pytest.mark.asyncio
 async def test_mouse_capture_heals_cat_hp():
-    """Capturing a mouse restores +15 HP up to max_hp."""
+    """Capturing a mouse restores +40 HP up to max_hp."""
     sim = Simulation(config=SimulationConfig(populations={"cats": 0, "mice": 0}))
     cat = sim.entity_manager.spawn_entity(EntityType.CAT, pos=Position(x=10, y=10))
     mouse = sim.entity_manager.spawn_entity(EntityType.MOUSE, pos=Position(x=11, y=10))
@@ -159,11 +159,11 @@ async def test_mouse_capture_heals_cat_hp():
     mouse.alive = False
     sim.scheduler._register_capture(cat.id, mouse, "slash impact")
 
-    # 50 + 15 = 65
-    assert cat.hp == 65
+    # 50 + 40 = 90
+    assert cat.hp == 90
 
     # Capped at max_hp
-    cat.hp = 95
+    cat.hp = 85
     mouse2 = sim.entity_manager.spawn_entity(EntityType.MOUSE, pos=Position(x=12, y=10))
     mouse2.alive = False
     sim.scheduler._register_capture(cat.id, mouse2, "slash impact")
@@ -172,7 +172,7 @@ async def test_mouse_capture_heals_cat_hp():
 
 @pytest.mark.asyncio
 async def test_cat_elimination_heals_cat_hp():
-    """Eliminating a rival cat restores +90 HP up to max_hp."""
+    """Eliminating a rival cat restores +100 HP up to max_hp."""
     sim = Simulation(config=SimulationConfig(populations={"cats": 0, "mice": 0}))
     cat1 = sim.entity_manager.spawn_entity(EntityType.CAT, pos=Position(x=10, y=10))
     cat2 = sim.entity_manager.spawn_entity(EntityType.CAT, pos=Position(x=11, y=10))
@@ -181,12 +181,15 @@ async def test_cat_elimination_heals_cat_hp():
     cat2.alive = False
     sim.scheduler._register_capture(cat1.id, cat2, "slash impact")
 
-    # 5 + 90 = 95
-    assert cat1.hp == 95
-
-    # Another elimination caps at 100
-    cat3 = sim.entity_manager.spawn_entity(EntityType.CAT, pos=Position(x=12, y=10))
-    cat3.alive = False
-    sim.scheduler._register_capture(cat1.id, cat3, "slash impact")
+    # 5 + 100 = 100 (capped at 100 max_hp for standard cat)
     assert cat1.hp == 100
+
+    # Evil cat (cat-3, 150 max_hp) heals +100 HP: 25 + 100 = 125
+    cat3 = sim.entity_manager.spawn_entity(EntityType.CAT, pos=Position(x=12, y=10))
+    cat4 = sim.entity_manager.spawn_entity(EntityType.CAT, pos=Position(x=13, y=10))
+    assert cat3.id == "cat-3" and cat3.max_hp == 150
+    cat3.hp = 25
+    cat4.alive = False
+    sim.scheduler._register_capture(cat3.id, cat4, "slash impact")
+    assert cat3.hp == 125
 

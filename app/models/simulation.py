@@ -104,12 +104,12 @@ class SpeciesConfig(BaseModel):
         description="When enabled on predator, eliminating a rival cat absorbs their accumulated score",
     )
     heal_on_mouse_capture: int = Field(
-        default=15,
+        default=40,
         ge=0,
         description="HP restored to predator when capturing a mouse",
     )
     heal_on_cat_elimination: int = Field(
-        default=90,
+        default=100,
         ge=0,
         description="HP restored to predator when eliminating a rival cat",
     )

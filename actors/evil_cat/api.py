@@ -305,7 +305,11 @@ async def _evaluation_worker():
                 try:
                     await state.current_eval_task
                 except asyncio.CancelledError:
-                    pass
+                    me = asyncio.current_task()
+                    if me is not None and me.cancelling() > 0:
+                        if state.current_eval_task and not state.current_eval_task.done():
+                            state.current_eval_task.cancel()
+                        raise
         except asyncio.CancelledError:
             logger.info("Evil Coach evaluation worker stopped.")
             raise
@@ -1093,14 +1097,21 @@ async def lifespan(app: FastAPI):
 
     yield
 
+    if state.current_eval_task and not state.current_eval_task.done():
+        state.current_eval_task.cancel()
+    if state.deliberation_task and not state.deliberation_task.done():
+        state.deliberation_task.cancel()
     if state.eval_worker_task:
         state.eval_worker_task.cancel()
         try:
-            await state.eval_worker_task
-        except asyncio.CancelledError:
+            await asyncio.wait_for(state.eval_worker_task, timeout=1.5)
+        except (asyncio.CancelledError, asyncio.TimeoutError, Exception):
             pass
         state.eval_worker_task = None
-    await ws_client.disconnect()
+    try:
+        await asyncio.wait_for(ws_client.disconnect(), timeout=1.5)
+    except Exception:
+        pass
 
 
 app = FastAPI(title="Evil Cat Agent Service & Workbench", lifespan=lifespan)
