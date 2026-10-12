@@ -346,6 +346,21 @@ def build(
         confinement = describe_confinement(samples, width, height, window)
         if confinement:
             lines.append(confinement)
+        recent_window = min(25, window)
+        recent_slice = samples[-recent_window:] if recent_window > 0 else []
+        recent_bounds = None
+        if recent_slice:
+            rx = [x for x, _ in recent_slice]
+            ry = [y for _, y in recent_slice]
+            rx0, rx1 = min(rx), max(rx)
+            ry0, ry1 = min(ry), max(ry)
+            recent_bounds = {"window_ticks": recent_window, "x": [rx0, rx1], "y": [ry0, ry1]}
+            if window > 25:
+                r_area = (rx1 - rx0 + 1) * (ry1 - ry0 + 1)
+                r_pct = 100.0 * r_area / max(1, width * height)
+                lines.append(
+                    f"RECENT {recent_window} TICKS: confined to x=[{rx0},{rx1}], y=[{ry0},{ry1}]  ({r_pct:.0f}% of arena)"
+                )
 
         cats.append({
             "id": cat_id,
@@ -354,6 +369,7 @@ def build(
             "counts": [counts[r * cols:(r + 1) * cols] for r in range(rows)],
             "total": sum(values),
             "window_ticks": window,
+            "recent_bounds": recent_bounds,
             "unique_tiles": len(visited),
             "path": [[x, y] for x, y in samples],
             "ascii": "\n".join(lines),

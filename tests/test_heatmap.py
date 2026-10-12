@@ -342,3 +342,12 @@ def test_build_grid_and_prose_cannot_contradict_each_other():
     assert "10,000 of 10,000" not in text
 
 
+def test_build_includes_recent_25_ticks_confinement_alongside_long_window():
+    """A 500-tick rolling window must also report the recent 25-tick bounding box so coaches do not misread old movement as current deviation."""
+    path = [(44, 42)] * 50 + [(99, 80 + (i % 15)) for i in range(50)]
+    payload = heatmap.build(_FakeSim(path))
+    cat = payload["cats"][0]
+    text = cat["ascii"]
+    assert "LAST 100 TICKS: confined to x=[44,99]" in text
+    assert "RECENT 25 TICKS: confined to x=[99,99]" in text
+    assert cat["recent_bounds"]["x"] == [99, 99]

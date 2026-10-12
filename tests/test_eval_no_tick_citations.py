@@ -203,3 +203,41 @@ def test_forward_durations_are_not_flagged_as_citations(permitted):
     have cost real directives.
     """
     assert not TICK_INDEX.findall(permitted)
+
+
+def test_format_transcript_omits_locked_reasoning_and_labels_reflex_fallbacks():
+    """Locked cooldown ticks must not emit unused reflex thoughts, and executed reflex fallbacks must not be labelled as model reasoning."""
+    recs = [
+        {
+            "tick": 1007,
+            "x": 99,
+            "y": 99,
+            "facing": "south",
+            "visible": [],
+            "action": "west",
+            "thought": "Exploring territory",
+            "source": "heuristic_reflex",
+            "tick_type": "cooldown",
+            "locked_action": "lunge",
+            "executed": False,
+            "score": 96,
+        },
+        {
+            "tick": 1008,
+            "x": 99,
+            "y": 99,
+            "facing": "south",
+            "visible": [],
+            "action": "north",
+            "thought": "Exploring territory",
+            "source": "heuristic_reflex",
+            "tick_type": "decision",
+            "executed": True,
+            "score": 96,
+        },
+    ]
+    lines = format_transcript(recs).splitlines()
+    assert "LOCKED" in lines[0]
+    assert "Exploring territory" not in lines[0]
+    assert 'reflex_fallback (not model reasoning): "Exploring territory"' in lines[1]
+    assert ' | reasoning: "Exploring territory"' not in lines[1]

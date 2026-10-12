@@ -232,14 +232,24 @@ def format_transcript(records: List[Dict[str, Any]]) -> str:
             seen = "nothing"
         action = (r.get("action") or "stay").upper()
         thought = r.get("thought") or ""
-        if r.get("tick_type") == "cooldown" or r.get("executed") is False:
+        is_locked = r.get("tick_type") == "cooldown" or r.get("executed") is False
+        source = r.get("source") or ""
+        is_reflex = source in ("heuristic_reflex", "heuristic_fallback")
+        if is_locked:
             did = f"LOCKED (recovering from {r.get('locked_action') or 'previous action'}; no action possible)"
+            reasoning_suffix = ""
         else:
             did = f"did {action}"
+            if not thought:
+                reasoning_suffix = ""
+            elif is_reflex:
+                reasoning_suffix = f' | reflex_fallback (not model reasoning): "{thought}"'
+            else:
+                reasoning_suffix = f' | reasoning: "{thought}"'
         lines.append(
             f"at ({r.get('x')},{r.get('y')}) facing "
             f"{r.get('facing')} | score {r.get('score', 0)} | saw {seen} | {did}"
-            + (f' | reasoning: "{thought}"' if thought else "")
+            + reasoning_suffix
         )
     return "\n".join(lines)
 

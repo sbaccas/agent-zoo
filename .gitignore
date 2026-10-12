@@ -72,3 +72,11 @@ override.tf.json
 *_override.tf.json
 .terraformrc
 terraform.rc
+
+# Local analysis media & exports (keep markdown docs tracked)
+docs/*.pdf
+docs/*.mp4
+docs/*.m4a
+docs/*.wav
+docs/assets/
+
