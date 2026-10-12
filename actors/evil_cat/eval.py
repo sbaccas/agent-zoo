@@ -394,6 +394,29 @@ async def a2a_send_coach_message(
             "impersonating_cat": impersonate_cat,
         }
 
+    if recip not in ("*", "broadcast", "all"):
+        try:
+            recent_records = store.read_transcript_records(agent_id=target_cat)
+            if recent_records:
+                last_obs = recent_records[-1].get("observation", {}) or {}
+                elim_set = {str(c).lower() for c in (last_obs.get("eliminated_cats") or [])}
+                if clean_target in elim_set:
+                    auto_msg = a2a_client.inject_dead_peer_answering_machine(
+                        sender_id=sender_id,
+                        dead_cat_id=clean_target,
+                    )
+                    return {
+                        "status": "undeliverable",
+                        "error": auto_msg.content,
+                        "answering_machine": auto_msg.content,
+                        "sender": sender_id,
+                        "recipient": recip,
+                        "message": message,
+                        "impersonating_cat": impersonate_cat,
+                    }
+        except Exception:
+            pass
+
     opsec_err = check_opsec_violation(message)
     if opsec_err:
         return {
@@ -413,7 +436,7 @@ async def a2a_send_coach_message(
             message_type=message_type,
             metadata={"source": "long_term_consciousness", "layer": source_layer, "impersonated": impersonate_cat},
         )
-        return {
+        out: Dict[str, Any] = {
             "status": resp.status,
             "message_id": resp.message_id,
             "sender": sender_id,
@@ -422,6 +445,9 @@ async def a2a_send_coach_message(
             "impersonating_cat": impersonate_cat,
             "error": resp.error,
         }
+        if resp.status == "undeliverable" and resp.error:
+            out["answering_machine"] = resp.error
+        return out
     except Exception as exc:
         return {
             "status": "error",
@@ -454,16 +480,26 @@ async def a2a_read_coach_messages(
     """Reads incoming A2A strategic messages and proposals sent by peer Coaches."""
     target_cat = cat_id or "cat-3"
     coach_msgs = a2a_store.get_coach_inbox(target_cat, limit=limit or 10)
-    formatted = [
-        {
-            "sender": m.get("sender_id"),
+    elim_set = set()
+    try:
+        recs = store.read_transcript_records(agent_id=target_cat)
+        if recs:
+            elim_set = {str(c).lower() for c in ((recs[-1].get("observation") or {}).get("eliminated_cats") or [])}
+    except Exception:
+        pass
+    formatted = []
+    for m in coach_msgs:
+        sender_raw = str(m.get("sender_id") or "")
+        sender_norm = a2a_store.normalize_agent_id(sender_raw.split("[")[0])
+        is_dead = sender_norm in elim_set and "ANSWERING MACHINE" not in sender_raw.upper()
+        formatted.append({
+            "sender": f"{sender_raw} [ELIMINATED / DEAD]" if is_dead else sender_raw,
+            "sender_alive": not is_dead,
             "recipient": m.get("recipient_id"),
             "type": m.get("message_type"),
             "content": m.get("content"),
             "timestamp": m.get("timestamp"),
-        }
-        for m in coach_msgs
-    ]
+        })
     return {"available": True, "count": len(formatted), "messages": formatted}
 
 
@@ -576,6 +612,20 @@ def eval_thinking_warning(budget: Optional[int]) -> Optional[str]:
     )
 
 
+_reset_epoch: int = 0
+
+
+def bump_eval_reset_epoch() -> int:
+    """Increments the evaluation reset epoch so in-flight evaluations from a prior game are discarded."""
+    global _reset_epoch
+    _reset_epoch += 1
+    return _reset_epoch
+
+
+def get_eval_reset_epoch() -> int:
+    return _reset_epoch
+
+
 def get_coach_directive() -> Optional[Dict[str, Any]]:
     return _coach_directive
 
@@ -647,9 +697,11 @@ def build_coach_eval_prompt(
 ) -> str:
     recent_ticks = records[-15:] if records else []
     scoreboard = {}
+    eliminated_cats: List[str] = []
     if recent_ticks:
         last_obs = recent_ticks[-1].get("observation", {})
-        scoreboard = last_obs.get("scoreboard", {})
+        scoreboard = dict(last_obs.get("scoreboard") or last_obs.get("cat_scores") or {})
+        eliminated_cats = list(last_obs.get("eliminated_cats", []) or [])
         self_data = last_obs.get("self", {})
         self_hp = self_data.get("hp", 150)
         self_pos = self_data.get("position", {})
@@ -657,11 +709,31 @@ def build_coach_eval_prompt(
         self_hp = 150
         self_pos = {}
 
+    eliminated_set = {str(c).lower() for c in eliminated_cats}
+    active_scoreboard = {
+        k: v for k, v in scoreboard.items() if str(k).lower() not in eliminated_set
+    }
+    eliminated_scoreboard = {
+        k: v for k, v in scoreboard.items() if str(k).lower() in eliminated_set
+    }
+
     memories = store.read_coach_memories(limit=5, agent_id=agent_id)
     notes_lines = [f"- [{m.get('category', 'strat')}] {m.get('note')}" for m in memories] if memories else ["(No memories yet)"]
 
     inbox = a2a_store.get_coach_inbox(agent_id, limit=5)
-    inbox_lines = [f"- From {m.get('sender_id')}: \"{m.get('content')}\"" for m in inbox] if inbox else ["(No incoming messages)"]
+    if inbox:
+        inbox_lines = []
+        for m in inbox:
+            sender_raw = str(m.get("sender_id", ""))
+            sender_norm = a2a_store.normalize_agent_id(sender_raw.split("[")[0])
+            dead_tag = (
+                " [SENDER IS NOW DEAD / ELIMINATED — DO NOT REPLY]"
+                if sender_norm in eliminated_set and "ANSWERING MACHINE" not in sender_raw.upper()
+                else ""
+            )
+            inbox_lines.append(f"- From {sender_raw}{dead_tag}: \"{m.get('content')}\"")
+    else:
+        inbox_lines = ["(No incoming messages)"]
 
     # Active directive
     current_notes = store.read_coaching_notes(agent_id=agent_id)
@@ -674,9 +746,20 @@ def build_coach_eval_prompt(
         f"Current HP: {self_hp}/150 | Pos: {self_pos}\n"
     )
 
+    eliminated_note = ""
+    if eliminated_cats:
+        elim_items = ", ".join(
+            f"{cid} (final score before death: {eliminated_scoreboard.get(cid, 0)})"
+            for cid in eliminated_cats
+        )
+        eliminated_note = (
+            f"Eliminated / Dead Cats [DO NOT TARGET OR MESSAGE — ALREADY DEAD]: {elim_items}\n"
+        )
+
     scoreboard_block = (
         "Scoreboard & Bounties (2x value when you kill them):\n"
-        f"{json.dumps(scoreboard, indent=2)}\n\n"
+        f"{json.dumps(active_scoreboard, indent=2)}\n"
+        f"{eliminated_note}\n"
     )
 
     notebook_block = (
@@ -789,6 +872,7 @@ def _strip_to_directives(text: str) -> str:
 
 
 async def evaluate(records: List[Dict[str, Any]], agent_id: str = "cat-3") -> Tuple[str, str]:
+    epoch_at_start = _reset_epoch
     if not records:
         try:
             from actors.evil_cat import api as evil_api
@@ -823,11 +907,14 @@ async def evaluate(records: List[Dict[str, Any]], agent_id: str = "cat-3") -> Tu
     timeout_sec = _eval_timeout_sec
     thoughts: Optional[int] = None
     timed_out = False
+    cancelled = False
     tool_calls: List[Dict[str, Any]] = []
     capture: Dict[str, Any] = {}
     out_source = "adk_gemini"
 
     async with _eval_lock:
+        if _reset_epoch != epoch_at_start:
+            return "", "cancelled_by_reset"
         try:
             try:
                 await eval_session_service.delete_session(app_name="evil_cat_eval_app", user_id=user_id, session_id=session_id)
@@ -846,6 +933,9 @@ async def evaluate(records: List[Dict[str, Any]], agent_id: str = "cat-3") -> Tu
                 try:
                     while True:
                         event = await agen.__anext__()
+                        if _reset_epoch != epoch_at_start:
+                            cancelled = True
+                            return "", "cancelled_by_reset"
                         if not (event.content and event.content.parts):
                             continue
 
@@ -879,6 +969,10 @@ async def evaluate(records: List[Dict[str, Any]], agent_id: str = "cat-3") -> Tu
                 except StopAsyncIteration:
                     pass
 
+            if _reset_epoch != epoch_at_start:
+                cancelled = True
+                return "", "cancelled_by_reset"
+
             text = "".join(final_chunks).strip() or "".join(all_chunks).strip()
             text = _strip_to_directives(text)
             if not text and previous_notes:
@@ -894,7 +988,7 @@ async def evaluate(records: List[Dict[str, Any]], agent_id: str = "cat-3") -> Tu
                     "timed_out": False,
                     "tool_calls": tool_calls,
                 })
-                if capture:
+                if capture and _reset_epoch == epoch_at_start:
                     capture["latency_ms"] = dur_ms
                     capture["thinking_budget"] = budget
                     capture["thoughts_token_count"] = thoughts
@@ -906,6 +1000,9 @@ async def evaluate(records: List[Dict[str, Any]], agent_id: str = "cat-3") -> Tu
                     store.append_coach_prompt(capture, agent_id=agent_id)
                 return text, out_source
 
+        except asyncio.CancelledError:
+            cancelled = True
+            raise
         except asyncio.TimeoutError:
             timed_out = True
             logger.warning("Evil Coach evaluation timed out after %ss", timeout_sec)
@@ -913,30 +1010,33 @@ async def evaluate(records: List[Dict[str, Any]], agent_id: str = "cat-3") -> Tu
             mark_auth_error(str(exc))
             logger.warning("Evil Coach evaluation failed: %s", exc)
         finally:
-            dur_ms = int((time.monotonic() - started) * 1000)
-            _last_eval_telemetry.update({
-                "thinking_budget": budget,
-                "thoughts_token_count": thoughts,
-                "latency_ms": dur_ms,
-                "timed_out": timed_out,
-                "tool_calls": tool_calls,
-            })
-            if capture and capture.get("output") is None:
-                fallback_out = (
-                    previous_notes
-                    if previous_notes
-                    else "MODE: STALK\nTRIGGER: rival cat in strike zone -> attack immediately\nBEHAVIOR: Hunt highest bounty rival cat."
-                )
-                capture["latency_ms"] = dur_ms
-                capture["thinking_budget"] = budget
-                capture["thoughts_token_count"] = thoughts
-                capture["timed_out"] = timed_out
-                capture["tool_calls"] = list(tool_calls)
-                capture["output"] = fallback_out
-                capture["source"] = "retained_previous" if previous_notes else "offline_fallback"
-                capture["recorded_at"] = datetime.now(timezone.utc).isoformat()
-                store.append_coach_prompt(capture, agent_id=agent_id)
+            if not cancelled and _reset_epoch == epoch_at_start:
+                dur_ms = int((time.monotonic() - started) * 1000)
+                _last_eval_telemetry.update({
+                    "thinking_budget": budget,
+                    "thoughts_token_count": thoughts,
+                    "latency_ms": dur_ms,
+                    "timed_out": timed_out,
+                    "tool_calls": tool_calls,
+                })
+                if capture and capture.get("output") is None:
+                    fallback_out = (
+                        previous_notes
+                        if previous_notes
+                        else "MODE: STALK\nTRIGGER: rival cat in strike zone -> attack immediately\nBEHAVIOR: Hunt highest bounty rival cat."
+                    )
+                    capture["latency_ms"] = dur_ms
+                    capture["thinking_budget"] = budget
+                    capture["thoughts_token_count"] = thoughts
+                    capture["timed_out"] = timed_out
+                    capture["tool_calls"] = list(tool_calls)
+                    capture["output"] = fallback_out
+                    capture["source"] = "retained_previous" if previous_notes else "offline_fallback"
+                    capture["recorded_at"] = datetime.now(timezone.utc).isoformat()
+                    store.append_coach_prompt(capture, agent_id=agent_id)
 
+    if _reset_epoch != epoch_at_start:
+        return "", "cancelled_by_reset"
     if previous_notes:
         return previous_notes, "retained_previous"
     return (
@@ -948,9 +1048,20 @@ async def evaluate(records: List[Dict[str, Any]], agent_id: str = "cat-3") -> Tu
 
 
 async def evaluate_and_publish(agent_id: str = "cat-3") -> Dict[str, Any]:
+    epoch_at_start = _reset_epoch
     records = store.read_transcript_records(agent_id=agent_id)
     previous_notes = store.read_coaching_notes(agent_id=agent_id).strip()
     notes, source = await evaluate(records, agent_id=agent_id)
+    if _reset_epoch != epoch_at_start or source == "cancelled_by_reset":
+        logger.info("Discarding stale Evil Coach evaluation for %s after game reset.", agent_id)
+        return {
+            "agent_id": agent_id,
+            "ticks_evaluated": 0,
+            "tick_range": None,
+            "source": "cancelled_by_reset",
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "notes": "",
+        }
     if not (notes or "").strip() and previous_notes:
         notes = previous_notes
         source = "retained_previous"
@@ -958,7 +1069,7 @@ async def evaluate_and_publish(agent_id: str = "cat-3") -> Dict[str, Any]:
     tick_range = None
     if records:
         tick_range = f"{records[0].get('tick')}-{records[-1].get('tick')}"
-    if (notes or "").strip():
+    if (notes or "").strip() and _reset_epoch == epoch_at_start:
         store.write_coaching_notes(notes, tick_range=tick_range, agent_id=agent_id)
 
     result = {

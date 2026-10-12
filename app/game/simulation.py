@@ -176,7 +176,14 @@ class Simulation:
                         if killer_id and victim_id and killer_id != victim_id:
                             if d.get("absorbed_score", 0) == 0:
                                 victim_stat = self.stats.cats.get(victim_id)
-                                v_score = (victim_stat.kills + victim_stat.absorbed_kills) if victim_stat else self.scheduler.scores.get(victim_id, 0)
+                                if victim_stat:
+                                    v_score = (
+                                        victim_stat.absorbed_kills
+                                        if (victim_id in ("cat-3", "evil-cat") and victim_stat.absorbed_kills > 0)
+                                        else (victim_stat.kills + victim_stat.absorbed_kills)
+                                    )
+                                else:
+                                    v_score = self.scheduler.scores.get(victim_id, 0)
                                 if v_score > 0:
                                     mult = 2 if killer_id in ("cat-3", "evil-cat") else 1
                                     d["absorbed_score"] = mult * v_score
@@ -257,6 +264,10 @@ class Simulation:
                 started = time.monotonic()
                 self._save_snapshot()
                 await self.scheduler.execute_simulation_step()
+                if self.scheduler.game_over:
+                    self.status = SimulationStatus.COMPLETED
+                    logger.info("Simulation %s completed at tick %s (winner: %s)", self.simulation_id, self.scheduler.tick, self.scheduler.winner_id)
+                    break
                 # Sleep the remainder, not the whole period. The step itself used
                 # to block for up to the agent budget, so the real interval was
                 # the configured one plus however long every agent took in turn,
@@ -294,6 +305,8 @@ class Simulation:
             if self.status != SimulationStatus.RUNNING:
                 self._save_snapshot()
                 await self.scheduler.execute_simulation_step()
+                if self.scheduler.game_over:
+                    self.status = SimulationStatus.COMPLETED
         return self.get_state()
 
     async def step_back(self) -> SimulationStateResponse:
@@ -301,7 +314,7 @@ class Simulation:
             if not self.history:
                 return self.get_state()
 
-            if self.status == SimulationStatus.RUNNING:
+            if self.status in (SimulationStatus.RUNNING, SimulationStatus.COMPLETED):
                 self.status = SimulationStatus.PAUSED
                 if self._loop_task and not self._loop_task.done():
                     self._loop_task.cancel()
@@ -322,6 +335,8 @@ class Simulation:
             ]
             self.stats.restore(snapshot.stats)
             self.scheduler.pending_repositions = dict(snapshot.pending_repositions or {})
+            self.scheduler.game_over = False
+            self.scheduler.winner_id = None
             msg = f"⏪ [STEP BACK] Rewound to Tick {snapshot.tick} | Round {snapshot.round} | Captures: {snapshot.captures}"
             logger.info(msg)
             print(msg, flush=True)
@@ -334,7 +349,7 @@ class Simulation:
             if not self.history:
                 return self.get_state()
 
-            if self.status == SimulationStatus.RUNNING:
+            if self.status in (SimulationStatus.RUNNING, SimulationStatus.COMPLETED):
                 self.status = SimulationStatus.PAUSED
                 if self._loop_task and not self._loop_task.done():
                     self._loop_task.cancel()
@@ -362,6 +377,8 @@ class Simulation:
                 ]
                 self.stats.restore(target_snapshot.stats)
                 self.scheduler.pending_repositions = dict(target_snapshot.pending_repositions or {})
+                self.scheduler.game_over = False
+                self.scheduler.winner_id = None
                 msg = f"⏪ [SEEK] Rewound to Tick {target_snapshot.tick} | Round {target_snapshot.round} | Captures: {target_snapshot.captures}"
                 logger.info(msg)
                 print(msg, flush=True)
@@ -402,33 +419,63 @@ class Simulation:
             self.scheduler.deaths.clear()
             self.scheduler.notified_deaths.clear()
             self.scheduler.consecutive_http_errors.clear()
+            self.scheduler.known_agent_ids.clear()
+            self.scheduler.game_over = False
+            self.scheduler.winner_id = None
             self.stats.reset()
             self.status = SimulationStatus.CREATED
 
-            # Reset on-disk and in-memory actor stores directly
+            # Reset on-disk and in-memory actor stores directly (including cat-3 / Evil Cat)
             try:
                 from actors.cat import store as cat_store
+                from actors.evil_cat import store as evil_store
                 from actors.a2a import store as a2a_store
-                from actors.cat.subagents.eval import clear_coach_directive
+                from actors.cat.subagents.eval import (
+                    bump_eval_reset_epoch as bump_cat_eval_epoch,
+                    clear_coach_directive as clear_cat_coach_directive,
+                )
+                from actors.evil_cat.eval import (
+                    bump_eval_reset_epoch as bump_evil_eval_epoch,
+                    clear_coach_directive as clear_evil_coach_directive,
+                )
+                bump_cat_eval_epoch()
+                bump_evil_eval_epoch()
                 cat_store.reset_transcript("all")
                 cat_store.reset_coaching_notes("all")
                 cat_store.reset_coach_memories("all")
                 cat_store.reset_prompts("all")
                 cat_store.reset_notice_board()
+                evil_store.reset_transcript("cat-3")
+                evil_store.reset_coaching_notes("cat-3")
+                evil_store.reset_coach_memories("cat-3")
+                evil_store.reset_prompts("cat-3")
                 a2a_store.clear_a2a_history("all")
-                clear_coach_directive()
+                clear_cat_coach_directive()
+                clear_evil_coach_directive()
             except Exception as exc:
                 logger.warning(f"Error resetting local agent stores during simulation reset: {exc}")
 
-            # Notify active agent HTTP servers if running
+            # Notify active agent HTTP servers if running (8001, 8003, 8005, plus any CAT_PEER_REGISTRY URLs)
             async def _notify_agents_reset():
                 import httpx
-                for port in (8001, 8003):
-                    try:
-                        async with httpx.AsyncClient(timeout=0.8) as client:
-                            await client.post(f"http://127.0.0.1:{port}/api/agent/reset")
-                    except Exception:
-                        pass
+                target_urls = {
+                    "http://127.0.0.1:8001/api/agent/reset",
+                    "http://127.0.0.1:8003/api/agent/reset",
+                    "http://127.0.0.1:8005/api/agent/reset",
+                }
+                try:
+                    from actors.a2a.client import get_peer_registry
+                    for base_url in get_peer_registry().values():
+                        if base_url:
+                            target_urls.add(f"{base_url.rstrip('/')}/api/agent/reset")
+                except Exception:
+                    pass
+                async with httpx.AsyncClient(timeout=0.8) as client:
+                    for url in sorted(target_urls):
+                        try:
+                            await client.post(url)
+                        except Exception:
+                            pass
             asyncio.create_task(_notify_agents_reset())
 
             # Reset entity manager

@@ -1,7 +1,7 @@
 import logging
 import math
 import random
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set, Tuple
 import httpx
 from actors.cat.api import act as cat_agent_act, Observation as CatObservation
 from actors.evil_cat.api import act as evil_cat_agent_act
@@ -47,6 +47,9 @@ class Scheduler:
         self.tick_budget_sec: Optional[float] = None
         # Pending reposition requests scheduled to apply on the next tick
         self.pending_repositions: Dict[str, Tuple[int, int]] = {}
+        self.known_agent_ids: Set[str] = set()
+        self.game_over: bool = False
+        self.winner_id: Optional[str] = None
 
 
     def get_scoreboard(self) -> Dict[str, int]:
@@ -305,7 +308,12 @@ class Scheduler:
                 if victim_score == 0 and self.stats is not None:
                     victim_stat = self.stats.cats.get(victim.id)
                     if victim_stat:
-                        victim_score = victim_stat.kills + victim_stat.absorbed_kills
+                        v_stat_score = (
+                            victim_stat.absorbed_kills
+                            if (victim.id in ("cat-3", "evil-cat") and victim_stat.absorbed_kills > 0)
+                            else (victim_stat.kills + victim_stat.absorbed_kills)
+                        )
+                        victim_score = max(victim_score, v_stat_score)
                 if is_evil:
                     # Evil cat receives twice as many points as the victim consumed
                     absorbed_score = 2 * victim_score
@@ -544,13 +552,16 @@ class Scheduler:
         random.shuffle(cats)
         random.shuffle(mice)
 
-        # 1. Cats turn
+        # 1. Cats turn — Phase 1a: Cooldowns & simultaneous action collection for all cats alive at tick start
+        planned_cat_actions: List[Tuple[Entity, ActionType]] = []
         for cat in cats:
-            if not cat.alive or cat.id == skip_entity_id:
+            if cat.id == skip_entity_id:
                 continue
 
             mode = self.entity_manager.get_agent_mode(cat.id)
             has_ws = ws_agent_manager.has_agent(cat.id)
+            if has_ws or mode in ("ws", "http"):
+                self.known_agent_ids.add(cat.id)
 
             # OSRS action lock: if cat is recovering/animating previous action, decrement and skip turn
             if cat.action_cooldown > 0:
@@ -717,26 +728,41 @@ class Scheduler:
                     ))
 
             if action_val in [a.value for a in ActionType]:
-                res = self.action_handler.apply_action(cat, ActionType(action_val), self.tick)
-                if res.action == ActionType.ATTACK and res.accepted:
-                    slash_details = res.details or {}
-                    self.events.append(GameEvent(
-                        tick=self.tick,
-                        round=self.round,
-                        event_type="slash",
-                        actor_id=cat.id,
-                        position=cat.position,
-                        message=f"⚔️ [TICK {self.tick} | R{self.round}] SLASH: {cat.id} executed slash attack ({len(res.affected_entities)} hits)",
-                        details=slash_details,
-                    ))
-                    slash_dmg = slash_details.get("damage", 34)
-                    for victim_id in res.affected_entities:
-                        victim = self.entity_manager.entities.get(victim_id)
-                        if victim:
-                            if not victim.alive:
-                                self._register_capture(cat.id, victim, "slash impact")
-                            else:
-                                self._register_damage(cat.id, victim, "slash impact", damage=slash_dmg)
+                planned_cat_actions.append((cat, ActionType(action_val)))
+
+        # Phase 1b: Simultaneous execution of collected cat actions.
+        # Cats that started the tick alive and chose ATTACK still execute their
+        # simultaneous swing on this tick even if another cat's slash in the same
+        # tick reduced their HP to 0. Capture healing and death registration run
+        # immediately after all same-tick swings have landed so shuffle order
+        # cannot deny a simultaneous counter-slash.
+        pending_slash_outcomes: List[Tuple[str, List[str], int]] = []
+        for cat, action_enum in planned_cat_actions:
+            if not cat.alive and action_enum != ActionType.ATTACK:
+                continue
+            res = self.action_handler.apply_action(cat, action_enum, self.tick)
+            if res.action == ActionType.ATTACK and res.accepted:
+                slash_details = res.details or {}
+                self.events.append(GameEvent(
+                    tick=self.tick,
+                    round=self.round,
+                    event_type="slash",
+                    actor_id=cat.id,
+                    position=cat.position,
+                    message=f"⚔️ [TICK {self.tick} | R{self.round}] SLASH: {cat.id} executed slash attack ({len(res.affected_entities)} hits)",
+                    details=slash_details,
+                ))
+                slash_dmg = slash_details.get("damage", 34)
+                pending_slash_outcomes.append((cat.id, list(res.affected_entities or []), slash_dmg))
+
+        for attacker_id, affected_ids, slash_dmg in pending_slash_outcomes:
+            for victim_id in affected_ids:
+                victim = self.entity_manager.entities.get(victim_id)
+                if victim:
+                    if not victim.alive:
+                        self._register_capture(attacker_id, victim, "slash impact")
+                    else:
+                        self._register_damage(attacker_id, victim, "slash impact", damage=slash_dmg)
 
         # 2. Mice turn
         for mouse in mice:
@@ -849,6 +875,9 @@ class Scheduler:
         # survivable by passing through between phases.
         self._resolve_hazard_zones()
 
+        # 3b. Check if only 1 agent cat remains alive (Game Over / Last Agent Standing)
+        self._check_game_over()
+
         # 4. Dispatch. Every connected agent is handed the finished board and
         # then left alone until the next step collects whatever it managed to
         # produce. Nothing here is awaited on the agent's behalf, so N agents
@@ -857,6 +886,67 @@ class Scheduler:
         await self._dispatch_observations(skip_entity_id=skip_entity_id)
 
         return self.tick
+
+    def _check_game_over(self) -> None:
+        """Marks the match as game_over when only 1 agent cat remains alive after combat eliminations."""
+        if self.game_over:
+            return
+        all_cats = [e for e in self.entity_manager.entities.values() if e.type == EntityType.CAT]
+        if len(all_cats) < 2:
+            return
+
+        # Identify the competing agent cats (cat-1, cat-2, cat-3, or any WS/HTTP connected cat agent)
+        agent_cats = [
+            c for c in all_cats
+            if c.id in self.known_agent_ids
+            or ws_agent_manager.has_agent(c.id)
+            or self.entity_manager.get_agent_mode(c.id) in ("ws", "http")
+            or c.id in ("cat-1", "cat-2", "cat-3")
+        ]
+        if len(agent_cats) < 2:
+            return
+
+        alive_agents = [c for c in agent_cats if c.alive]
+        dead_agents = [c for c in agent_cats if not c.alive]
+        if not dead_agents or len(alive_agents) > 1:
+            return
+
+        self.game_over = True
+        if len(alive_agents) == 1:
+            winner = alive_agents[0]
+            self.winner_id = winner.id
+            win_score = self.scores.get(winner.id, 0)
+            msg = (
+                f"🏆 [TICK {self.tick} | R{self.round}] VICTORY: {winner.id} is the LAST AGENT STANDING "
+                f"and wins the match! (Score: {win_score} | HP: {winner.hp}/{winner.max_hp})"
+            )
+            pos = winner.position
+        else:
+            best_cat = max(agent_cats, key=lambda c: self.scores.get(c.id, 0))
+            self.winner_id = best_cat.id
+            win_score = self.scores.get(best_cat.id, 0)
+            msg = (
+                f"🏆 [TICK {self.tick} | R{self.round}] MATCH OVER (MUTUAL KNOCKOUT): "
+                f"All agent cats eliminated! Winner by score: {best_cat.id} (Score: {win_score})"
+            )
+            pos = best_cat.position
+
+        logger.info(msg)
+        print(msg, flush=True)
+        self.events.append(GameEvent(
+            tick=self.tick,
+            round=self.round,
+            event_type="game_over",
+            actor_id=self.winner_id,
+            position=pos,
+            message=msg,
+            details={
+                "winner_id": self.winner_id,
+                "score": win_score,
+                "alive_agents": [a.id for a in alive_agents],
+                "eliminated_agents": [d.id for d in dead_agents],
+            },
+        ))
 
     async def _dispatch_observations(self, skip_entity_id: Optional[str] = None) -> None:
         """Sends each connected agent the observation it will answer next tick.

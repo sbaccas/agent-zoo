@@ -272,6 +272,7 @@ class StatsTracker:
         stats = self.get(cat_id)
         if is_evil:
             if is_cat:
+                stats.kills += 1
                 stats.absorbed_kills += max(0, absorbed_kills)
             # Evil cat receives 0 score/kills from mice; cat kill score is 2x victim consumed score
         else:
@@ -331,6 +332,8 @@ class StatsTracker:
                 + s.decisions_by_agent_reflex
                 + s.decisions_by_fallback
             )
+            is_evil_cat = cat.id in ("cat-3", "evil-cat")
+            cat_score = s.absorbed_kills if is_evil_cat else (s.kills + s.absorbed_kills)
 
             rows.append({
                 "id": cat.id,
@@ -341,7 +344,7 @@ class StatsTracker:
 
                 "kills": s.kills,
                 "absorbed_kills": s.absorbed_kills,
-                "score": s.kills + s.absorbed_kills,
+                "score": cat_score,
                 "kills_per_100_ticks": _rate(s.kills * 100, elapsed),
                 "tiles_per_kill": _rate(s.tiles_run, s.kills),
 

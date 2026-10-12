@@ -86,11 +86,26 @@ class ActionHandler:
         ))
         strike = set(self.world.get_slash_aoe_tiles(entity.position, entity.facing, range_tiles=atk_range))
 
+        alive_entities = self.entity_manager.get_alive_entities()
+        is_evil = entity.id in ("cat-3", "evil-cat")
+        mice_alive = any(e.type == EntityType.MOUSE for e in alive_entities)
+        target_cats = is_evil or not mice_alive
+
         prey_visible = False
         in_strike_zone = False
-        for other in self.entity_manager.get_alive_entities():
-            if other.type != EntityType.MOUSE:
+        for other in alive_entities:
+            if other.id == entity.id:
                 continue
+            if is_evil:
+                if other.type != EntityType.CAT:
+                    continue
+            else:
+                if other.type == EntityType.MOUSE:
+                    pass
+                elif target_cats and other.type == EntityType.CAT:
+                    pass
+                else:
+                    continue
             tile = (other.position.x, other.position.y)
             if tile in fov:
                 prey_visible = True

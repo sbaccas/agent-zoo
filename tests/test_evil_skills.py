@@ -257,3 +257,158 @@ def test_build_eval_prompt_for_evil_cat_uses_evil_coach_skills():
     assert "CONTEXT FROM YOUR PAST SELF" in prompt
 
 
+def test_evil_cat_boxscore_kills_and_prey_scanning():
+    """Fix #1: cat-3 cat eliminations count as kills in boxscore while score stays 2x victim, and _scan_prey scans rival cats."""
+    from app.game.simulation import Simulation
+    from app.models.entity import Direction, EntityType, Position
+    from app.models.simulation import SimulationConfig
+
+    sim = Simulation(config=SimulationConfig(populations={"cats": 0, "mice": 0}))
+    cat1 = sim.entity_manager.spawn_entity(EntityType.CAT, pos=Position(x=3, y=2), facing=Direction.WEST)
+    cat2 = sim.entity_manager.spawn_entity(EntityType.CAT, pos=Position(x=8, y=8), facing=Direction.WEST)
+    cat3 = sim.entity_manager.spawn_entity(EntityType.CAT, pos=Position(x=2, y=2), facing=Direction.EAST)
+    sim.entity_manager.spawn_entity(EntityType.MOUSE, pos=Position(x=9, y=9), facing=Direction.WEST)
+
+    # _scan_prey for cat-3 facing EAST at (2, 2) should detect rival cat-1 at (3, 2) in FOV and strike zone
+    in_sight, in_zone = sim.action_handler._scan_prey(cat3)
+    assert in_sight is True
+    assert in_zone is True
+
+    # Suppose cat-1 has 10 points and cat-3 eliminates cat-1
+    sim.scheduler.scores[cat1.id] = 10
+    cat1.hp = 0
+    cat1.alive = False
+    sim.scheduler._register_capture(cat3.id, cat1, "slash impact")
+
+    bs = sim.get_boxscore()
+    row3 = next(c for c in bs["cats"] if c["id"] == "cat-3")
+    assert row3["kills"] == 1
+    assert row3["absorbed_kills"] == 20
+    assert row3["score"] == 20
+
+
+def test_coach_scoreboard_filters_eliminated_cats():
+    """Fix #2: Eliminated cats are filtered out of active Scoreboard & Bounties and listed as DEAD."""
+    from actors.evil_cat.eval import build_coach_eval_prompt
+    from actors.cat.subagents.eval import build_eval_prompt
+
+    records = [
+        {
+            "tick": 1500,
+            "self_pos": [5, 5],
+            "action": {"direction": "STAY"},
+            "observation": {
+                "cat_scores": {"cat-1": 0, "cat-2": 58, "cat-3": 14, "cat-18": 0},
+                "eliminated_cats": ["cat-1", "cat-18"],
+                "cats": [{"id": "cat-2", "position": [6, 6]}],
+            },
+        }
+    ]
+    evil_prompt = build_coach_eval_prompt(records=records, agent_id="cat-3")
+    assert "Eliminated / Dead Cats [DO NOT TARGET OR MESSAGE — ALREADY DEAD]" in evil_prompt
+    active_part, elim_part = evil_prompt.split("Eliminated / Dead Cats")
+    assert "cat-1" in elim_part
+    assert "cat-18" in elim_part
+    # Active scoreboard section should only have cat-2 and cat-3
+    sb_section = active_part.split("Scoreboard & Bounties")[1]
+    assert '"cat-1"' not in sb_section
+    assert '"cat-18"' not in sb_section
+    assert '"cat-2"' in sb_section
+
+    cat_prompt = build_eval_prompt(records=records, previous="• Hunt", agent_id="cat-2")
+    assert "Eliminated / Dead Cats [DO NOT TARGET OR MESSAGE — ALREADY DEAD]" in cat_prompt
+    cat_sb_line = next(line for line in cat_prompt.splitlines() if "Active Alive Cats:" in line)
+    assert '"cat-1"' not in cat_sb_line
+    assert '"cat-18"' not in cat_sb_line
+
+
+@pytest.mark.asyncio
+async def test_answering_machine_auto_reply_when_messaging_dead_cat(tmp_path, monkeypatch):
+    """Fix #3: Messaging an eliminated cat triggers an Answering Machine AUTO_REPLY in the sender's inbox."""
+    from actors.a2a import store as a2a_store
+    from actors.evil_cat import eval as evil_eval
+    from actors.evil_cat import store as evil_store
+
+    monkeypatch.setattr(a2a_store, "get_agent_runtime_dir", lambda agent_id=None: tmp_path / "a2a" / a2a_store.normalize_agent_id(agent_id))
+    a2a_store._INBOX_CACHE.clear()
+    a2a_store._OUTBOX_CACHE.clear()
+
+    # Seed transcript with cat-1 in eliminated_cats
+    monkeypatch.setattr(
+        evil_store,
+        "read_transcript_records",
+        lambda agent_id=None: [
+            {
+                "tick": 1445,
+                "self_pos": [4, 4],
+                "action": {"direction": "STAY"},
+                "observation": {
+                    "cat_scores": {"cat-1": 0, "cat-2": 58, "cat-3": 14},
+                    "eliminated_cats": ["cat-1"],
+                },
+            }
+        ],
+    )
+
+    res = await evil_eval.a2a_send_coach_message(
+        recipient="cat-1",
+        message="Hey cat-1, let's team up on cat-2!",
+        message_type="PROPOSAL",
+        cat_id="cat-3",
+    )
+    assert res["status"] == "undeliverable"
+    assert "AUTOMATIC ANSWERING MACHINE" in res["answering_machine"]
+    assert "ELIMINATED" in res["answering_machine"]
+
+    inbox_res = await evil_eval.a2a_read_coach_messages(cat_id="cat-3")
+    assert inbox_res["count"] >= 1
+    latest = inbox_res["messages"][-1]
+    assert "ANSWERING MACHINE" in latest["sender"]
+    assert latest["type"] == "AUTO_REPLY"
+    assert "cat-1 has been ELIMINATED" in latest["content"]
+
+
+def test_eval_reset_epoch_increments():
+    """Fix #4: bump_eval_reset_epoch increments reset epochs on both cat and evil_cat eval modules."""
+    from actors.cat.subagents.eval import bump_eval_reset_epoch as bump_cat, get_eval_reset_epoch as get_cat
+    from actors.evil_cat.eval import bump_eval_reset_epoch as bump_evil, get_eval_reset_epoch as get_evil
+
+    c0 = get_cat()
+    e0 = get_evil()
+    assert bump_cat() == c0 + 1
+    assert bump_evil() == e0 + 1
+
+
+@pytest.mark.asyncio
+async def test_simultaneous_tick_combat_and_auto_game_over():
+    """Fix #5: Simultaneous lethal attacks on the same tick both land, and game auto-ends when <=1 agent cat survives."""
+    from unittest.mock import AsyncMock, patch
+    from app.game.simulation import Simulation
+    from app.models.entity import Direction, EntityType, Position
+    from app.models.simulation import SimulationConfig
+
+    sim = Simulation(config=SimulationConfig(populations={"cats": 0, "mice": 0}))
+    cat1 = sim.entity_manager.spawn_entity(EntityType.CAT, pos=Position(x=3, y=3), facing=Direction.EAST)
+    cat2 = sim.entity_manager.spawn_entity(EntityType.CAT, pos=Position(x=4, y=3), facing=Direction.WEST)
+    cat3 = sim.entity_manager.spawn_entity(EntityType.CAT, pos=Position(x=8, y=8), facing=Direction.WEST)
+
+    # Set both cat-1 and cat-2 to 25 HP (lethal threshold for 1 slash) and cat-3 already eliminated
+    cat1.hp = 25
+    cat2.hp = 25
+    cat3.hp = 0
+    cat3.alive = False
+
+    sim.entity_manager.set_agent_mode(cat1.id, "http", "http://mock.invalid/act")
+    sim.entity_manager.set_agent_mode(cat2.id, "http", "http://mock.invalid/act")
+
+    mock_resp = AsyncMock()
+    mock_resp.status_code = 200
+    mock_resp.json = lambda: {"action": "attack", "thought": "simultaneous strike"}
+    with patch("httpx.AsyncClient.post", new=AsyncMock(return_value=mock_resp)):
+        await sim.step()
+
+    # Both cats were alive at the start of the tick and swung simultaneously — neither should get tick-order immunity!
+    assert cat1.alive is False
+    assert cat2.alive is False
+    assert sim.scheduler.game_over is True
+

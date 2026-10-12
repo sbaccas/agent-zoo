@@ -49,15 +49,16 @@ _OUTBOX_CACHE: Dict[str, List[Dict[str, Any]]] = {}
 
 def append_inbox(agent_id: str, message: A2AMessage) -> None:
     """Appends an incoming A2A message to the agent's inbox."""
+    norm = normalize_agent_id(agent_id)
     payload = message.model_dump()
-    path = get_inbox_path(agent_id)
+    path = get_inbox_path(norm)
     try:
         with open(path, "a", encoding="utf-8") as f:
             f.write(json.dumps(payload) + "\n")
     except Exception as exc:
         print(f"[A2A Store Error] Failed to write inbox: {exc}", flush=True)
 
-    cache = _INBOX_CACHE.setdefault(agent_id, [])
+    cache = _INBOX_CACHE.setdefault(norm, [])
     cache.append(payload)
     if len(cache) > 100:
         cache.pop(0)
@@ -65,15 +66,16 @@ def append_inbox(agent_id: str, message: A2AMessage) -> None:
 
 def append_outbox(agent_id: str, message: A2AMessage) -> None:
     """Appends an outgoing A2A message to the agent's outbox."""
+    norm = normalize_agent_id(agent_id)
     payload = message.model_dump()
-    path = get_outbox_path(agent_id)
+    path = get_outbox_path(norm)
     try:
         with open(path, "a", encoding="utf-8") as f:
             f.write(json.dumps(payload) + "\n")
     except Exception as exc:
         print(f"[A2A Store Error] Failed to write outbox: {exc}", flush=True)
 
-    cache = _OUTBOX_CACHE.setdefault(agent_id, [])
+    cache = _OUTBOX_CACHE.setdefault(norm, [])
     cache.append(payload)
     if len(cache) > 100:
         cache.pop(0)
@@ -81,10 +83,11 @@ def append_outbox(agent_id: str, message: A2AMessage) -> None:
 
 def get_inbox(agent_id: str, limit: int = 50) -> List[Dict[str, Any]]:
     """Returns the most recent incoming A2A messages for an agent."""
-    if agent_id in _INBOX_CACHE and _INBOX_CACHE[agent_id]:
-        return _INBOX_CACHE[agent_id][-limit:]
+    norm = normalize_agent_id(agent_id)
+    if norm in _INBOX_CACHE and _INBOX_CACHE[norm]:
+        return _INBOX_CACHE[norm][-limit:]
 
-    path = get_inbox_path(agent_id)
+    path = get_inbox_path(norm)
     if not path.exists():
         return []
 
@@ -101,16 +104,17 @@ def get_inbox(agent_id: str, limit: int = 50) -> List[Dict[str, Any]]:
     except Exception:
         return []
 
-    _INBOX_CACHE[agent_id] = messages[-100:]
+    _INBOX_CACHE[norm] = messages[-100:]
     return messages[-limit:]
 
 
 def get_outbox(agent_id: str, limit: int = 50) -> List[Dict[str, Any]]:
     """Returns the most recent outgoing A2A messages dispatched by an agent."""
-    if agent_id in _OUTBOX_CACHE and _OUTBOX_CACHE[agent_id]:
-        return _OUTBOX_CACHE[agent_id][-limit:]
+    norm = normalize_agent_id(agent_id)
+    if norm in _OUTBOX_CACHE and _OUTBOX_CACHE[norm]:
+        return _OUTBOX_CACHE[norm][-limit:]
 
-    path = get_outbox_path(agent_id)
+    path = get_outbox_path(norm)
     if not path.exists():
         return []
 
@@ -127,7 +131,7 @@ def get_outbox(agent_id: str, limit: int = 50) -> List[Dict[str, Any]]:
     except Exception:
         return []
 
-    _OUTBOX_CACHE[agent_id] = messages[-100:]
+    _OUTBOX_CACHE[norm] = messages[-100:]
     return messages[-limit:]
 
 
@@ -171,7 +175,12 @@ def get_coach_inbox(agent_id: str, limit: int = 50) -> List[Dict[str, Any]]:
         s = str(m.get("sender_id", "")).lower()
         r = str(m.get("recipient_id", "")).lower()
         m_type = str(m.get("message_type", "")).upper()
-        if "coach" in s or "coach" in r or r in ("*", "broadcast", "all") or m_type in ("PROPOSAL", "PACT", "COACH_MESSAGE"):
+        if (
+            "coach" in s
+            or "coach" in r
+            or r in ("*", "broadcast", "all")
+            or m_type in ("PROPOSAL", "PACT", "COACH_MESSAGE", "AUTO_REPLY")
+        ):
             coach_msgs.append(m)
     return coach_msgs[-limit:]
 

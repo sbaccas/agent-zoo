@@ -17,6 +17,7 @@ change when it does, because the evaluator never reaches back into the Actor.
 
 import asyncio
 from datetime import datetime, timezone
+import json
 import logging
 import os
 from pathlib import Path
@@ -715,6 +716,29 @@ async def a2a_send_coach_message(
             "impersonating_cat": impersonate_cat,
         }
 
+    if recip not in ("*", "broadcast", "all"):
+        try:
+            recent_records = store.read_transcript_records(agent_id=target_cat)
+            if recent_records:
+                last_obs = recent_records[-1].get("observation", {}) or {}
+                elim_set = {str(c).lower() for c in (last_obs.get("eliminated_cats") or [])}
+                if clean_target in elim_set:
+                    auto_msg = client.inject_dead_peer_answering_machine(
+                        sender_id=sender_id,
+                        dead_cat_id=clean_target,
+                    )
+                    return {
+                        "status": "undeliverable",
+                        "error": auto_msg.content,
+                        "answering_machine": auto_msg.content,
+                        "sender": sender_id,
+                        "recipient": recip,
+                        "message": message,
+                        "impersonating_cat": impersonate_cat,
+                    }
+        except Exception:
+            pass
+
     # OPSEC Guard: Strictly prevent leaking internal General/Commander conversations to peer coaches
     from actors.a2a.models import check_opsec_violation
     opsec_err = check_opsec_violation(message)
@@ -741,7 +765,7 @@ async def a2a_send_coach_message(
             message_type=message_type,
             metadata={"source": "long_term_consciousness", "layer": source_layer, "impersonated": impersonate_cat},
         )
-        return {
+        out: Dict[str, Any] = {
             "status": resp.status,
             "message_id": resp.message_id,
             "sender": sender_id,
@@ -750,6 +774,9 @@ async def a2a_send_coach_message(
             "impersonating_cat": impersonate_cat,
             "error": resp.error,
         }
+        if resp.status == "undeliverable" and resp.error:
+            out["answering_machine"] = resp.error
+        return out
     except Exception as exc:
         return {
             "status": "error",
@@ -772,16 +799,26 @@ async def a2a_read_coach_messages(
     target_cat = _resolve_target_cat(cat_id)
     from actors.a2a import store as a2a_store
     coach_msgs = a2a_store.get_coach_inbox(target_cat, limit=limit or 10)
-    formatted = [
-        {
-            "sender": m.get("sender_id"),
+    elim_set = set()
+    try:
+        recs = store.read_transcript_records(agent_id=target_cat)
+        if recs:
+            elim_set = {str(c).lower() for c in ((recs[-1].get("observation") or {}).get("eliminated_cats") or [])}
+    except Exception:
+        pass
+    formatted = []
+    for m in coach_msgs:
+        sender_raw = str(m.get("sender_id") or "")
+        sender_norm = a2a_store.normalize_agent_id(sender_raw.split("[")[0])
+        is_dead = sender_norm in elim_set and "ANSWERING MACHINE" not in sender_raw.upper()
+        formatted.append({
+            "sender": f"{sender_raw} [ELIMINATED / DEAD]" if is_dead else sender_raw,
+            "sender_alive": not is_dead,
             "recipient": m.get("recipient_id"),
             "type": m.get("message_type"),
             "content": m.get("content"),
             "timestamp": m.get("timestamp"),
-        }
-        for m in coach_msgs
-    ]
+        })
     return {"available": True, "count": len(formatted), "messages": formatted}
 
 
@@ -1281,6 +1318,39 @@ def build_eval_prompt(
             "(Empty)\n\n"
         )
 
+    # Extract live scoreboard and eliminated cats if available in the latest observation
+    scoreboard: Dict[str, Any] = {}
+    eliminated_cats: List[str] = []
+    if records:
+        last_obs = records[-1].get("observation") or {}
+        if isinstance(last_obs, dict):
+            scoreboard = dict(last_obs.get("scoreboard") or last_obs.get("cat_scores") or {})
+            eliminated_cats = list(last_obs.get("eliminated_cats") or [])
+    eliminated_set = {str(c).lower() for c in eliminated_cats}
+    active_scoreboard = {
+        k: v for k, v in scoreboard.items() if str(k).lower() not in eliminated_set
+    }
+    eliminated_scoreboard = {
+        k: v for k, v in scoreboard.items() if str(k).lower() in eliminated_set
+    }
+
+    arena_roster_block = ""
+    if scoreboard or eliminated_cats:
+        elim_line = ""
+        if eliminated_cats:
+            elim_items = ", ".join(
+                f"{cid} (final score before death: {eliminated_scoreboard.get(cid, 0)})"
+                for cid in eliminated_cats
+            )
+            elim_line = (
+                f"Eliminated / Dead Cats [DO NOT TARGET OR MESSAGE — ALREADY DEAD]: {elim_items}\n"
+            )
+        arena_roster_block = (
+            "--- LIVE ARENA SCOREBOARD (ACTIVE vs. ELIMINATED CATS) ---\n"
+            f"Active Alive Cats: {json.dumps(active_scoreboard)}\n"
+            f"{elim_line}\n"
+        )
+
     # No tick indices reach the model -- not on the lines, not in this
     # header. See format_transcript() for why.
     transcript_block = (
@@ -1294,10 +1364,16 @@ def build_eval_prompt(
     if coach_comms:
         comms_lines = []
         for m in coach_comms:
-            sender = m.get("sender_id", "peer_coach")
+            sender = str(m.get("sender_id", "peer_coach"))
+            sender_norm = a2a_store.normalize_agent_id(sender.split("[")[0])
+            dead_tag = (
+                " [SENDER IS NOW DEAD / ELIMINATED — DO NOT REPLY]"
+                if sender_norm in eliminated_set and "ANSWERING MACHINE" not in sender.upper()
+                else ""
+            )
             m_type = m.get("message_type", "MSG")
             content = m.get("content", "")
-            comms_lines.append(f"  • [{m_type} from {sender}]: \"{content}\"")
+            comms_lines.append(f"  • [{m_type} from {sender}{dead_tag}]: \"{content}\"")
         comms_block = (
             "--- A2A STRATEGIC DIPLOMACY (PEER COACH COMMS) ---\n"
             + "\n".join(comms_lines)
@@ -1332,6 +1408,7 @@ def build_eval_prompt(
         f"{coach_identity_block}"
         f"{actor_manual_block}"
         f"{capabilities_block}"
+        f"{arena_roster_block}"
         f"{previous_block}"
         f"{notebook_block}"
         f"{transcript_block}"
@@ -1400,6 +1477,19 @@ def build_eval_prompt(
 
     return prompt
 
+
+_reset_epoch: int = 0
+
+
+def bump_eval_reset_epoch() -> int:
+    """Increments the evaluation reset epoch so in-flight evaluations from a prior game are discarded."""
+    global _reset_epoch
+    _reset_epoch += 1
+    return _reset_epoch
+
+
+def get_eval_reset_epoch() -> int:
+    return _reset_epoch
 
 
 def _is_final_event(event: Any) -> bool:
@@ -1507,6 +1597,7 @@ async def evaluate(
     Returns:
         (notes_markdown, source) where source is 'adk_gemini' or 'offline_fallback'.
     """
+    epoch_at_start = _reset_epoch
     if not records:
         return _summarise_without_model(records), "offline_fallback"
 
@@ -1524,6 +1615,8 @@ async def evaluate(
     session_id = f"session_cat_evaluator_{target_cat}"
 
     async with _eval_lock:
+        if _reset_epoch != epoch_at_start:
+            return "", "cancelled_by_reset"
         # Stamped before the call so a run that times out is still attributed to
         # the budget that caused it. Reading the budget afterwards would credit
         # a timeout to whatever the dial had been moved to in the meantime.
@@ -1532,6 +1625,7 @@ async def evaluate(
         started = time.monotonic()
         thoughts: Optional[int] = None
         timed_out = False
+        cancelled = False
         try:
             # Each evaluation is independent; drop any prior session state.
             try:
@@ -1590,6 +1684,9 @@ async def evaluate(
                 try:
                     while True:
                         event = await agen.__anext__()
+                        if _reset_epoch != epoch_at_start:
+                            cancelled = True
+                            return "", "cancelled_by_reset"
                         if event.error_code or event.error_message:
                             raise RuntimeError(
                                 f"ADK Error: {event.error_code} - {event.error_message}"
@@ -1640,11 +1737,10 @@ async def evaluate(
                 except StopAsyncIteration:
                     pass
 
-            # Prefer the final response. Fall back to everything only if the run
-            # produced no final-response text at all -- publishing a polluted
-            # dossier is bad, publishing nothing is worse, because a blank reply
-            # drops through to `_summarise_without_model` and the positional
-            # filler overwrites the real standing orders.
+            if _reset_epoch != epoch_at_start:
+                cancelled = True
+                return "", "cancelled_by_reset"
+
             notes = "".join(final_chunks).strip()
             if not notes:
                 notes = "".join(all_chunks).strip()
@@ -1667,6 +1763,9 @@ async def evaluate(
                 return notes, out_source
             logger.warning("Evaluator returned empty notes; using offline fallback.")
 
+        except asyncio.CancelledError:
+            cancelled = True
+            raise
         except asyncio.TimeoutError:
             timed_out = True
             logger.warning(
@@ -1680,30 +1779,33 @@ async def evaluate(
             mark_auth_error(err)
             logger.warning("Evaluator execution failure: %s", err)
         finally:
-            dur_ms = int((time.monotonic() - started) * 1000)
-            _last_eval_telemetry.update({
-                "thinking_budget": budget,
-                "thoughts_token_count": thoughts,
-                "latency_ms": dur_ms,
-                "timed_out": timed_out,
-                "tool_calls": tool_calls,
-            })
-            if capture_bundle:
-                out_notes = notes if 'notes' in locals() and notes else (previous_notes.strip() if previous_notes and previous_notes.strip() else "")
-                capture_bundle["latency_ms"] = dur_ms
-                capture_bundle["thinking_budget"] = budget
-                capture_bundle["thoughts_token_count"] = thoughts
-                capture_bundle["timed_out"] = timed_out
-                capture_bundle["tool_calls"] = list(tool_calls)
-                capture_bundle["output"] = out_notes
-                capture_bundle["source"] = (
-                    out_source
-                    if ('notes' in locals() and notes)
-                    else ("retained_previous" if out_notes else "offline_fallback")
-                )
-                capture_bundle["recorded_at"] = datetime.now(timezone.utc).isoformat()
-                store.append_coach_prompt(capture_bundle, agent_id=target_cat)
+            if not cancelled and _reset_epoch == epoch_at_start:
+                dur_ms = int((time.monotonic() - started) * 1000)
+                _last_eval_telemetry.update({
+                    "thinking_budget": budget,
+                    "thoughts_token_count": thoughts,
+                    "latency_ms": dur_ms,
+                    "timed_out": timed_out,
+                    "tool_calls": tool_calls,
+                })
+                if capture_bundle:
+                    out_notes = notes if 'notes' in locals() and notes else (previous_notes.strip() if previous_notes and previous_notes.strip() else "")
+                    capture_bundle["latency_ms"] = dur_ms
+                    capture_bundle["thinking_budget"] = budget
+                    capture_bundle["thoughts_token_count"] = thoughts
+                    capture_bundle["timed_out"] = timed_out
+                    capture_bundle["tool_calls"] = list(tool_calls)
+                    capture_bundle["output"] = out_notes
+                    capture_bundle["source"] = (
+                        out_source
+                        if ('notes' in locals() and notes)
+                        else ("retained_previous" if out_notes else "offline_fallback")
+                    )
+                    capture_bundle["recorded_at"] = datetime.now(timezone.utc).isoformat()
+                    store.append_coach_prompt(capture_bundle, agent_id=target_cat)
 
+    if _reset_epoch != epoch_at_start:
+        return "", "cancelled_by_reset"
     if previous_notes and previous_notes.strip():
         return previous_notes.strip(), "retained_previous"
     return _summarise_without_model(records), "offline_fallback"
@@ -1715,10 +1817,21 @@ async def evaluate_and_publish(agent_id: Optional[str] = None) -> Dict[str, Any]
     This is the entry point the API server dispatches to every N ticks. It owns the
     full read-evaluate-write cycle so the caller only has to fire and forget.
     """
+    epoch_at_start = _reset_epoch
     target_id = _resolve_target_cat(agent_id)
     records = store.read_transcript_records(agent_id=target_id)
     previous_notes = store.read_coaching_notes(agent_id=target_id).strip()
     notes, source = await evaluate(records, agent_id=target_id)
+    if _reset_epoch != epoch_at_start or source == "cancelled_by_reset":
+        logger.info("Discarding stale evaluation for %s after game reset.", target_id)
+        return {
+            "agent_id": target_id,
+            "ticks_evaluated": 0,
+            "tick_range": None,
+            "source": "cancelled_by_reset",
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "notes": "",
+        }
     if not (notes or "").strip() and previous_notes:
         notes = previous_notes
         source = "retained_previous"
@@ -1726,7 +1839,7 @@ async def evaluate_and_publish(agent_id: Optional[str] = None) -> Dict[str, Any]
     tick_range = None
     if records:
         tick_range = f"{records[0].get('tick')}-{records[-1].get('tick')}"
-    if (notes or "").strip():
+    if (notes or "").strip() and _reset_epoch == epoch_at_start:
         store.write_coaching_notes(notes, tick_range=tick_range, agent_id=target_id)
 
     result = {

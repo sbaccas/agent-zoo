@@ -172,7 +172,17 @@ async def send_a2a_message(
             resp = await client.post(endpoint_url, json=msg.model_dump())
             if resp.status_code == 200:
                 data = resp.json()
-                return A2AResponse.model_validate(data)
+                parsed = A2AResponse.model_validate(data)
+                if parsed.status == "undeliverable":
+                    clean_dead = store.normalize_agent_id(recipient_id)
+                    auto_msg = inject_dead_peer_answering_machine(
+                        sender_id=sender_id,
+                        dead_cat_id=clean_dead,
+                        reason=parsed.error,
+                    )
+                    if not parsed.error:
+                        parsed.error = auto_msg.content
+                return parsed
             else:
                 err = f"Peer returned HTTP {resp.status_code}: {resp.text}"
                 return A2AResponse(
@@ -191,6 +201,29 @@ async def send_a2a_message(
             recipient_id=recipient_id,
             error=err,
         )
+
+
+def inject_dead_peer_answering_machine(
+    sender_id: str,
+    dead_cat_id: str,
+    reason: Optional[str] = None,
+) -> A2AMessage:
+    """Injects an automatic Answering Machine reply into the sender's A2A inbox when messaging a dead cat."""
+    clean_dead = store.normalize_agent_id(dead_cat_id)
+    sender_norm = store.normalize_agent_id(sender_id)
+    auto_content = (
+        f"[AUTOMATIC ANSWERING MACHINE]: {clean_dead} has been ELIMINATED from the arena and is DEAD. "
+        f"They cannot receive messages or respond to any further transmissions. Do NOT message or target {clean_dead}."
+    )
+    auto_msg = A2AMessage(
+        sender_id=f"coach({clean_dead}) [ANSWERING MACHINE]",
+        recipient_id=f"coach({sender_norm})",
+        message_type="AUTO_REPLY",
+        content=auto_content,
+        metadata={"auto_reply": True, "dead_agent": clean_dead, "reason": reason or "eliminated"},
+    )
+    store.append_inbox(sender_norm, auto_msg)
+    return auto_msg
 
 
 async def _report_transmission_to_engine(game_server_url: str, msg: A2AMessage) -> None:

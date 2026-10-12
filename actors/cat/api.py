@@ -98,6 +98,7 @@ from actors.cat.subagents.eval import (
     EVAL_TIMEOUT_MIN_SEC,
     GENERAL_RADIO_SKILLS_PATH,
     GENERAL_RADIO_TIMEOUT_SECONDS,
+    bump_eval_reset_epoch,
     clear_coach_directive,
     coerce_eval_thinking_budget,
     coerce_eval_timeout,
@@ -196,6 +197,7 @@ class AgentWorkbenchState:
         self.last_eval_dispatch_tick: int = 0
         self.eval_pending: bool = False
         self.eval_worker_task: Optional[asyncio.Task] = None
+        self.current_eval_task: Optional[asyncio.Task] = None
         self.is_evaluating: bool = False
         self.last_eval_result: Optional[Dict[str, Any]] = None
 
@@ -364,11 +366,15 @@ async def _run_evaluation_cycle():
     try:
         state.is_evaluating = True
         result = await evaluate_and_publish(agent_id=state.agent_id)
-        state.last_eval_result = result
+        if result and result.get("source") != "cancelled_by_reset":
+            state.last_eval_result = result
+    except asyncio.CancelledError:
+        logger.info("In-flight evaluation cancelled.")
     except Exception as exc:
         logger.warning("Evaluation cycle failed: %s", exc)
     finally:
         state.is_evaluating = False
+        state.current_eval_task = None
 
 
 async def _evaluation_worker():
@@ -386,7 +392,11 @@ async def _evaluation_worker():
             await asyncio.sleep(EVAL_WORKER_POLL_SECONDS)
             if state.eval_pending and not state.is_evaluating:
                 state.eval_pending = False
-                await _run_evaluation_cycle()
+                state.current_eval_task = asyncio.create_task(_run_evaluation_cycle())
+                try:
+                    await state.current_eval_task
+                except asyncio.CancelledError:
+                    pass
         except asyncio.CancelledError:
             logger.info("Evaluation worker stopped.")
             raise
@@ -431,6 +441,16 @@ def reset_reflexion_state(current_tick: Optional[int] = None) -> None:
     standing orders or coach notes, and the evaluator must never read a transcript
     that spans two unrelated games.
     """
+    bump_eval_reset_epoch()
+    if state.current_eval_task and not state.current_eval_task.done():
+        state.current_eval_task.cancel()
+    state.current_eval_task = None
+    state.is_evaluating = False
+    if state.deliberation_task and not state.deliberation_task.done():
+        state.deliberation_task.cancel()
+    state.deliberation_task = None
+    state.is_deliberating = False
+
     store.reset_transcript("all")
     store.reset_coaching_notes("all")
     store.reset_coach_memories("all")
@@ -466,6 +486,10 @@ async def act_async(obs: Observation, decoupled: bool = False) -> ActionResponse
         state.is_deliberating = False
         if state.deliberation_task and not state.deliberation_task.done():
             state.deliberation_task.cancel()
+        if state.current_eval_task and not state.current_eval_task.done():
+            state.current_eval_task.cancel()
+        state.eval_pending = False
+        state.is_evaluating = False
         state.active_directive = {
             "strategy": "ELIMINATED",
             "target_mouse_id": "",
@@ -1721,6 +1745,7 @@ async def reset_agent_endpoint() -> Dict[str, str]:
     state.last_server_tick = None
     if state.deliberation_task and not state.deliberation_task.done():
         state.deliberation_task.cancel()
+    state.deliberation_task = None
     state.is_deliberating = False
     state.deliberation_started_at = None
     state.latest_deliberated_decision = None
