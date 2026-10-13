@@ -31,7 +31,7 @@ from actors.evil_cat.vision import (
     render_viewport_data_uri,
     render_viewport_png,
 )
-from actors.models import CatTacticalDecision, Observation
+from actors.models import CatTacticalDecision, Observation, StandingDirective
 
 logger = logging.getLogger("evil_cat_actor")
 
@@ -133,12 +133,11 @@ def summarize_agent(agent: LlmAgent) -> Dict[str, Any]:
 
 def get_skills_instruction(agent_id: Optional[str] = None) -> str:
     path = resolve_skills_path(agent_id)
-    try:
-        if path.exists():
-            return path.read_text(encoding="utf-8")
-    except Exception as exc:
-        logger.warning("Could not read skills manual from %s: %s", path, exc)
-    return "You are Evil Cat (cat-3), an apex cat-hunter. Catching mice gives 0 points but heals 50% HP. Eliminating rival cats awards 2x their score bounty. Obey your Coach's standing directive."
+    if not path.exists():
+        raise FileNotFoundError(
+            f"Evil Cat skills manual missing at {path}."
+        )
+    return path.read_text(encoding="utf-8")
 
 
 def _actor_instruction_provider(_ctx: ReadonlyContext) -> str:
@@ -403,23 +402,9 @@ adk_agent = LlmAgent(
         )
     ),
 )
-adk_interrogator_agent = LlmAgent(
-    name="evil_cat_interrogator",
-    model=ACTOR_MODEL,
-    instruction="You are Evil Cat (cat-3), a ruthless 150 HP apex cat-hunter. Answer your Commander concisely in character.",
-    tools=[],
-    generate_content_config=types.GenerateContentConfig(
-        thinking_config=types.ThinkingConfig(thinking_budget=0)
-    ),
-)
 session_service = InMemorySessionService()
 adk_runner = Runner(
     agent=adk_agent,
-    app_name="evil_cat_agent_app",
-    session_service=session_service,
-)
-adk_interrogator_runner = Runner(
-    agent=adk_interrogator_agent,
     app_name="evil_cat_agent_app",
     session_service=session_service,
 )
@@ -500,21 +485,18 @@ def build_decision_prompt(
     if history_lines:
         history_context = "--- RECENT TACTICAL HISTORY ---\n" + "\n".join(history_lines) + "\n\n"
 
-    # Evaluator notes / Coach Standing Directive (PRIMARY OBJECTIVE)
-    coaching_notes = store.read_coaching_notes(agent_id=agent_id)
-    coaching_context = ""
-    if coaching_notes and coaching_notes.strip():
-        coaching_context = (
-            f"--- EVALUATOR NOTES (PRIMARY OBJECTIVE: STANDING DIRECTIVE) ---\n"
-            f"{coaching_notes.strip()}\n\n"
-        )
+    # Evaluator notes / Coach Standing Directive (validated via StandingDirective model)
+    standing_directive = store.read_standing_directive(agent_id=agent_id)
+    if standing_directive is not None:
+        directive_body = standing_directive.to_block()
     else:
-        coaching_context = (
-            f"--- EVALUATOR NOTES (PRIMARY OBJECTIVE: STANDING DIRECTIVE) ---\n"
-            f"MODE: STALK\n"
-            f"TRIGGER: rival cat in strike zone -> attack immediately\n"
-            f"BEHAVIOR: Search the arena for highest bounty rival cat. Close distance and eliminate.\n\n"
-        )
+        coaching_notes = store.read_coaching_notes(agent_id=agent_id)
+        directive_body = coaching_notes.strip() if (coaching_notes and coaching_notes.strip()) else "(None)"
+
+    coaching_context = (
+        f"--- EVALUATOR NOTES (PRIMARY OBJECTIVE: STANDING DIRECTIVE) ---\n"
+        f"{directive_body}\n\n"
+    )
 
     # Notice board
     notice_board = store.read_notice_board()
@@ -750,79 +732,4 @@ async def query_adk_gemini(
         return None, "heuristic_fallback", err
 
     return None, "heuristic_fallback", "Gemini returned empty decision"
-
-
-async def interrogate_adk_gemini(
-    user_prompt: str,
-    obs: Optional[Observation] = None,
-    history: Optional[List[Dict[str, Any]]] = None,
-    agent_id: str = "cat-3",
-    history_window_size: int = 5,
-    active_directive: Optional[Dict[str, Any]] = None,
-) -> Tuple[str, str, Optional[str]]:
-    """Answers a Commander radio interrogation in character as Evil Cat."""
-    clean = (user_prompt or "").strip()
-    if not clean:
-        return ("Commander, I received an empty transmission.", "heuristic_fallback", None)
-
-    if "PYTEST_CURRENT_TEST" in os.environ and not os.environ.get("ENABLE_LIVE_LLM_TESTS"):
-        return (
-            f"Commander, Evil Cat ({agent_id}) reporting in offline mode. Hunting high-value rival cats.",
-            "heuristic_fallback",
-            None,
-        )
-
-    if not has_gemini_credentials():
-        return (
-            f"Commander, Evil Cat ({agent_id}) is on System-1 reflex (no Gemini credentials). Hunting rival cats.",
-            "heuristic_fallback",
-            None,
-        )
-
-    user_id = f"evil_interrogator_{agent_id}"
-    session_id = f"session_evil_interrogator_{agent_id}"
-    try:
-        try:
-            await session_service.delete_session(
-                app_name="evil_cat_agent_app", user_id=user_id, session_id=session_id
-            )
-        except Exception:
-            pass
-        await session_service.create_session(
-            app_name="evil_cat_agent_app", user_id=user_id, session_id=session_id
-        )
-
-        pos = obs.self.get("position", {}) if obs else {}
-        hp = obs.self.get("hp", 150) if obs else 150
-        prompt = (
-            f"Identity: {agent_id} (Evil Cat | {hp}/150 HP | Pos {pos})\n"
-            f"Active Directive: {active_directive or '(None)'}\n"
-            f"Commander Question: \"{clean}\"\n"
-            "Reply concisely in character."
-        )
-        msg = types.Content(role="user", parts=[types.Part.from_text(text=prompt)])
-        chunks: List[str] = []
-        async with asyncio.timeout(10.0):
-            agen = adk_interrogator_runner.run_async(
-                user_id=user_id, session_id=session_id, new_message=msg
-            )
-            try:
-                while True:
-                    ev = await agen.__anext__()
-                    if ev.content and ev.content.parts:
-                        for p in ev.content.parts:
-                            if p.text and not getattr(p, "thought", False):
-                                chunks.append(p.text)
-            except StopAsyncIteration:
-                pass
-        reply = "".join(chunks).strip()
-        if reply:
-            return reply, "adk_gemini", None
-        return ("Commander, standing by to eliminate rival cats.", "adk_gemini", None)
-    except Exception as exc:
-        return (
-            f"Commander, radio interference ({exc}). Continuing hunt on System-1 reflex.",
-            "heuristic_fallback",
-            str(exc),
-        )
 

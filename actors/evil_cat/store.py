@@ -12,8 +12,10 @@ import os
 from pathlib import Path
 import tempfile
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 import uuid
+
+from actors.models import StandingDirective
 
 logger = logging.getLogger("evil_cat_store")
 
@@ -426,7 +428,12 @@ def write_run_config(config: Dict[str, Any], agent_id: Optional[str] = None) -> 
         logger.warning("Failed to write run config: %s", exc)
 
 
-def write_coaching_notes(notes: str, tick_range: Optional[str] = None, agent_id: Optional[str] = None) -> None:
+def write_coaching_notes(
+    notes: Union[str, StandingDirective, Dict[str, Any]],
+    tick_range: Optional[str] = None,
+    agent_id: Optional[str] = None,
+) -> StandingDirective:
+    directive = StandingDirective.model_validate(notes)
     try:
         target_path = get_cat_paths(agent_id or "cat-3")["coaching_notes"]
         _ensure_runtime_dir(target_path.parent)
@@ -435,10 +442,11 @@ def write_coaching_notes(notes: str, tick_range: Optional[str] = None, agent_id:
         if tick_range:
             header += f" | ticks {tick_range}"
         header += " -->\n"
-        full_content = header + notes.strip() + "\n"
+        full_content = header + directive.to_block() + "\n"
         target_path.write_text(full_content, encoding="utf-8")
     except Exception as exc:
         logger.warning("Failed to write coaching notes: %s", exc)
+    return directive
 
 
 def read_coaching_notes(agent_id: Optional[str] = None) -> str:
@@ -451,7 +459,23 @@ def read_coaching_notes(agent_id: Optional[str] = None) -> str:
         logger.warning("Failed to read coaching notes: %s", exc)
         return ""
     lines = [ln for ln in text.splitlines() if not ln.startswith("<!--")]
-    return "\n".join(lines).strip()
+    raw = "\n".join(lines).strip()
+    if not raw:
+        return ""
+    try:
+        return StandingDirective.from_text(raw).to_block()
+    except Exception:
+        return raw
+
+
+def read_standing_directive(agent_id: Optional[str] = None) -> Optional[StandingDirective]:
+    raw = read_coaching_notes(agent_id=agent_id)
+    if not raw:
+        return None
+    try:
+        return StandingDirective.from_text(raw)
+    except Exception:
+        return None
 
 
 def reset_coaching_notes(agent_id: Optional[str] = None) -> None:

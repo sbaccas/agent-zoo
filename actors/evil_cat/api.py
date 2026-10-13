@@ -61,7 +61,6 @@ from actors.evil_cat.actor import (
     THINKING_BUDGET_OFF,
     THINKING_CAN_BE_DISABLED,
     adk_agent,
-    adk_interrogator_agent,
     adk_runner,
     affordable_thinking_tokens,
     check_gemini_auth_health,
@@ -73,7 +72,6 @@ from actors.evil_cat.actor import (
     get_skills_instruction,
     get_thinking_budget,
     has_gemini_credentials,
-    interrogate_adk_gemini,
     is_auth_error,
     is_gemini_authenticated,
     mark_auth_error,
@@ -1058,7 +1056,6 @@ def publish_run_config() -> None:
         {
             "agents": [
                 summarize_agent(adk_agent),
-                summarize_agent(adk_interrogator_agent),
                 summarize_agent(eval_agent),
             ],
             "prompt_assembly": {
@@ -1468,6 +1465,7 @@ def eval_thinking_status() -> Dict[str, Any]:
 
 def evaluator_status() -> Dict[str, Any]:
     interval = max(1, state.eval_interval)
+    directive = store.read_standing_directive(state.agent_id)
     return {
         "enabled": state.eval_enabled,
         "interval": interval,
@@ -1476,6 +1474,7 @@ def evaluator_status() -> Dict[str, Any]:
         "next_dispatch_tick": state.last_eval_dispatch_tick + interval,
         "transcript_ticks": store.transcript_tick_count(state.agent_id),
         "coaching_notes": store.read_coaching_notes(state.agent_id),
+        "standing_directive": directive.model_dump() if directive else None,
         "last_result": state.last_eval_result,
         "thinking": eval_thinking_status(),
     }
@@ -1696,14 +1695,9 @@ async def interrogate_agent(req: InterrogateRequest) -> InterrogateResponse:
         except Exception:
             obs = None
 
-    reply, engine, err = await interrogate_adk_gemini(
-        user_prompt=clean_prompt,
-        obs=obs,
-        history=state.history,
-        agent_id=state.agent_id,
-        history_window_size=state.history_window_size,
-        active_directive=state.commander_directive or state.active_directive,
-    )
+    reply = f"[{state.agent_id}] Actor radio disabled (silent execution unit; speak to Evil Coach)."
+    engine = "disabled"
+    err = None
 
     self_info = obs.self if obs else {}
     is_dead = (self_info.get("alive") is False) or (self_info.get("hp", 150) <= 0)

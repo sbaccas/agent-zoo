@@ -1388,21 +1388,10 @@ def build_eval_prompt(
         )
 
     capabilities_block = format_capabilities(records)
-    if target_cat in ("cat-3", "evil-cat"):
-        eval_execution_block = (
-            "--- EVALUATION ---\n"
-            f"Execute your evaluation per {eval_skills_name}.\n"
-            "Output EXACTLY ONE active standing directive for your subordinate actor in the required format:\n"
-            "MODE: <MODE_NAME>\n"
-            "TRIGGER: <CLEAR_CONDITIONAL_TRIGGER>\n"
-            "BEHAVIOR: <CONCISE_ACTION_AND_WAYPOINT_INSTRUCTION>\n"
-            "Do NOT output multiple bullet points, a multi-directive dossier, or commentary. Output ONLY the single MODE/TRIGGER/BEHAVIOR block."
-        )
-    else:
-        eval_execution_block = (
-            "--- EVALUATION ---\n"
-            f"Execute your evaluation per {eval_skills_name}. Return updated standing directives for the Cat Actor. Do not refer to tick numbers in the directives."
-        )
+    eval_execution_block = (
+        "--- EVALUATION ---\n"
+        f"Execute your evaluation per {eval_skills_name}. Return updated standing directives for the Cat Actor. Do not refer to tick numbers in the directives."
+    )
 
     prompt = (
         f"{coach_identity_block}"
@@ -1555,9 +1544,13 @@ def _strip_to_directives(text: str) -> str:
         return text
 
     # If the response contains the Single Standing Directive (MODE / TRIGGER / BEHAVIOR) format,
-    # strip any preceding narration and return the directive block directly.
+    # validate and canonicalize it via StandingDirective.
     if "MODE:" in text:
-        return text[text.index("MODE:"):].strip()
+        try:
+            from actors.models import StandingDirective
+            return StandingDirective.from_text(text).to_block()
+        except Exception:
+            return text[text.index("MODE:"):].strip()
 
     lines = text.splitlines()
     # Index of the last line that is unambiguously prose: non-blank, flush left,

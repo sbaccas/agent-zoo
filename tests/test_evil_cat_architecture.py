@@ -64,7 +64,7 @@ def test_evil_actor_prompt_focuses_on_standing_directive():
 
 
 def test_evil_coach_has_a2a_tools_and_emits_standing_order_pattern():
-    """Evil Coach must retain A2A tools for deep scheming and social warfare."""
+    """Evil Coach must retain A2A tools for deep scheming and keep instructions strictly in Markdown."""
     tool_names = [getattr(t, "__name__", str(t)) for t in eval_agent.tools]
     assert "a2a_broadcast" in tool_names or any("broadcast" in n for n in tool_names)
     assert "a2a_send_coach_message" in tool_names or any("coach_message" in n for n in tool_names)
@@ -75,11 +75,13 @@ def test_evil_coach_has_a2a_tools_and_emits_standing_order_pattern():
     assert "TRIGGER:" in instructions
     assert "BEHAVIOR:" in instructions
 
-    # Test prompt formatting
+    # Prompt builder emits data only (no raw YOUR MISSION instruction block in Python)
     records = [{"tick": 1, "observation": {"self": {"hp": 150}, "scoreboard": {"cat-1": 8}}}]
     coach_prompt = build_coach_eval_prompt(records, agent_id="cat-3")
     assert "Scoreboard & Bounties (2x value when you kill them)" in coach_prompt
-    assert "MODE:" in coach_prompt
+    assert "--- YOUR SUBORDINATE'S MANUAL (skills.md) ---" in coach_prompt
+    assert "YOUR MISSION:" not in coach_prompt
+    assert "MODE: <MODE_NAME>" not in coach_prompt
 
 
 def test_evil_cat_heuristic_and_reflex_never_chase_mice_by_default():
@@ -518,5 +520,57 @@ def test_evil_cat_observation_payload_matches_standard_cat_capabilities():
     assert "• attack_cooldown: 3 tick(s)" in prompt
     assert "• lunge_cooldown: 2 tick(s)" in prompt
     assert "• attack_range: 4 tiles deep, strike zone 3 tiles wide" in prompt
+
+
+def test_standing_directive_pydantic_enforcement_and_markdown_partition(monkeypatch, tmp_path):
+    """Verify StandingDirective Pydantic model strictly enforces MODE / TRIGGER / BEHAVIOR and manuals live in Markdown."""
+    from pydantic import ValidationError
+    from actors.models import StandingDirective
+    from actors.evil_cat import actor as evil_actor, eval as evil_eval, store as evil_store
+
+    monkeypatch.setenv("CAT_AGENT_RUNTIME_DIR", str(tmp_path))
+
+    # 1. Valid raw text (with leading narration and markdown fences) parses cleanly into StandingDirective
+    raw_output = (
+        "Here is my updated strategic directive:\n"
+        "```text\n"
+        "MODE: stalk\n"
+        "TRIGGER: cat-1 in strike zone -> attack immediately\n"
+        "BEHAVIOR: Turn West and lunge continuously toward (12, 40).\n"
+        "```\n"
+    )
+    directive = StandingDirective.from_text(raw_output)
+    assert directive.mode == "STALK"
+    assert directive.trigger == "cat-1 in strike zone -> attack immediately"
+    assert directive.behavior == "Turn West and lunge continuously toward (12, 40)."
+    assert directive.to_block() == (
+        "MODE: STALK\n"
+        "TRIGGER: cat-1 in strike zone -> attack immediately\n"
+        "BEHAVIOR: Turn West and lunge continuously toward (12, 40)."
+    )
+
+    # 2. Missing fields raise ValidationError
+    with pytest.raises(ValidationError):
+        StandingDirective.from_text("MODE: STALK\nBEHAVIOR: Only two fields provided.")
+
+    with pytest.raises(ValidationError):
+        StandingDirective.from_text("Just freeform prose without any headers.")
+
+    # 3. store.write_coaching_notes enforces StandingDirective validation
+    with pytest.raises(ValidationError):
+        evil_store.write_coaching_notes("Invalid prose note", agent_id="cat-3")
+
+    saved = evil_store.write_coaching_notes(raw_output, tick_range="1-10", agent_id="cat-3")
+    assert isinstance(saved, StandingDirective)
+    assert evil_store.read_coaching_notes(agent_id="cat-3") == directive.to_block()
+    assert evil_store.read_standing_directive(agent_id="cat-3") == directive
+
+    # 4. Evil Cat actor has no radio/interrogator agent (cannot talk back) and manuals live in Markdown
+    assert not hasattr(evil_actor, "adk_interrogator_agent")
+    assert not hasattr(evil_actor, "interrogate_adk_gemini")
+    assert evil_actor.SKILLS_PATH.exists()
+    assert evil_eval.COACH_SKILLS_PATH.exists()
+    assert evil_eval.GENERAL_RADIO_SKILLS_PATH.exists()
+    assert evil_eval.get_general_radio_instruction().strip() in evil_eval._general_radio_instruction_provider(None)
 
 

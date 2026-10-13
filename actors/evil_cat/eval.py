@@ -34,6 +34,7 @@ from actors.evil_cat.actor import (
     describe_thinking_budget,
     estimate_affordable_tokens,
     estimate_required_timeout,
+    get_skills_instruction,
     has_gemini_credentials,
     mark_auth_error,
     nominal_thinking_tokens,
@@ -41,6 +42,7 @@ from actors.evil_cat.actor import (
 )
 from actors.a2a import store as a2a_store, client as a2a_client
 from actors.a2a.models import check_opsec_violation
+from actors.models import StandingDirective
 
 logger = logging.getLogger("evil_cat_eval")
 
@@ -652,14 +654,35 @@ def get_last_eval_telemetry() -> Dict[str, Any]:
     return dict(_last_eval_telemetry)
 
 
+DEFAULT_STANDING_DIRECTIVE = StandingDirective(
+    mode="STALK",
+    trigger="rival cat in strike zone -> attack",
+    behavior="Align facing and lunge toward highest-score rival cat.",
+)
+
+
 def get_eval_instruction(agent_id: Optional[str] = None) -> str:
-    if COACH_SKILLS_PATH.exists():
-        return COACH_SKILLS_PATH.read_text(encoding="utf-8")
-    return "You are the Evil Coach (coach(cat-3)). Scheme, deceive, and issue ONE standing directive in MODE / TRIGGER / BEHAVIOR format."
+    if not COACH_SKILLS_PATH.exists():
+        raise FileNotFoundError(
+            f"Evil Coach skills manual missing at {COACH_SKILLS_PATH}."
+        )
+    return COACH_SKILLS_PATH.read_text(encoding="utf-8")
+
+
+def get_general_radio_instruction() -> str:
+    if not GENERAL_RADIO_SKILLS_PATH.exists():
+        raise FileNotFoundError(
+            f"Evil Coach general radio persona missing at {GENERAL_RADIO_SKILLS_PATH}."
+        )
+    return GENERAL_RADIO_SKILLS_PATH.read_text(encoding="utf-8")
 
 
 def _eval_instruction_provider(_ctx: ReadonlyContext) -> str:
     return get_eval_instruction()
+
+
+def _general_radio_instruction_provider(_ctx: ReadonlyContext) -> str:
+    return get_eval_instruction() + "\n\n" + get_general_radio_instruction()
 
 
 eval_agent = LlmAgent(
@@ -682,9 +705,31 @@ eval_agent = LlmAgent(
         thinking_config=types.ThinkingConfig(thinking_budget=_eval_thinking_budget)
     ),
 )
+general_radio_agent = LlmAgent(
+    name="evil_cat_coach_radio",
+    model=EVAL_MODEL,
+    instruction=_general_radio_instruction_provider,
+    tools=[
+        get_boxscore,
+        get_coverage_map,
+        get_event_reel,
+        pull_transcript,
+        read_coach_notes,
+        a2a_read_coach_messages,
+        a2a_send_coach_message,
+    ],
+    generate_content_config=types.GenerateContentConfig(
+        thinking_config=types.ThinkingConfig(thinking_budget=0)
+    ),
+)
 eval_session_service = InMemorySessionService()
 eval_runner = Runner(
     agent=eval_agent,
+    app_name="evil_cat_eval_app",
+    session_service=eval_session_service,
+)
+general_radio_runner = Runner(
+    agent=general_radio_agent,
     app_name="evil_cat_eval_app",
     session_service=eval_session_service,
 )
@@ -746,6 +791,12 @@ def build_coach_eval_prompt(
         f"Current HP: {self_hp}/150 | Pos: {self_pos}\n"
     )
 
+    actor_manual_text = get_skills_instruction(agent_id)
+    actor_manual_block = (
+        f"--- YOUR SUBORDINATE'S MANUAL (skills.md) ---\n"
+        f"{actor_manual_text}\n\n"
+    )
+
     eliminated_note = ""
     if eliminated_cats:
         elim_items = ", ".join(
@@ -784,23 +835,14 @@ def build_coach_eval_prompt(
             f"{_coach_directive['directive']}\n\n"
         )
 
-    mission_block = (
-        "YOUR MISSION:\n"
-        "1. Conduct deceptive A2A diplomacy / broadcasts if beneficial using your tools.\n"
-        "2. Output EXACTLY ONE concise Standing Directive for your actor in the following format:\n"
-        "MODE: <MODE_NAME>\n"
-        "TRIGGER: <CLEAR_CONDITIONAL_TRIGGER>\n"
-        "BEHAVIOR: <CONCISE_ACTION_AND_WAYPOINT_INSTRUCTION>\n"
-    )
-
     prompt = (
         f"{coach_identity_block}"
+        f"{actor_manual_block}"
         f"{scoreboard_block}"
         f"{notebook_block}"
         f"{diplomacy_block}"
         f"{previous_directive_block}"
         f"{commander_block}"
-        f"{mission_block}"
     )
 
     if capture is not None:
@@ -824,7 +866,7 @@ def build_coach_eval_prompt(
                 "actor_manual": {
                     "label": "Subordinate Actor Manual (skills.md)",
                     "delivered": True,
-                    "text": (Path(__file__).resolve().parent / "skills.md").read_text(encoding="utf-8") if (Path(__file__).resolve().parent / "skills.md").exists() else "Evil Cat Tactical Manual",
+                    "text": actor_manual_text,
                 },
                 "scoreboard_bounties": {
                     "label": "Scoreboard & Bounties (2x value)",
@@ -862,13 +904,20 @@ def _is_final_event(event: Any) -> bool:
     )
 
 
+def parse_standing_directive(text: str) -> StandingDirective:
+    """Validates raw evaluator output into a StandingDirective Pydantic model."""
+    return StandingDirective.from_text(text)
+
+
 def _strip_to_directives(text: str) -> str:
-    """If the response contains MODE:, strips preceding narration."""
-    if not text:
-        return text
-    if "MODE:" in text:
-        return text[text.index("MODE:"):].strip()
-    return text.strip()
+    """Validates and normalizes the response through the StandingDirective Pydantic model."""
+    if not text or not text.strip():
+        return ""
+    try:
+        return StandingDirective.from_text(text).to_block()
+    except Exception as exc:
+        logger.warning("StandingDirective validation failed on coach output: %s", exc)
+        return ""
 
 
 async def evaluate(records: List[Dict[str, Any]], agent_id: str = "cat-3") -> Tuple[str, str]:
@@ -892,12 +941,7 @@ async def evaluate(records: List[Dict[str, Any]], agent_id: str = "cat-3") -> Tu
     if not records or not has_gemini_credentials():
         if previous_notes:
             return previous_notes, "retained_previous"
-        return (
-            "MODE: STALK\n"
-            "TRIGGER: rival cat in strike zone -> attack immediately\n"
-            "BEHAVIOR: Hunt high-value rival cat with highest score bounty.",
-            "offline_fallback",
-        )
+        return DEFAULT_STANDING_DIRECTIVE.to_block(), "offline_fallback"
 
     user_id = f"evil_eval_{agent_id}"
     session_id = f"session_evil_eval_{agent_id}"
@@ -976,7 +1020,7 @@ async def evaluate(records: List[Dict[str, Any]], agent_id: str = "cat-3") -> Tu
             text = "".join(final_chunks).strip() or "".join(all_chunks).strip()
             text = _strip_to_directives(text)
             if not text and previous_notes:
-                logger.warning("Evil Coach returned empty notes for %s; keeping previous standing directive.", agent_id)
+                logger.warning("Evil Coach returned empty or invalid directive for %s; keeping previous standing directive.", agent_id)
                 text = previous_notes
                 out_source = "retained_previous"
             if text:
@@ -1023,7 +1067,7 @@ async def evaluate(records: List[Dict[str, Any]], agent_id: str = "cat-3") -> Tu
                     fallback_out = (
                         previous_notes
                         if previous_notes
-                        else "MODE: STALK\nTRIGGER: rival cat in strike zone -> attack immediately\nBEHAVIOR: Hunt highest bounty rival cat."
+                        else DEFAULT_STANDING_DIRECTIVE.to_block()
                     )
                     capture["latency_ms"] = dur_ms
                     capture["thinking_budget"] = budget
@@ -1039,12 +1083,7 @@ async def evaluate(records: List[Dict[str, Any]], agent_id: str = "cat-3") -> Tu
         return "", "cancelled_by_reset"
     if previous_notes:
         return previous_notes, "retained_previous"
-    return (
-        "MODE: STALK\n"
-        "TRIGGER: rival cat in strike zone -> attack immediately\n"
-        "BEHAVIOR: Hunt highest bounty rival cat.",
-        "offline_fallback",
-    )
+    return DEFAULT_STANDING_DIRECTIVE.to_block(), "offline_fallback"
 
 
 async def evaluate_and_publish(agent_id: str = "cat-3") -> Dict[str, Any]:
@@ -1061,6 +1100,7 @@ async def evaluate_and_publish(agent_id: str = "cat-3") -> Dict[str, Any]:
             "source": "cancelled_by_reset",
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "notes": "",
+            "standing_directive": None,
         }
     if not (notes or "").strip() and previous_notes:
         notes = previous_notes
@@ -1069,8 +1109,10 @@ async def evaluate_and_publish(agent_id: str = "cat-3") -> Dict[str, Any]:
     tick_range = None
     if records:
         tick_range = f"{records[0].get('tick')}-{records[-1].get('tick')}"
+    validated_directive: Optional[StandingDirective] = None
     if (notes or "").strip() and _reset_epoch == epoch_at_start:
-        store.write_coaching_notes(notes, tick_range=tick_range, agent_id=agent_id)
+        validated_directive = store.write_coaching_notes(notes, tick_range=tick_range, agent_id=agent_id)
+        notes = validated_directive.to_block()
 
     result = {
         "agent_id": agent_id,
@@ -1079,6 +1121,7 @@ async def evaluate_and_publish(agent_id: str = "cat-3") -> Dict[str, Any]:
         "source": source,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "notes": notes,
+        "standing_directive": validated_directive.model_dump() if validated_directive else None,
     }
     logger.info("Evil Coach published standing directive for %s: %s", agent_id, notes.replace("\n", " | "))
     return result
@@ -1135,12 +1178,11 @@ async def interrogate_general(
                 f"Current Standing Directive:\n{notes or '(None)'}\n\n"
                 f"Commander Order:\n{standing_order or '(None)'}\n\n"
                 f"GENERAL RADIO QUESTION: \"{clean}\"\n"
-                "Reply concisely in character as the Evil Coach to your Commander."
             )
             msg = types.Content(role="user", parts=[types.Part.from_text(text=prompt)])
             chunks: List[str] = []
             async with asyncio.timeout(GENERAL_RADIO_TIMEOUT_SECONDS):
-                agen = eval_runner.run_async(
+                agen = general_radio_runner.run_async(
                     user_id=user_id, session_id=session_id, new_message=msg
                 )
                 try:
@@ -1162,3 +1204,4 @@ async def interrogate_general(
                 "offline_fallback",
                 str(exc),
             )
+

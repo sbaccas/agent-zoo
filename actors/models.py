@@ -80,6 +80,107 @@ class CatTacticalDecision(BaseModel):
         return values
 
 
+class StandingDirective(BaseModel):
+    """Structured standing directive contract (`MODE / TRIGGER / BEHAVIOR`) from Coach to Actor."""
+
+    mode: str = Field(
+        description="Operational mode name (e.g., STALK, TRAVEL, AMBUSH, HEAL, EVADE)"
+    )
+    trigger: str = Field(
+        description="Conditional trigger for immediate action"
+    )
+    behavior: str = Field(
+        description="Action and waypoint execution instruction"
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_and_validate(cls, values: Any) -> Any:
+        if isinstance(values, str):
+            values = cls._parse_raw_string(values)
+        if not isinstance(values, dict):
+            raise ValueError("StandingDirective input must be a mapping or formatted directive string")
+
+        raw_mode = str(values.get("mode") or values.get("MODE") or "").strip().strip("`*_")
+        raw_trigger = str(values.get("trigger") or values.get("TRIGGER") or "").strip()
+        raw_behavior = str(values.get("behavior") or values.get("BEHAVIOR") or "").strip()
+
+        if not raw_mode:
+            raise ValueError("StandingDirective requires a non-empty MODE field")
+        if not raw_trigger:
+            raise ValueError("StandingDirective requires a non-empty TRIGGER field")
+        if not raw_behavior:
+            raise ValueError("StandingDirective requires a non-empty BEHAVIOR field")
+
+        return {
+            "mode": raw_mode.upper(),
+            "trigger": raw_trigger,
+            "behavior": raw_behavior,
+        }
+
+    @classmethod
+    def _parse_raw_string(cls, raw: str) -> Dict[str, str]:
+        import json as _json
+        import re as _re
+
+        text = (raw or "").strip()
+        if not text:
+            raise ValueError("StandingDirective text is empty")
+
+        if text.startswith("{") and text.endswith("}"):
+            try:
+                parsed = _json.loads(text)
+                if isinstance(parsed, dict):
+                    return parsed
+            except Exception:
+                pass
+
+        # Strip markdown code fences if present and extract MODE / TRIGGER / BEHAVIOR lines
+        cleaned_lines = [
+            ln for ln in text.splitlines() if not ln.strip().startswith("```")
+        ]
+        cleaned = "\n".join(cleaned_lines)
+
+        header_re = _re.compile(
+            r"(?im)^[\s>*`-]*\**(MODE|TRIGGER|BEHAVIOR)\**\s*:\s*(.*)$"
+        )
+        matches = list(header_re.finditer(cleaned))
+        if not matches:
+            raise ValueError(
+                "StandingDirective text must contain MODE:, TRIGGER:, and BEHAVIOR: fields"
+            )
+
+        extracted: Dict[str, str] = {}
+        for idx, m in enumerate(matches):
+            key = m.group(1).upper()
+            first_line = m.group(2).strip()
+            start_pos = m.end()
+            end_pos = matches[idx + 1].start() if idx + 1 < len(matches) else len(cleaned)
+            rest = cleaned[start_pos:end_pos].strip()
+            if rest and key != "MODE":
+                # Keep only contiguous non-empty lines belonging to this field
+                cont_lines = []
+                for ln in rest.splitlines():
+                    s = ln.strip()
+                    if not s:
+                        break
+                    cont_lines.append(s)
+                full_val = " ".join([first_line] + cont_lines).strip() if first_line else " ".join(cont_lines).strip()
+            else:
+                full_val = first_line
+            extracted[key.lower()] = full_val
+
+        return extracted
+
+    @classmethod
+    def from_text(cls, text: str) -> "StandingDirective":
+        return cls.model_validate(text)
+
+    def to_block(self) -> str:
+        return f"MODE: {self.mode}\nTRIGGER: {self.trigger}\nBEHAVIOR: {self.behavior}"
+
+    def __str__(self) -> str:
+        return self.to_block()
 
 class HistoryWindowRequest(BaseModel):
     history_window_size: int = Field(default=25, ge=1, le=50, description="Sliding window size N for history sent to LLM")
