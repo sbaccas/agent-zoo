@@ -443,7 +443,7 @@ def build_decision_prompt(
     obs: Observation,
     history: Optional[List[Dict[str, Any]]] = None,
     agent_id: str = "cat-3",
-    history_window_size: int = 5,
+    history_window_size: int = 25,
     capture: Optional[Dict[str, Any]] = None,
     commander_directive: Optional[Dict[str, Any]] = None,
 ) -> str:
@@ -458,18 +458,24 @@ def build_decision_prompt(
     recent_slice = history[-window_size:] if history else []
     history_lines = []
     for h in recent_slice:
-        h_obs = h.get("observation", {})
-        h_tick = h.get("tick", "?")
-        h_self = h_obs.get("self", {})
-        h_pos = h_self.get("position", {})
-        h_facing = h_self.get("facing", "north")
-        h_score = h_obs.get("score", 0)
-        h_resp = h.get("response", {})
-        h_act = (h_resp.get("action") or "stay").upper()
-        h_th = h_resp.get("thought", "")
-        h_cd = int(h_self.get("action_cooldown", 0) or 0)
+        h_obs = h.get("observation", {}) if isinstance(h.get("observation"), dict) else {}
+        h_tick = h.get("tick", h_obs.get("tick", "?"))
+        h_self = h_obs.get("self", {}) if isinstance(h_obs.get("self"), dict) else {}
+        h_pos = h_self.get("position") or {"x": h.get("x", 0), "y": h.get("y", 0)}
+        h_facing = h_self.get("facing") or h.get("facing", "north")
+        h_score = h_obs.get("score", h.get("score", 0))
+        h_resp = h.get("response") if isinstance(h.get("response"), dict) else {}
+        raw_act = h_resp.get("action") or h.get("action") or "stay"
+        if isinstance(raw_act, dict):
+            raw_act = raw_act.get("direction") or raw_act.get("action") or "stay"
+        h_act = str(raw_act).upper()
+        h_th = str(h_resp.get("thought") or h.get("thought") or "")
+        h_cd = int(h_self.get("action_cooldown", h.get("action_cooldown", 0)) or 0)
         h_can_act = h_self.get("can_act")
-        h_locked = (h_cd > 0) if h_can_act is None else (not h_can_act)
+        if h.get("tick_type") == "cooldown" or h.get("executed") is False:
+            h_locked = True
+        else:
+            h_locked = (h_cd > 0) if h_can_act is None else (not h_can_act)
         outcome = "REJECTED - you were locked" if h_locked else "executed"
         rp = h_resp.get("resulting_posture") if isinstance(h_resp, dict) else None
         if rp and rp.get("position"):
@@ -478,8 +484,18 @@ def build_decision_prompt(
             posture_str = f"({h_pos.get('x')}, {h_pos.get('y')}) [{h_facing.upper()}] ➔ ({rp_pos.get('x')}, {rp_pos.get('y')}) [{rp_facing}]"
         else:
             posture_str = f"Pos ({h_pos.get('x')}, {h_pos.get('y')}) facing {h_facing.upper()}"
+        h_vis = h_obs.get("visible_entities") or h.get("visible") or []
+        if h_vis:
+            vis_parts = []
+            for v in h_vis:
+                vid = v.get("id", "entity")
+                vpos = v.get("position") if isinstance(v.get("position"), dict) else {"x": v.get("x"), "y": v.get("y")}
+                vis_parts.append(f"{vid}@({vpos.get('x')},{vpos.get('y')})")
+            vis_str = f" | Saw: {', '.join(vis_parts)}"
+        else:
+            vis_str = " | Saw: nothing"
         history_lines.append(
-            f"- Tick {h_tick}: {posture_str} | Score: {h_score} | Move: {h_act} [{outcome}] | Thought: {h_th[:90]}"
+            f"- Tick {h_tick}: {posture_str} | Score: {h_score}{vis_str} | Move: {h_act} [{outcome}] | Thought: {h_th}"
         )
     history_context = ""
     if history_lines:
@@ -571,8 +587,8 @@ def build_decision_prompt(
     eliminated = set(getattr(obs, "eliminated_cats", None) or [])
     rival_entries = []
     for cid, sc in sorted(rivals.items()):
-        bounty = sc * 2
-        status = "[DEAD]" if cid in eliminated else f"[ALIVE - 2x Bounty: +{bounty} pts]"
+        bounty = sc
+        status = "[DEAD]" if cid in eliminated else f"[ALIVE - Bounty: +{bounty} pts]"
         rival_entries.append(f"{cid}: {sc} score {status}")
     rival_text = ", ".join(rival_entries) if rival_entries else "none"
 
@@ -640,7 +656,7 @@ async def query_adk_gemini(
     obs: Observation,
     history: Optional[List[Dict[str, Any]]] = None,
     agent_id: str = "cat-3",
-    history_window_size: int = 5,
+    history_window_size: int = 25,
     capture: Optional[Dict[str, Any]] = None,
     timeout_seconds: Optional[float] = None,
     commander_directive: Optional[Dict[str, Any]] = None,

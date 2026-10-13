@@ -47,14 +47,14 @@ def test_eval_interval_defaults_to_5():
 
 
 def test_evil_cat_rules_focus_on_cat_elimination():
-    """Verify skills.md explicitly forbids hunting mice for score and explains 150 HP / 2x bounty."""
+    """Verify skills.md explicitly forbids hunting mice for score and explains 150 HP / kill absorption."""
     p = Path(__file__).resolve().parents[1] / "actors" / "evil_cat" / "skills.md"
     assert p.exists()
     content = p.read_text(encoding="utf-8")
     assert "Mice Award ZERO Points" in content
     assert "Heals 50% HP" in content or "Emergency Medkits" in content
     assert "150 Max HP" in content
-    assert "Double Bounty" in content
+    assert "Kill Absorption" in content
     assert "Follow the Evil Coach's Standing Directive" in content
 
 
@@ -187,8 +187,8 @@ async def test_evil_cat_heals_40_hp_from_mice_and_gets_zero_score():
 
 
 @pytest.mark.asyncio
-async def test_evil_cat_kills_give_twice_as_many_points_as_victim_consumed():
-    """Verify evil cat gets 2x the victim's score/consumed points upon cat elimination."""
+async def test_evil_cat_kills_absorb_victim_consumed_points():
+    """Verify evil cat absorbs the victim's score/consumed points upon cat elimination."""
     from app.game.simulation import Simulation
     from app.models.entity import Direction, EntityType, Position
     from app.models.simulation import SimulationConfig
@@ -207,26 +207,25 @@ async def test_evil_cat_kills_give_twice_as_many_points_as_victim_consumed():
     # Evil cat (cat-3) eliminates cat-1
     sim.scheduler._register_capture(cat3.id, cat1, "slash impact")
 
-    # Evil cat should receive 2 * 12 = 24 points!
-    assert sim.scheduler.scores[cat3.id] == 24
+    # Evil cat should absorb 12 points (1x victim score)
+    assert sim.scheduler.scores[cat3.id] == 12
 
-    # Verify boxscore also reflects 24 points
+    # Verify boxscore also reflects 12 points
     bs = sim.get_boxscore()
     row3 = next(c for c in bs["cats"] if c["id"] == cat3.id)
-    assert row3["score"] == 24
-    assert row3["absorbed_kills"] == 24
+    assert row3["score"] == 12
+    assert row3["absorbed_kills"] == 12
 
-    # In contrast, a normal cat (cat-2) eliminating cat-3 with 24 points receives standard 1x absorption:
+    # A normal cat (cat-2) eliminating cat-3 with 12 points receives +1 base kill + 12 absorbed = 13 points:
     cat3.hp = 0
     cat3.alive = False
     sim.scheduler._register_capture(cat2.id, cat3, "slash impact")
-    # Normal cat receives +1 base kill + 1x victim score (24) = 25 points
-    assert sim.scheduler.scores[cat2.id] == 25
+    assert sim.scheduler.scores[cat2.id] == 13
     bs2 = sim.get_boxscore()
     row2 = next(c for c in bs2["cats"] if c["id"] == cat2.id)
     assert row2["kills"] == 1
-    assert row2["absorbed_kills"] == 24
-    assert row2["score"] == 25
+    assert row2["absorbed_kills"] == 12
+    assert row2["score"] == 13
 
 
 def test_evil_coach_private_notes_distinct_from_standing_orders():
@@ -258,7 +257,7 @@ def test_build_eval_prompt_for_evil_cat_uses_evil_coach_skills():
 
 
 def test_evil_cat_boxscore_kills_and_prey_scanning():
-    """Fix #1: cat-3 cat eliminations count as kills in boxscore while score stays 2x victim, and _scan_prey scans rival cats."""
+    """Fix #1: cat-3 cat eliminations count as kills in boxscore while score absorbs victim score, and _scan_prey scans rival cats."""
     from app.game.simulation import Simulation
     from app.models.entity import Direction, EntityType, Position
     from app.models.simulation import SimulationConfig
@@ -283,8 +282,8 @@ def test_evil_cat_boxscore_kills_and_prey_scanning():
     bs = sim.get_boxscore()
     row3 = next(c for c in bs["cats"] if c["id"] == "cat-3")
     assert row3["kills"] == 1
-    assert row3["absorbed_kills"] == 20
-    assert row3["score"] == 20
+    assert row3["absorbed_kills"] == 10
+    assert row3["score"] == 10
 
 
 def test_coach_scoreboard_filters_eliminated_cats():

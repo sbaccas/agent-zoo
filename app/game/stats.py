@@ -274,7 +274,7 @@ class StatsTracker:
             if is_cat:
                 stats.kills += 1
                 stats.absorbed_kills += max(0, absorbed_kills)
-            # Evil cat receives 0 score/kills from mice; cat kill score is 2x victim consumed score
+            # Evil cat receives 0 score/kills from mice; cat kill score absorbs victim's score
         else:
             stats.kills += 1
             stats.absorbed_kills += max(0, absorbed_kills)

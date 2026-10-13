@@ -2,9 +2,9 @@
 
 Dedicated System-1 reflex and fallback heuristic for Evil Cat (cat-3).
 Completely independent of regular cat's mouse-chasing heuristic:
-- Evil Cat earns 0 points from mice and 2x bounty from eliminating rival cats.
+- Evil Cat earns 0 points from mice and absorbs bounty from eliminating rival cats.
 - Never falls back to chasing or slashing mice by default.
-- Hunts visible live rival cats (prioritized by highest 2x bounty, then proximity),
+- Hunts visible live rival cats (prioritized by highest bounty, then proximity),
   or patrols the arena to locate rival cats.
 - Honors `locked_target_id` set by Evil Cat's Fast-Brain LLM (including when the
   LLM explicitly targets a mouse in HEAL mode).
@@ -347,7 +347,7 @@ def compute_heuristic_decision(
                 cid = cat.get("id")
                 msg = (
                     f"Rival cat {cid} in strike zone (range {atk_range})! "
-                    f"Executing slash attack for 2x bounty."
+                    f"Executing slash attack for bounty."
                 )
                 meta = {
                     "phase": "ATTACK",

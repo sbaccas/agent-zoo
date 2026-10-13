@@ -314,10 +314,7 @@ class Scheduler:
                             else (victim_stat.kills + victim_stat.absorbed_kills)
                         )
                         victim_score = max(victim_score, v_stat_score)
-                if is_evil:
-                    # Evil cat receives twice as many points as the victim consumed
-                    absorbed_score = 2 * victim_score
-                elif victim_score > 0:
+                if victim_score > 0:
                     absorbed_score = victim_score
 
         if is_evil:

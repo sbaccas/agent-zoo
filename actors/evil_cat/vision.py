@@ -495,8 +495,8 @@ def format_cardinal_target_legend(obs: Observation, agent_id: str = "cat-3") -> 
         if etype == "cat" or eid.startswith("cat"):
             hp = ent.get("hp", 100)
             max_hp = ent.get("max_hp", 100)
-            bounty = int(scores.get(eid, 0)) * 2
-            role_desc = f"RIVAL CAT | HP: {hp}/{max_hp} | 2x Bounty: +{bounty} pts"
+            bounty = int(scores.get(eid, 0))
+            role_desc = f"RIVAL CAT | HP: {hp}/{max_hp} | Bounty: +{bounty} pts"
         else:
             role_desc = "mouse | Emergency +40 HP heal if wounded, 0 pts"
 

@@ -1405,11 +1405,16 @@
       'eval_skills',
       'actor_manual',
       'capabilities',
+      'scoreboard_bounties',
+      'recent_history',
+      'recent_observations',
+      'latest_actor_payload',
       'standing_directives',
       'commander_order',
       'coach_notebook',
       'transcript_status',
       'a2a_diplomacy',
+      'previous_directive',
     ];
     const sections = rec.sections || {};
     const blocks = [];

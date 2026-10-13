@@ -41,7 +41,7 @@ def test_evil_actor_has_no_tools_and_clean_schema():
     skills = get_skills_instruction("cat-3")
     assert "PRIMARY OBJECTIVE: Follow the Evil Coach's Standing Directive" in skills
     assert "150 Max HP" in skills
-    assert "Double Bounty" in skills
+    assert "Kill Absorption" in skills
 
 
 def test_evil_actor_prompt_focuses_on_standing_directive():
@@ -58,7 +58,7 @@ def test_evil_actor_prompt_focuses_on_standing_directive():
     assert "EVALUATOR NOTES (PRIMARY OBJECTIVE: STANDING DIRECTIVE)" in prompt
     assert "CURRENT OBSERVATION" in prompt
     assert "150 HP Tank" in prompt
-    assert "cat-1: 10 score [ALIVE - 2x Bounty: +20 pts]" in prompt
+    assert "cat-1: 10 score [ALIVE - Bounty: +10 pts]" in prompt
     assert "COMMANDER RADIO" not in prompt
     assert "INTER-CAT RADIO" not in prompt
 
@@ -78,7 +78,10 @@ def test_evil_coach_has_a2a_tools_and_emits_standing_order_pattern():
     # Prompt builder emits data only (no raw YOUR MISSION instruction block in Python)
     records = [{"tick": 1, "observation": {"self": {"hp": 150}, "scoreboard": {"cat-1": 8}}}]
     coach_prompt = build_coach_eval_prompt(records, agent_id="cat-3")
-    assert "Scoreboard & Bounties (2x value when you kill them)" in coach_prompt
+    assert "Scoreboard & Bounties (absorbed when you kill them):" in coach_prompt
+    assert "--- LAST 10 TICKS: TACTICAL HISTORY & REASONING ---" in coach_prompt
+    assert "--- LAST 10 TICKS: OBSERVATION PAYLOADS ---" in coach_prompt
+    assert "--- LATEST ACTOR PAYLOAD (EXACT PROMPT FACING SUBORDINATE) ---" in coach_prompt
     assert "--- YOUR SUBORDINATE'S MANUAL (skills.md) ---" in coach_prompt
     assert "YOUR MISSION:" not in coach_prompt
     assert "MODE: <MODE_NAME>" not in coach_prompt
@@ -572,5 +575,64 @@ def test_standing_directive_pydantic_enforcement_and_markdown_partition(monkeypa
     assert evil_eval.COACH_SKILLS_PATH.exists()
     assert evil_eval.GENERAL_RADIO_SKILLS_PATH.exists()
     assert evil_eval.get_general_radio_instruction().strip() in evil_eval._general_radio_instruction_provider(None)
+
+
+def test_coach_eval_prompt_includes_last_10_history_observations_and_latest_actor_payload(monkeypatch, tmp_path):
+    """Verify Evil Coach receives last 10 history/reasoning, last 10 observation payloads, and latest actor payload."""
+    monkeypatch.setenv("CAT_AGENT_RUNTIME_DIR", str(tmp_path))
+
+    records = []
+    for i in range(1, 16):
+        records.append({
+            "tick": i,
+            "x": i,
+            "y": 0,
+            "facing": "east",
+            "action": "lunge" if i % 2 == 0 else "east",
+            "thought": f"Reasoning on tick {i}",
+            "source": "adk_gemini",
+            "score": i,
+            "observation": {
+                "tick": i,
+                "round": 1,
+                "self": {
+                    "id": "cat-3",
+                    "position": {"x": i, "y": 0},
+                    "facing": "east",
+                    "hp": 150,
+                    "max_hp": 150,
+                    "action_cooldown": 0,
+                    "can_act": True,
+                },
+                "score": i,
+                "scoreboard": {"cat-1": 20, "cat-2": 10, "cat-3": i},
+                "visible_entities": [{"id": "cat-1", "type": "cat", "position": {"x": i + 2, "y": 0}}],
+                "legal_actions": ["stay", "north", "south", "east", "west", "lunge", "attack"],
+            },
+        })
+
+    capture = {}
+    coach_prompt = build_coach_eval_prompt(records, agent_id="cat-3", capture=capture)
+
+    # 1. Last 10 history & reasoning (ticks 6..15 in last 10 block, not tick 1..5)
+    hist_sec = capture["sections"]["recent_history"]["text"]
+    assert "Tick #6:" in hist_sec
+    assert "Tick #15:" in hist_sec
+    assert "Reasoning on tick 15" in hist_sec
+    assert "Tick #5:" not in hist_sec
+
+    # 2. Last 10 observation payloads (ticks 6..15)
+    obs_sec = capture["sections"]["recent_observations"]["text"]
+    assert "[Tick #6 Observation Payload]:" in obs_sec
+    assert "[Tick #15 Observation Payload]:" in obs_sec
+    assert "[Tick #5 Observation Payload]:" not in obs_sec
+
+    # 3. Entirety of the latest payload facing the Actor (contains 25-tick window -> ticks 1..14 + current obs tick 15)
+    actor_sec = capture["sections"]["latest_actor_payload"]["text"]
+    assert "--- RECENT TACTICAL HISTORY ---" in actor_sec
+    assert "- Tick 1:" in actor_sec
+    assert "- Tick 14:" in actor_sec
+    assert "--- CURRENT OBSERVATION (Tick 15, Round 1) ---" in actor_sec
+    assert coach_prompt == capture["full_prompt"]
 
 
