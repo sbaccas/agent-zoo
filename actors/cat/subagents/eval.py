@@ -54,11 +54,17 @@ logger = logging.getLogger("cat_agent")
 EVAL_MODEL = "gemini-2.5-flash"
 
 _current_eval_cat: Optional[str] = None
+_current_eval_tick: Optional[int] = None
 
 
 def set_current_eval_cat(agent_id: Optional[str]) -> None:
     global _current_eval_cat
     _current_eval_cat = agent_id
+
+
+def set_current_eval_tick(tick: Optional[int]) -> None:
+    global _current_eval_tick
+    _current_eval_tick = tick
 
 
 def _resolve_target_cat(agent_id: Optional[str] = None) -> str:
@@ -552,6 +558,7 @@ async def write_coach_note(
     note: str,
     category: str = "tactical",
     tags: Optional[List[str]] = None,
+    tick: Optional[int] = None,
     linked_ticks: Optional[List[int]] = None,
     cat_id: Optional[str] = None,
 ) -> Dict[str, Any]:
@@ -563,14 +570,36 @@ async def write_coach_note(
     from the actor's published standing orders in coaching_notes.md.
     """
     target_id = _resolve_target_cat(cat_id)
-    mcp_url = os.environ.get("CAT_MCP_SERVER_URL") or os.environ.get("MCP_SERVER_URL") or "http://127.0.0.1:9050"
+    resolved_tick = tick
+    if resolved_tick is None:
+        resolved_tick = store._resolve_latest_tick(target_id)
+    if resolved_tick is None:
+        resolved_tick = _current_eval_tick
+    if resolved_tick is None and linked_ticks:
+        try:
+            resolved_tick = int(linked_ticks[-1])
+        except (TypeError, ValueError):
+            pass
+
+    mcp_url = (
+        os.environ.get("CAT_MCP_SERVER_URL")
+        or os.environ.get("MCP_SERVER_URL")
+        or ("" if "PYTEST_CURRENT_TEST" in os.environ else "http://127.0.0.1:9050")
+    )
     if mcp_url:
         try:
             from app.mcp.client import MCPClient
             client = MCPClient(base_url=mcp_url)
             res = await client.call_tool(
                 "write_coach_note",
-                {"note": note, "category": category, "tags": tags, "linked_ticks": linked_ticks, "cat_id": target_id},
+                {
+                    "note": note,
+                    "category": category,
+                    "tags": tags,
+                    "tick": resolved_tick,
+                    "linked_ticks": linked_ticks,
+                    "cat_id": target_id,
+                },
             )
             if res.get("status") == "saved":
                 return res
@@ -578,7 +607,12 @@ async def write_coach_note(
             pass
 
     record = store.append_coach_memory(
-        note=note, category=category, tags=tags, linked_ticks=linked_ticks, agent_id=target_id
+        note=note,
+        category=category,
+        tags=tags,
+        tick=resolved_tick,
+        linked_ticks=linked_ticks,
+        agent_id=target_id,
     )
     return {"status": "saved", "memory": record}
 
@@ -591,7 +625,11 @@ async def read_coach_notes(
 ) -> Dict[str, Any]:
     """Searches and retrieves historical entries from the Coach's tactical notebook across evaluation cycles."""
     target_id = _resolve_target_cat(cat_id)
-    mcp_url = os.environ.get("CAT_MCP_SERVER_URL") or os.environ.get("MCP_SERVER_URL") or "http://127.0.0.1:9050"
+    mcp_url = (
+        os.environ.get("CAT_MCP_SERVER_URL")
+        or os.environ.get("MCP_SERVER_URL")
+        or ("" if "PYTEST_CURRENT_TEST" in os.environ else "http://127.0.0.1:9050")
+    )
     if mcp_url:
         try:
             from app.mcp.client import MCPClient
@@ -787,6 +825,26 @@ async def a2a_send_coach_message(
         }
 
 
+async def a2a_broadcast(
+    message: str,
+    impersonate_cat: bool = False,
+    cat_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Publicly broadcasts an Agent-to-Agent (A2A) message across the arena to all peer Coaches.
+
+    Args:
+        message: The public broadcast message content.
+        impersonate_cat: Optional legacy flag (defaults to False so broadcasts come from coach(cat-X)).
+        cat_id: Optional explicit sender cat id (defaults to current active cat).
+    """
+    return await a2a_send_coach_message(
+        recipient="*",
+        message=message,
+        message_type="BROADCAST",
+        impersonate_cat=impersonate_cat,
+        cat_id=cat_id,
+    )
+
 
 async def a2a_read_coach_messages(
     limit: Optional[int] = 10,
@@ -882,6 +940,7 @@ eval_agent = LlmAgent(
         pull_transcript,
         write_coach_note,
         read_coach_notes,
+        a2a_broadcast,
         a2a_send_coach_message,
         a2a_read_coach_messages,
         a2a_get_peer_coach_card,
@@ -926,6 +985,7 @@ general_agent = LlmAgent(
         pull_transcript,
         read_coach_notes,
         a2a_read_coach_messages,
+        a2a_broadcast,
         a2a_send_coach_message,
     ],
     generate_content_config=types.GenerateContentConfig(
@@ -1304,8 +1364,12 @@ def build_eval_prompt(
     if memories:
         notes_lines = []
         for m in memories:
+            m_tick = m.get("tick")
+            if m_tick is None and isinstance(m.get("linked_ticks"), list) and m["linked_ticks"]:
+                m_tick = m["linked_ticks"][-1]
+            tick_prefix = f"Tick #{m_tick} | " if m_tick is not None else ""
             tags = f" [tags: {', '.join(m['tags'])}]" if m.get("tags") else ""
-            cat = f"[{m.get('category', 'tactical')}]"
+            cat = f"[{tick_prefix}{m.get('category', 'tactical')}]"
             notes_lines.append(f"  • {cat}{tags} {m.get('note', '')}")
         notebook_block = (
             "--- YOUR PRIVATE STRATEGIC NOTEBOOK (CONTEXT FROM YOUR PAST SELF) ---\n"
@@ -1591,6 +1655,14 @@ async def evaluate(
         (notes_markdown, source) where source is 'adk_gemini' or 'offline_fallback'.
     """
     epoch_at_start = _reset_epoch
+    if records and records[-1].get("tick") is not None:
+        try:
+            set_current_eval_tick(int(records[-1]["tick"]))
+        except (TypeError, ValueError):
+            set_current_eval_tick(None)
+    else:
+        set_current_eval_tick(None)
+
     if not records:
         return _summarise_without_model(records), "offline_fallback"
 

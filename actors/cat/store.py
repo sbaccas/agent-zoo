@@ -93,7 +93,7 @@ RUN_CONFIG_PATH = RUNTIME_DIR / "run_config.json"
 
 def _mirror_to_local_runtime(filename: str, content: str, mode: str = "w", agent_id: Optional[str] = None) -> None:
     """Mirrors runtime files directly into the local repository directory so they are always visible."""
-    if os.environ.get("CAT_AGENT_RUNTIME_DIR"):
+    if os.environ.get("CAT_AGENT_RUNTIME_DIR") or "PYTEST_CURRENT_TEST" in os.environ:
         return
     try:
         tmp_target_id = agent_id or os.environ.get("CAT_ID") or "cat-1"
@@ -684,6 +684,22 @@ def list_known_cat_ids() -> List[str]:
     return found
 
 
+def _resolve_latest_tick(agent_id: Optional[str] = None) -> Optional[int]:
+    """Resolves the latest known simulation tick for the given cat from its transcript."""
+    try:
+        recs = read_transcript_records(agent_id=agent_id)
+        if recs:
+            last = recs[-1]
+            t = last.get("tick")
+            if t is None and isinstance(last.get("observation"), dict):
+                t = last["observation"].get("tick")
+            if t is not None:
+                return int(t)
+    except Exception:
+        pass
+    return None
+
+
 def append_coach_memory(
     note: str,
     category: str = "tactical",
@@ -701,10 +717,16 @@ def append_coach_memory(
     tick_snapshots = get_transcript_ticks_snapshot(clean_ticks, agent_id=agent_id) if clean_ticks else []
     resolved_cat_id = agent_id or os.environ.get("CAT_ID") or "cat-1"
 
+    resolved_tick: Optional[int] = int(tick) if tick is not None else None
+    if resolved_tick is None:
+        resolved_tick = _resolve_latest_tick(resolved_cat_id)
+    if resolved_tick is None and clean_ticks:
+        resolved_tick = clean_ticks[-1]
+
     record = {
         "id": f"mem-{int(time.time() * 1000)}-{unique_suffix}",
         "timestamp": now_str,
-        "tick": tick,
+        "tick": resolved_tick,
         "cat_id": resolved_cat_id,
         "category": category,
         "tags": tags or [],
@@ -750,6 +772,11 @@ def read_coach_memories(
                                 seen_ids.add(rec["id"])
                                 if "cat_id" not in rec:
                                     rec["cat_id"] = "cat-1"
+                                if rec.get("tick") is None and rec.get("linked_ticks"):
+                                    try:
+                                        rec["tick"] = int(rec["linked_ticks"][-1])
+                                    except Exception:
+                                        pass
                                 records.append(rec)
                         except json.JSONDecodeError:
                             continue
@@ -772,6 +799,11 @@ def read_coach_memories(
                                 seen_ids.add(rec["id"])
                                 if "cat_id" not in rec:
                                     rec["cat_id"] = cid
+                                if rec.get("tick") is None and rec.get("linked_ticks"):
+                                    try:
+                                        rec["tick"] = int(rec["linked_ticks"][-1])
+                                    except Exception:
+                                        pass
                                 records.append(rec)
                         except json.JSONDecodeError:
                             continue
@@ -814,6 +846,11 @@ def read_coach_memories(
                     rec = json.loads(line)
                     if "cat_id" not in rec:
                         rec["cat_id"] = agent_id or "cat-1"
+                    if rec.get("tick") is None and rec.get("linked_ticks"):
+                        try:
+                            rec["tick"] = int(rec["linked_ticks"][-1])
+                        except Exception:
+                            pass
                     records.append(rec)
                 except json.JSONDecodeError:
                     continue

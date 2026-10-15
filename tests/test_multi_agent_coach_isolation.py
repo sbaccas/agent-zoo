@@ -188,3 +188,73 @@ async def test_mcp_rest_endpoint_coach_notes_multi_agent(isolated_dirs):
         assert len(data_c2["memories"]) == 1
         assert data_c2["memories"][0]["note"] == "Cat 2 pincer plan"
 
+
+@pytest.mark.asyncio
+async def test_coach_private_notes_stamped_with_tick_id(isolated_dirs, monkeypatch):
+    import json
+    from actors.evil_cat import store as evil_store
+    from actors.evil_cat import eval as evil_ev
+
+    dir_cat1, dir_cat2 = isolated_dirs
+    dir_cat3 = dir_cat1.parent / "runtime_cat-3"
+    dir_cat3.mkdir(parents=True, exist_ok=True)
+
+    orig_get_cat_paths = store.get_cat_paths
+
+    def get_all_paths(agent_id: str):
+        if agent_id in ("cat-3", "evil-cat"):
+            return {
+                "runtime_dir": dir_cat3,
+                "transcript": dir_cat3 / "transcript.jsonl",
+                "coaching_notes": dir_cat3 / "coaching_notes.md",
+                "notice_board": dir_cat3 / "notice_board.md",
+                "coach_memory": dir_cat3 / "coach_memory.jsonl",
+                "prompts": dir_cat3 / "prompts.jsonl",
+                "coach_prompts": dir_cat3 / "coach_prompts.jsonl",
+                "run_config": dir_cat3 / "run_config.json",
+            }
+        return orig_get_cat_paths(agent_id)
+
+    monkeypatch.setattr(store, "get_cat_paths", get_all_paths)
+    monkeypatch.setattr(evil_store, "get_cat_paths", get_all_paths)
+    monkeypatch.setenv("CAT_MCP_SERVER_URL", "")
+    monkeypatch.setenv("MCP_SERVER_URL", "")
+
+    # Seed transcript ticks for cat-1 (tick 420) and cat-3 (tick 1185)
+    (dir_cat1 / "transcript.jsonl").write_text(
+        json.dumps({"tick": 420, "x": 5, "y": 6, "facing": "north", "action": "move", "score": 120}) + "\n",
+        encoding="utf-8",
+    )
+    (dir_cat3 / "transcript.jsonl").write_text(
+        json.dumps({"tick": 1185, "x": 14, "y": 14, "facing": "east", "action": "slash", "score": 335}) + "\n",
+        encoding="utf-8",
+    )
+
+    # 1. Calling write_coach_note without explicit tick stamps from latest transcript tick
+    res1 = await ev.write_coach_note("Cluster spotted near (5,6)", category="intel", cat_id="cat-1")
+    assert res1["memory"]["tick"] == 420
+
+    res3 = await evil_ev.write_coach_note("Cat-1 eliminated; hunting mice", category="deception", cat_id="cat-3")
+    assert res3["memory"]["tick"] == 1185
+
+    # 2. Calling MCP write_coach_note without explicit tick stamps from transcript or linked_ticks
+    server = create_mcp_server()
+    mcp_res = await server.call_tool("write_coach_note", {"note": "MCP note for cat-1", "cat_id": "cat-1"})
+    mcp_mem = mcp_res.structured_content["result"]["memory"]
+    assert mcp_mem["tick"] == 420
+
+    mcp_res_linked = await server.call_tool(
+        "write_coach_note",
+        {"note": "MCP note for cat-2 with linked tick", "cat_id": "cat-2", "linked_ticks": [777]},
+    )
+    mcp_mem_linked = mcp_res_linked.structured_content["result"]["memory"]
+    assert mcp_mem_linked["tick"] == 777
+
+    # 3. Verify both Coach eval prompts display Tick #<tick> in the private notebook section
+    prompt_cat1 = ev.build_eval_prompt([], "", agent_id="cat-1")
+    assert "[Tick #420 | intel] Cluster spotted near (5,6)" in prompt_cat1
+
+    prompt_cat3 = evil_ev.build_coach_eval_prompt([], agent_id="cat-3")
+    assert "[Tick #1185 | deception] Cat-1 eliminated; hunting mice" in prompt_cat3
+
+

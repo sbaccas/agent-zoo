@@ -74,6 +74,7 @@ _general_lock = asyncio.Lock()
 GENERAL_RADIO_TIMEOUT_SECONDS = 20.0
 
 _coach_directive: Optional[Dict[str, Any]] = None
+_current_eval_tick: Optional[int] = None
 
 _last_eval_telemetry: Dict[str, Any] = {
     "thinking_budget": EVAL_THINKING_BUDGET_DEFAULT,
@@ -261,19 +262,42 @@ async def write_coach_note(
     note: str,
     category: str = "tactical",
     tags: Optional[List[str]] = None,
+    tick: Optional[int] = None,
     linked_ticks: Optional[List[int]] = None,
     cat_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Records a private entry to the Evil Coach's tactical notebook (coach_memory.jsonl)."""
     target_id = cat_id or "cat-3"
-    mcp_url = os.environ.get("CAT_MCP_SERVER_URL") or os.environ.get("MCP_SERVER_URL") or "http://127.0.0.1:9050"
+    resolved_tick = tick
+    if resolved_tick is None:
+        resolved_tick = store._resolve_latest_tick(target_id)
+    if resolved_tick is None:
+        resolved_tick = _current_eval_tick
+    if resolved_tick is None and linked_ticks:
+        try:
+            resolved_tick = int(linked_ticks[-1])
+        except (TypeError, ValueError):
+            pass
+
+    mcp_url = (
+        os.environ.get("CAT_MCP_SERVER_URL")
+        or os.environ.get("MCP_SERVER_URL")
+        or ("" if "PYTEST_CURRENT_TEST" in os.environ else "http://127.0.0.1:9050")
+    )
     if mcp_url:
         try:
             from app.mcp.client import MCPClient
             client = MCPClient(base_url=mcp_url)
             res = await client.call_tool(
                 "write_coach_note",
-                {"note": note, "category": category, "tags": tags, "linked_ticks": linked_ticks, "cat_id": target_id},
+                {
+                    "note": note,
+                    "category": category,
+                    "tags": tags,
+                    "tick": resolved_tick,
+                    "linked_ticks": linked_ticks,
+                    "cat_id": target_id,
+                },
             )
             if res.get("status") == "saved":
                 return res
@@ -281,7 +305,12 @@ async def write_coach_note(
             pass
 
     record = store.append_coach_memory(
-        note=note, category=category, tags=tags, linked_ticks=linked_ticks, agent_id=target_id
+        note=note,
+        category=category,
+        tags=tags,
+        tick=resolved_tick,
+        linked_ticks=linked_ticks,
+        agent_id=target_id,
     )
     return {"status": "saved", "memory": record}
 
@@ -294,7 +323,11 @@ async def read_coach_notes(
 ) -> Dict[str, Any]:
     """Searches and retrieves historical entries from the Evil Coach's tactical notebook."""
     target_id = cat_id or "cat-3"
-    mcp_url = os.environ.get("CAT_MCP_SERVER_URL") or os.environ.get("MCP_SERVER_URL") or "http://127.0.0.1:9050"
+    mcp_url = (
+        os.environ.get("CAT_MCP_SERVER_URL")
+        or os.environ.get("MCP_SERVER_URL")
+        or ("" if "PYTEST_CURRENT_TEST" in os.environ else "http://127.0.0.1:9050")
+    )
     if mcp_url:
         try:
             from app.mcp.client import MCPClient
@@ -463,10 +496,10 @@ async def a2a_send_coach_message(
 
 async def a2a_broadcast(
     message: str,
-    impersonate_cat: bool = True,
+    impersonate_cat: bool = False,
     cat_id: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Publicly broadcasts an Agent-to-Agent (A2A) message across the arena asynchronously."""
+    """Publicly broadcasts an Agent-to-Agent (A2A) message across the arena to all peer Coaches asynchronously."""
     return await a2a_send_coach_message(
         recipient="*",
         message=message,
@@ -717,6 +750,7 @@ general_radio_agent = LlmAgent(
         pull_transcript,
         read_coach_notes,
         a2a_read_coach_messages,
+        a2a_broadcast,
         a2a_send_coach_message,
     ],
     generate_content_config=types.GenerateContentConfig(
@@ -773,6 +807,8 @@ def build_coach_eval_prompt(
         notes_lines = []
         for m in memories:
             m_tick = m.get("tick")
+            if m_tick is None and isinstance(m.get("linked_ticks"), list) and m["linked_ticks"]:
+                m_tick = m["linked_ticks"][-1]
             tick_prefix = f"Tick #{m_tick} | " if m_tick is not None else ""
             notes_lines.append(f"- [{tick_prefix}{m.get('category', 'strat')}] {m.get('note')}")
     else:
@@ -1055,6 +1091,7 @@ def _strip_to_directives(text: str) -> str:
 
 
 async def evaluate(records: List[Dict[str, Any]], agent_id: str = "cat-3") -> Tuple[str, str]:
+    global _current_eval_tick
     epoch_at_start = _reset_epoch
     if not records:
         try:
@@ -1070,6 +1107,14 @@ async def evaluate(records: List[Dict[str, Any]], agent_id: str = "cat-3") -> Tu
                 }]
         except Exception:
             pass
+
+    if records and records[-1].get("tick") is not None:
+        try:
+            _current_eval_tick = int(records[-1]["tick"])
+        except (TypeError, ValueError):
+            _current_eval_tick = None
+    else:
+        _current_eval_tick = None
 
     previous_notes = store.read_coaching_notes(agent_id=agent_id).strip()
     if not records or not has_gemini_credentials():

@@ -387,21 +387,38 @@ def create_mcp_server(name: str = "cat-and-mouse-mcp", version: str = "0.1.0") -
     ) -> Dict[str, Any]:
         """Save a coach memory note to disk with optional linked transcript ticks."""
         start = time.perf_counter()
+        resolved_tick = tick
+        if resolved_tick is None:
+            resolved_tick = store._resolve_latest_tick(cat_id or "cat-1")
+        if resolved_tick is None and linked_ticks:
+            try:
+                resolved_tick = int(linked_ticks[-1])
+            except (TypeError, ValueError):
+                pass
+        if resolved_tick is None and "PYTEST_CURRENT_TEST" not in os.environ:
+            try:
+                active_payload, _ = await _fetch_from_game_server("/api/simulations/active/state")
+                if isinstance(active_payload, dict) and active_payload.get("tick") is not None:
+                    resolved_tick = int(active_payload["tick"])
+            except Exception:
+                pass
         record = store.append_coach_memory(
-            note=note, category=category, tags=tags, tick=tick, linked_ticks=linked_ticks, agent_id=cat_id
+            note=note, category=category, tags=tags, tick=resolved_tick, linked_ticks=linked_ticks, agent_id=cat_id
         )
+        stamped_tick = record.get("tick")
         dur = round((time.perf_counter() - start) * 1000, 2)
         res = {"status": "saved", "memory": record}
         preview = (note[:45] + "…") if len(note) > 45 else note
+        tick_tag = f" [Tick #{stamped_tick}]" if stamped_tick is not None else ""
         get_telemetry().record_event(
             event_type="tool_call",
             level="success",
             tool="write_coach_note",
-            arguments={"note": note, "category": category, "tags": tags, "tick": tick, "linked_ticks": linked_ticks, "cat_id": cat_id},
+            arguments={"note": note, "category": category, "tags": tags, "tick": stamped_tick, "linked_ticks": linked_ticks, "cat_id": cat_id},
             duration_ms=dur,
             status="ok",
-            summary=f"write_coach_note ({dur}ms) [{category}] [{cat_id or 'cat-1'}] \"{preview}\"",
-            details={"arguments": {"note": note, "category": category, "tags": tags, "tick": tick, "linked_ticks": linked_ticks, "cat_id": cat_id}, "result": res},
+            summary=f"write_coach_note ({dur}ms){tick_tag} [{category}] [{cat_id or 'cat-1'}] \"{preview}\"",
+            details={"arguments": {"note": note, "category": category, "tags": tags, "tick": stamped_tick, "linked_ticks": linked_ticks, "cat_id": cat_id}, "result": res},
         )
         return res
 
@@ -1143,8 +1160,23 @@ def create_mcp_app(server: Optional[MCPServer] = None):
         tick = body.get("tick")
         linked_ticks = body.get("linked_ticks")
         cat_id = body.get("cat_id") or body.get("agent_id") or "cat-1"
+        resolved_tick = tick
+        if resolved_tick is None:
+            resolved_tick = store._resolve_latest_tick(cat_id)
+        if resolved_tick is None and linked_ticks:
+            try:
+                resolved_tick = int(linked_ticks[-1])
+            except (TypeError, ValueError):
+                pass
+        if resolved_tick is None and "PYTEST_CURRENT_TEST" not in os.environ:
+            try:
+                active_payload, _ = await _fetch_from_game_server("/api/simulations/active/state")
+                if isinstance(active_payload, dict) and active_payload.get("tick") is not None:
+                    resolved_tick = int(active_payload["tick"])
+            except Exception:
+                pass
         record = store.append_coach_memory(
-            note=note, category=category, tags=tags, tick=tick, linked_ticks=linked_ticks, agent_id=cat_id
+            note=note, category=category, tags=tags, tick=resolved_tick, linked_ticks=linked_ticks, agent_id=cat_id
         )
         return JSONResponse({"ok": True, "memory": record})
 

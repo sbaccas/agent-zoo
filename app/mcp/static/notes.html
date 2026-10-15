@@ -1039,12 +1039,13 @@
           badgesDiv.appendChild(catgBadge);
         }
 
-        if (m.tick !== undefined && m.tick !== null) {
-          const tickBadge = document.createElement('span');
-          tickBadge.className = 'badge-tick';
-          tickBadge.innerText = `Tick #${m.tick}`;
-          badgesDiv.appendChild(tickBadge);
-        }
+        const resolvedTick = (m.tick !== undefined && m.tick !== null)
+          ? m.tick
+          : (Array.isArray(m.linked_ticks) && m.linked_ticks.length > 0 ? m.linked_ticks[m.linked_ticks.length - 1] : null);
+        const tickBadge = document.createElement('span');
+        tickBadge.className = 'badge-tick';
+        tickBadge.innerText = resolvedTick !== null ? `Tick #${resolvedTick}` : 'Tick #--';
+        badgesDiv.appendChild(tickBadge);
 
         topRow.appendChild(badgesDiv);
 

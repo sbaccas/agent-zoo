@@ -20,7 +20,6 @@ from google.genai import types
 
 from actors.models import CatTacticalDecision, Observation
 from actors.cat import store
-from actors.a2a.tools import A2A_TOOLS, set_deliberation_context
 from actors.a2a import store as a2a_store
 
 _current_actor_cat: Optional[str] = None
@@ -1329,10 +1328,6 @@ async def query_adk_gemini(
                 )
 
                 legal = obs.legal_actions or ["stay", "north", "south", "east", "west"]
-                eliminated = getattr(obs, "eliminated_cats", []) or []
-                tool_trace = set_deliberation_context(
-                    agent_id=agent_id, tick=obs.tick, round_num=obs.round, eliminated_cats=eliminated
-                )
                 prompt = build_decision_prompt(
                     obs,
                     history=history,
@@ -1376,9 +1371,6 @@ async def query_adk_gemini(
                 if isinstance(decision, dict):
                     decision = CatTacticalDecision(**decision)
 
-                if tool_trace and decision:
-                    decision.tool_calls = list(tool_trace)
-
                 if capture is not None:
                     capture["latency_ms"] = round((time.monotonic() - _started) * 1000)
                     # None means the response carried no usage metadata, which is
@@ -1386,8 +1378,6 @@ async def query_adk_gemini(
                     # purpose: "we did not measure" must not read as "it did not
                     # think" in an experiment about exactly that.
                     capture["thoughts_token_count"] = thoughts_tokens
-                    if tool_trace:
-                        capture["tool_calls"] = list(tool_trace)
 
                 # Every exit below reports *why* it gave up. Returning a bare None here
                 # was what made fallbacks undiagnosable: the UI could only say "not
@@ -1404,8 +1394,6 @@ async def query_adk_gemini(
                                 "strategy": decision.strategy,
                                 "target_id": t_id,
                                 "target_mouse_id": decision.target_mouse_id,
-                                "broadcast_msg": getattr(decision, "broadcast_msg", "") or "",
-                                "tool_calls": getattr(decision, "tool_calls", []) or [],
                             }
                         return decision, "adk_gemini", None
                     else:

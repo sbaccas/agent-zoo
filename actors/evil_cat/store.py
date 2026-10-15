@@ -550,6 +550,22 @@ def get_transcript_ticks_snapshot(ticks: List[int], agent_id: Optional[str] = No
     return snapshots
 
 
+def _resolve_latest_tick(agent_id: Optional[str] = None) -> Optional[int]:
+    """Resolves the latest known simulation tick for the given cat from its transcript."""
+    try:
+        recs = read_transcript_records(agent_id=agent_id)
+        if recs:
+            last = recs[-1]
+            t = last.get("tick")
+            if t is None and isinstance(last.get("observation"), dict):
+                t = last["observation"].get("tick")
+            if t is not None:
+                return int(t)
+    except Exception:
+        pass
+    return None
+
+
 def append_coach_memory(
     note: str,
     category: str = "tactical",
@@ -566,10 +582,16 @@ def append_coach_memory(
     clean_ticks = [int(t) for t in linked_ticks] if linked_ticks else []
     tick_snapshots = get_transcript_ticks_snapshot(clean_ticks, agent_id=resolved_cat_id) if clean_ticks else []
 
+    resolved_tick: Optional[int] = int(tick) if tick is not None else None
+    if resolved_tick is None:
+        resolved_tick = _resolve_latest_tick(resolved_cat_id)
+    if resolved_tick is None and clean_ticks:
+        resolved_tick = clean_ticks[-1]
+
     record = {
         "id": f"mem-{int(time.time() * 1000)}-{unique_suffix}",
         "timestamp": now_str,
-        "tick": tick,
+        "tick": resolved_tick,
         "cat_id": resolved_cat_id,
         "category": category,
         "tags": tags or [],
@@ -608,6 +630,11 @@ def read_coach_memories(
                     rec = json.loads(line)
                     if "cat_id" not in rec:
                         rec["cat_id"] = resolved_cat_id
+                    if rec.get("tick") is None and rec.get("linked_ticks"):
+                        try:
+                            rec["tick"] = int(rec["linked_ticks"][-1])
+                        except Exception:
+                            pass
                     records.append(rec)
                 except json.JSONDecodeError:
                     continue

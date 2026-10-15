@@ -63,8 +63,6 @@ class CatTacticalDecision(BaseModel):
         description="Legacy alias for target_id; ID of targeted mouse or entity",
     )
     strategy: str = Field(default="ROAMING", description="Tactical phase: ATTACK, LUNGE, STALKING, or ROAMING")
-    broadcast_msg: Optional[str] = ""
-    tool_calls: List[Dict[str, Any]] = Field(default_factory=list)
 
     @model_validator(mode="before")
     @classmethod

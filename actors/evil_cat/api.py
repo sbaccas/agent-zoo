@@ -427,8 +427,6 @@ async def act_async(obs: Observation, decoupled: bool = False) -> ActionResponse
                 "strategy": llm_decision.strategy,
                 "target_id": t_id,
                 "target_mouse_id": llm_decision.target_mouse_id,
-                "broadcast_msg": getattr(llm_decision, "broadcast_msg", "") or "",
-                "tool_calls": getattr(llm_decision, "tool_calls", []) or [],
                 "phase": llm_decision.strategy,
             }
             state.last_engine_source = "adk_gemini"
@@ -480,8 +478,6 @@ async def act_async(obs: Observation, decoupled: bool = False) -> ActionResponse
                 auto_meta["strategy"] = llm_decision.strategy
                 auto_meta["target_id"] = t_id
                 auto_meta["target_mouse_id"] = llm_decision.target_mouse_id
-                auto_meta["broadcast_msg"] = getattr(llm_decision, "broadcast_msg", "") or ""
-                auto_meta["tool_calls"] = getattr(llm_decision, "tool_calls", []) or []
                 auto_meta["phase"] = llm_decision.strategy
                 state.last_engine_source = "adk_gemini"
                 state.active_directive = {
@@ -602,22 +598,17 @@ async def act_async(obs: Observation, decoupled: bool = False) -> ActionResponse
 
     maybe_dispatch_evaluation(obs.tick, force=force_eval)
 
-    broadcast_msg = auto_meta.get("broadcast_msg") or ""
-    tool_calls = auto_meta.get("tool_calls") or []
     return ActionResponse(
         action=chosen_action,
         thought=chosen_thought,
-        broadcast_msg=broadcast_msg,
-        tool_calls=tool_calls,
     )
 
 
 def act(obs: Observation, use_llm: bool = True) -> ActionResponse:
     """Synchronous interface for scheduler fallback or direct testing of Evil Cat."""
     if not use_llm:
-        action, thought, meta = compute_heuristic_decision(obs)
-        b_msg = (meta or {}).get("broadcast_msg") or ""
-        return ActionResponse(action=action, thought=thought, broadcast_msg=b_msg)
+        action, thought, _meta = compute_heuristic_decision(obs)
+        return ActionResponse(action=action, thought=thought)
     return run_sync(act_async(obs))
 
 
@@ -787,8 +778,6 @@ class EvilWsClientManager:
             return
 
         meta = state.latest_autonomous.get("meta", {}) if state.latest_autonomous else {}
-        broadcast_msg = getattr(action_resp, "broadcast_msg", "") or meta.get("broadcast_msg", "") or ""
-        tool_calls = getattr(action_resp, "tool_calls", []) or meta.get("tool_calls", []) or []
         try:
             await ws.send(json.dumps({
                 "type": "action",
@@ -797,8 +786,6 @@ class EvilWsClientManager:
                 "thought": action_resp.thought,
                 "strategy": meta.get("strategy", "STALKING"),
                 "target_mouse_id": meta.get("target_mouse_id", ""),
-                "broadcast_msg": broadcast_msg,
-                "tool_calls": tool_calls,
                 "engine": meta.get("engine"),
             }))
         except Exception as err:

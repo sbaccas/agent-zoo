@@ -365,6 +365,8 @@ async def test_answering_machine_auto_reply_when_messaging_dead_cat(tmp_path, mo
     assert "ANSWERING MACHINE" in latest["sender"]
     assert latest["type"] == "AUTO_REPLY"
     assert "cat-1 has been ELIMINATED" in latest["content"]
+    a2a_store._INBOX_CACHE.clear()
+    a2a_store._OUTBOX_CACHE.clear()
 
 
 def test_eval_reset_epoch_increments():

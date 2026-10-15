@@ -589,66 +589,6 @@ class Scheduler:
                     action_val = action_data.get("action")
                     thought = action_data.get("thought", "")
                     strategy = action_data.get("strategy", "")
-                    broadcast_msg = action_data.get("broadcast_msg") or action_data.get("radio_msg")
-                    if broadcast_msg and str(broadcast_msg).strip():
-                        b_text = str(broadcast_msg).strip()
-                        transmission_record = {
-                            "tick": self.tick,
-                            "round": self.round,
-                            "sender_id": cat.id,
-                            "recipient_id": "*",
-                            "message": b_text,
-                            "type": "BROADCAST",
-                            "protocol": "a2a/v1",
-                            "position": {"x": cat.position.x, "y": cat.position.y},
-                        }
-                        self.transmissions.append(transmission_record)
-                        if len(self.transmissions) > 200:
-                            self.transmissions.pop(0)
-                        self.events.append(GameEvent(
-                            tick=self.tick,
-                            round=self.round,
-                            event_type="transmission",
-                            actor_id=cat.id,
-                            position=cat.position,
-                            message=f"📻 [TICK {self.tick} | R{self.round}] RADIO: {cat.id} broadcast: \"{b_text}\"",
-                            details={"sender_id": cat.id, "message": b_text},
-                        ))
-
-                    # Process explicit A2A tool calls (DMs, proposals, broadcasts)
-                    tool_calls = action_data.get("tool_calls") or []
-                    for tc in tool_calls:
-                        t_rec = tc.get("recipient_id", "*")
-                        t_msg = tc.get("message", "")
-                        if t_msg and str(t_msg).strip():
-                            t_text = str(t_msg).strip()
-                            t_type = tc.get("message_type", "DIRECT_MESSAGE" if t_rec not in ("*", "broadcast", "all") else "BROADCAST")
-                            transmission_record = {
-                                "tick": self.tick,
-                                "round": self.round,
-                                "sender_id": cat.id,
-                                "recipient_id": t_rec,
-                                "message": t_text,
-                                "type": t_type,
-                                "protocol": "a2a/v1",
-                                "position": {"x": cat.position.x, "y": cat.position.y},
-                            }
-                            self.transmissions.append(transmission_record)
-                            if len(self.transmissions) > 200:
-                                self.transmissions.pop(0)
-
-                            is_dm = t_rec and t_rec not in ("*", "broadcast", "all")
-                            tag = f"A2A DM: {cat.id} -> {t_rec}" if is_dm else f"A2A BROADCAST: {cat.id}"
-                            self.events.append(GameEvent(
-                                tick=self.tick,
-                                round=self.round,
-                                event_type="a2a_message",
-                                actor_id=cat.id,
-                                target_id=t_rec if is_dm else None,
-                                position=cat.position,
-                                message=f"📻 [TICK {self.tick} | R{self.round}] {tag}: \"{t_text}\"",
-                                details=transmission_record,
-                            ))
                     print(f"🤖 [WS AGENT {cat.id} @ Tick {self.tick}] -> {action_val} | Strategy: {strategy} | Thought: \"{thought}\"", flush=True)
                 elif collected.status == COLLECT_STALE:
                     print(f"🗑️ [WS AGENT {cat.id} @ Tick {self.tick}] Discarded answer to tick {collected.answered_tick} (board is at {collected.expected_tick}) -> heuristic", flush=True)
@@ -671,18 +611,6 @@ class Scheduler:
                                 data = resp.json()
                                 action_val = data.get("action")
                                 thought = data.get("thought", "")
-                                broadcast_msg = data.get("broadcast_msg") or data.get("radio_msg")
-                                if broadcast_msg and str(broadcast_msg).strip():
-                                    b_text = str(broadcast_msg).strip()
-                                    self.transmissions.append({
-                                        "tick": self.tick,
-                                        "round": self.round,
-                                        "sender_id": cat.id,
-                                        "message": b_text,
-                                        "position": {"x": cat.position.x, "y": cat.position.y},
-                                    })
-                                    if len(self.transmissions) > 200:
-                                        self.transmissions.pop(0)
                                 self.consecutive_http_errors[cat.id] = 0
                                 print(f"🤖 [HTTP AGENT {cat.id} @ Tick {self.tick}] -> {action_val} | Thought: \"{thought}\"", flush=True)
                     except Exception as err:
@@ -698,27 +626,6 @@ class Scheduler:
                 else:
                     act_res = cat_agent_act(cat_obs, use_llm=False)
                 action_val = act_res.action
-                b_msg = getattr(act_res, "broadcast_msg", None)
-                if b_msg and str(b_msg).strip():
-                    b_text = str(b_msg).strip()
-                    self.transmissions.append({
-                        "tick": self.tick,
-                        "round": self.round,
-                        "sender_id": cat.id,
-                        "message": b_text,
-                        "position": {"x": cat.position.x, "y": cat.position.y},
-                    })
-                    if len(self.transmissions) > 200:
-                        self.transmissions.pop(0)
-                    self.events.append(GameEvent(
-                        tick=self.tick,
-                        round=self.round,
-                        event_type="transmission",
-                        actor_id=cat.id,
-                        position=cat.position,
-                        message=f"📻 [TICK {self.tick} | R{self.round}] RADIO: {cat.id} broadcast: \"{b_text}\"",
-                        details={"sender_id": cat.id, "message": b_text},
-                    ))
 
             if action_val in [a.value for a in ActionType]:
                 planned_cat_actions.append((cat, ActionType(action_val)))

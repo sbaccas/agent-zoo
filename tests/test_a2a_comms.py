@@ -568,4 +568,54 @@ async def test_coach_cat_radio_impersonation(monkeypatch):
     a2a_store.clear_a2a_history("cat-2")
 
 
+@pytest.mark.asyncio
+async def test_cat_actor_has_no_broadcast_field_while_coaches_have_a2a_broadcast(monkeypatch):
+    """Cat Actors must never spend tokens/budget on broadcast_msg, whereas all Coaches have a2a_broadcast."""
+    assert "broadcast_msg" not in CatTacticalDecision.model_fields
+    assert "tool_calls" not in CatTacticalDecision.model_fields
+
+    from actors.cat.subagents import eval as cat_eval
+    from actors.evil_cat import eval as evil_eval
+    from actors.a2a.models import A2AResponse
+
+    cat_eval_tools = [getattr(t, "__name__", str(t)) for t in cat_eval.eval_agent.tools]
+    cat_general_tools = [getattr(t, "__name__", str(t)) for t in cat_eval.general_agent.tools]
+    evil_eval_tools = [getattr(t, "__name__", str(t)) for t in evil_eval.eval_agent.tools]
+    evil_radio_tools = [getattr(t, "__name__", str(t)) for t in evil_eval.general_radio_agent.tools]
+
+    assert "a2a_broadcast" in cat_eval_tools
+    assert "a2a_broadcast" in cat_general_tools
+    assert "a2a_broadcast" in evil_eval_tools
+    assert "a2a_broadcast" in evil_radio_tools
+
+    sent = []
+
+    async def mock_send(sender_id, recipient_id, content, message_type="DIRECT_MESSAGE", **kwargs):
+        sent.append((sender_id, recipient_id, content, message_type))
+        return A2AResponse(
+            status="delivered",
+            message_id="msg_bcast_test",
+            sender_id=sender_id,
+            recipient_id=recipient_id,
+        )
+
+    monkeypatch.setattr("actors.a2a.client.send_a2a_message", mock_send)
+
+    res1 = await cat_eval.a2a_broadcast("Northern sector is clear, let us split.", cat_id="cat-1")
+    assert res1["status"] == "delivered"
+    assert res1["sender"] == "coach(cat-1)"
+    assert res1["recipient"] == "*"
+
+    res3 = await evil_eval.a2a_broadcast("Spotted mouse cluster in SE corner!", cat_id="cat-3")
+    assert res3["status"] == "delivered"
+    assert res3["sender"] == "coach(cat-3)"
+    assert res3["recipient"] == "*"
+
+    assert sent == [
+        ("coach(cat-1)", "*", "Northern sector is clear, let us split.", "BROADCAST"),
+        ("coach(cat-3)", "*", "Spotted mouse cluster in SE corner!", "BROADCAST"),
+    ]
+
+
+
 
