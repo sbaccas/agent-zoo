@@ -10,6 +10,7 @@ Responsible for:
 from __future__ import annotations
 
 import asyncio
+import copy
 from datetime import datetime, timezone
 import json
 import logging
@@ -102,12 +103,24 @@ def _boxscore_unavailable(reason: str) -> Dict[str, Any]:
     return {"available": False, "reason": reason}
 
 
+_TOOL_RESPONSE_CACHE: Dict[str, Tuple[float, Dict[str, Any]]] = {}
+_TOOL_CACHE_TTL_SEC = 12.0
+
+
 async def get_boxscore() -> Dict[str, Any]:
     """Reads the game engine's box score for the game currently in progress."""
     if not _boxscore_fetch_enabled():
         return _boxscore_unavailable(
             f"box score fetch is switched off ({BOXSCORE_FETCH_ENV}=0)"
         )
+
+    use_cache = "PYTEST_CURRENT_TEST" not in os.environ
+    cache_key = f"boxscore:{BOXSCORE_SIM_ID}:{_reset_epoch}"
+    now = time.monotonic()
+    if use_cache and cache_key in _TOOL_RESPONSE_CACHE:
+        cached_at, cached_val = _TOOL_RESPONSE_CACHE[cache_key]
+        if now - cached_at <= _TOOL_CACHE_TTL_SEC:
+            return copy.deepcopy(cached_val)
 
     mcp_url = (
         os.environ.get("CAT_MCP_SERVER_URL")
@@ -125,6 +138,8 @@ async def get_boxscore() -> Dict[str, Any]:
                     {k: v for k, v in c.items() if k != "position"} if isinstance(c, dict) else c
                     for c in res["cats"]
                 ]
+            if use_cache:
+                _TOOL_RESPONSE_CACHE[cache_key] = (now, copy.deepcopy(res))
             return res
         if isinstance(res, dict) and res.get("available") is False:
             return res
@@ -139,6 +154,14 @@ async def get_coverage_map() -> Dict[str, Any]:
     if not _boxscore_fetch_enabled():
         return {"available": False, "reason": f"coverage map fetch is switched off ({BOXSCORE_FETCH_ENV}=0)"}
 
+    use_cache = "PYTEST_CURRENT_TEST" not in os.environ
+    cache_key = f"coverage_map:{BOXSCORE_SIM_ID}:cat-3:{_reset_epoch}"
+    now = time.monotonic()
+    if use_cache and cache_key in _TOOL_RESPONSE_CACHE:
+        cached_at, cached_val = _TOOL_RESPONSE_CACHE[cache_key]
+        if now - cached_at <= _TOOL_CACHE_TTL_SEC:
+            return copy.deepcopy(cached_val)
+
     mcp_url = (
         os.environ.get("CAT_MCP_SERVER_URL")
         or os.environ.get("MCP_SERVER_URL")
@@ -150,6 +173,8 @@ async def get_coverage_map() -> Dict[str, Any]:
         client = MCPClient(base_url=mcp_url)
         res = await client.call_tool("get_coverage_map", {"sim_id": BOXSCORE_SIM_ID, "cat_id": "cat-3"})
         if isinstance(res, dict) and (res.get("available") is not False or "ascii" in res):
+            if use_cache:
+                _TOOL_RESPONSE_CACHE[cache_key] = (now, copy.deepcopy(res))
             return res
         if isinstance(res, dict) and res.get("available") is False:
             return res
@@ -727,12 +752,9 @@ eval_agent = LlmAgent(
         get_boxscore,
         get_coverage_map,
         get_event_reel,
-        pull_transcript,
         write_coach_note,
-        read_coach_notes,
         a2a_broadcast,
         a2a_send_coach_message,
-        a2a_read_coach_messages,
         a2a_get_peer_coach_card,
     ],
     generate_content_config=types.GenerateContentConfig(
@@ -802,7 +824,7 @@ def build_coach_eval_prompt(
         k: v for k, v in scoreboard.items() if str(k).lower() in eliminated_set
     }
 
-    memories = store.read_coach_memories(limit=5, agent_id=agent_id)
+    memories = store.read_coach_memories(limit=10, agent_id=agent_id)
     if memories:
         notes_lines = []
         for m in memories:
@@ -814,7 +836,7 @@ def build_coach_eval_prompt(
     else:
         notes_lines = ["(No memories yet)"]
 
-    inbox = a2a_store.get_coach_inbox(agent_id, limit=5)
+    inbox = a2a_store.get_coach_inbox(agent_id, limit=10)
     if inbox:
         inbox_lines = []
         for m in inbox:
@@ -866,7 +888,7 @@ def build_coach_eval_prompt(
     history_lines: List[str] = []
     obs_payload_entries: List[str] = []
     for r in last_10_ticks:
-        r_obs = r.get("observation") if isinstance(r.get("observation"), dict) else {}
+        r_obs = r.get("observation") if isinstance(r_obs_raw := r.get("observation"), dict) else {}
         r_tick = r.get("tick", r_obs.get("tick", "?"))
         r_self = r_obs.get("self") if isinstance(r_obs.get("self"), dict) else {}
         r_pos = r_self.get("position") or {"x": r.get("x", 0), "y": r.get("y", 0)}
@@ -907,8 +929,13 @@ def build_coach_eval_prompt(
             f"| HP: {r_hp}/{r_max_hp} | Score: {r_score} | Saw: {seen_str} "
             f"| Action: {r_act} [{status_str}] ({r_source}) | Reasoning: \"{r_thought}\""
         )
+        slim_obs = {
+            k: v
+            for k, v in r_obs.items()
+            if k not in ("incoming_transmissions", "capabilities")
+        }
         obs_payload_entries.append(
-            f"[Tick #{r_tick} Observation Payload]:\n{json.dumps(r_obs, indent=2)}"
+            f"[Tick #{r_tick} Observation Payload]:\n{json.dumps(slim_obs, separators=(',', ':'))}"
         )
 
     last_10_history_block = (

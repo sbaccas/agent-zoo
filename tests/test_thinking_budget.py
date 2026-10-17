@@ -48,12 +48,11 @@ def test_the_budget_starts_on_the_documented_default():
     order was measured under that 0, so moving it is a change to the conditions
     of a documented result and should fail here first.
 
-    0 -> 256 -> 512. The second move accompanied widening the cat's viewport to
-    13x11: more entities per observation means more per-mouse frame rotations,
-    which is what the scratchpad is spent on when aim assist is off.
+    0 -> 256 -> 512 -> 128. Tuned to 128 tokens for fast per-tick tactical
+    execution across all cat actors without triggering TPM quota exhaustion.
     """
-    assert actor.THINKING_BUDGET_DEFAULT == 512
-    assert actor.get_thinking_budget() == 512
+    assert actor.THINKING_BUDGET_DEFAULT == 128
+    assert actor.get_thinking_budget() == 128
 
 
 def test_the_environment_can_seed_the_budget(monkeypatch):

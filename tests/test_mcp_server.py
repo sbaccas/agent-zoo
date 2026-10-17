@@ -261,14 +261,15 @@ async def test_mcp_server_client_over_sse():
 
 
 def test_eval_agent_has_mcp_tools():
-    """Coach evaluator agent is equipped with the new tools."""
+    """Coach evaluator agent is equipped with write/telemetry tools while redundant read tools are pre-injected."""
     tool_names = [getattr(t, "__name__", None) or getattr(t, "name", None) for t in ev.eval_agent.tools]
     assert "get_boxscore" in tool_names
     assert "get_coverage_map" in tool_names
     assert "get_event_reel" in tool_names
-    assert "pull_transcript" in tool_names
     assert "write_coach_note" in tool_names
-    assert "read_coach_notes" in tool_names
+    assert "pull_transcript" not in tool_names
+    assert "read_coach_notes" not in tool_names
+    assert "a2a_read_coach_messages" not in tool_names
 
 
 def test_general_agent_has_mcp_tools():
@@ -283,8 +284,9 @@ def test_general_agent_has_mcp_tools():
 @pytest.mark.asyncio
 async def test_adk_canonical_declarations_for_new_tools():
     """ADK successfully derives valid schema declarations for the new tools."""
-    tools = await ev.eval_agent.canonical_tools()
-    by_name = {t.name: t for t in tools}
+    eval_tools = await ev.eval_agent.canonical_tools()
+    general_tools = await ev.general_agent.canonical_tools()
+    by_name = {t.name: t for t in [*eval_tools, *general_tools]}
 
     for expected_name in ["get_event_reel", "pull_transcript", "write_coach_note", "read_coach_notes"]:
         assert expected_name in by_name

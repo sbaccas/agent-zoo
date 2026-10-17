@@ -16,6 +16,7 @@ change when it does, because the evaluator never reaches back into the Actor.
 """
 
 import asyncio
+import copy
 from datetime import datetime, timezone
 import json
 import logging
@@ -378,6 +379,10 @@ def _boxscore_unavailable(reason: str) -> Dict[str, Any]:
     return {"available": False, "reason": reason}
 
 
+_TOOL_RESPONSE_CACHE: Dict[str, Tuple[float, Dict[str, Any]]] = {}
+_TOOL_CACHE_TTL_SEC = 12.0
+
+
 async def get_boxscore() -> Dict[str, Any]:
     """Reads the game engine's box score for the game currently in progress.
 
@@ -416,6 +421,14 @@ async def get_boxscore() -> Dict[str, Any]:
             f"box score fetch is switched off ({BOXSCORE_FETCH_ENV}=0)"
         )
 
+    use_cache = "PYTEST_CURRENT_TEST" not in os.environ
+    cache_key = f"boxscore:{BOXSCORE_SIM_ID}:{_reset_epoch}"
+    now = time.monotonic()
+    if use_cache and cache_key in _TOOL_RESPONSE_CACHE:
+        cached_at, cached_val = _TOOL_RESPONSE_CACHE[cache_key]
+        if now - cached_at <= _TOOL_CACHE_TTL_SEC:
+            return copy.deepcopy(cached_val)
+
     mcp_url = (
         os.environ.get("CAT_MCP_SERVER_URL")
         or os.environ.get("MCP_SERVER_URL")
@@ -432,6 +445,8 @@ async def get_boxscore() -> Dict[str, Any]:
                     {k: v for k, v in c.items() if k != "position"} if isinstance(c, dict) else c
                     for c in res["cats"]
                 ]
+            if use_cache:
+                _TOOL_RESPONSE_CACHE[cache_key] = (now, copy.deepcopy(res))
             return res
         if isinstance(res, dict) and res.get("available") is False:
             return res
@@ -456,6 +471,15 @@ async def get_coverage_map() -> Dict[str, Any]:
             f"coverage map fetch is switched off ({BOXSCORE_FETCH_ENV}=0)"
         )
 
+    target_cat = _resolve_target_cat()
+    use_cache = "PYTEST_CURRENT_TEST" not in os.environ
+    cache_key = f"coverage_map:{BOXSCORE_SIM_ID}:{target_cat}:{_reset_epoch}"
+    now = time.monotonic()
+    if use_cache and cache_key in _TOOL_RESPONSE_CACHE:
+        cached_at, cached_val = _TOOL_RESPONSE_CACHE[cache_key]
+        if now - cached_at <= _TOOL_CACHE_TTL_SEC:
+            return copy.deepcopy(cached_val)
+
     mcp_url = (
         os.environ.get("CAT_MCP_SERVER_URL")
         or os.environ.get("MCP_SERVER_URL")
@@ -465,9 +489,10 @@ async def get_coverage_map() -> Dict[str, Any]:
     try:
         from app.mcp.client import MCPClient
         client = MCPClient(base_url=mcp_url)
-        target_cat = _resolve_target_cat()
         res = await client.call_tool("get_coverage_map", {"sim_id": BOXSCORE_SIM_ID, "cat_id": target_cat})
         if isinstance(res, dict) and (res.get("available") is not False or "ascii" in res):
+            if use_cache:
+                _TOOL_RESPONSE_CACHE[cache_key] = (now, copy.deepcopy(res))
             return res
         if isinstance(res, dict) and res.get("available") is False:
             return res
@@ -937,12 +962,9 @@ eval_agent = LlmAgent(
         get_boxscore,
         get_coverage_map,
         get_event_reel,
-        pull_transcript,
         write_coach_note,
-        read_coach_notes,
         a2a_broadcast,
         a2a_send_coach_message,
-        a2a_read_coach_messages,
         a2a_get_peer_coach_card,
     ],
     generate_content_config=types.GenerateContentConfig(
@@ -1149,7 +1171,11 @@ def format_transcript(records: List[Dict[str, Any]]) -> str:
             )
         else:
             seen = "nothing"
-        action = (r.get("action") or "stay").upper()
+        raw_action = r.get("action") or "stay"
+        if isinstance(raw_action, dict):
+            action = str(raw_action.get("direction") or raw_action.get("action") or "stay").upper()
+        else:
+            action = str(raw_action).upper()
         thought = r.get("thought") or ""
         # A "cooldown" row is a tick the cat was locked: it observed the board but
         # the engine discarded whatever it returned. Rendering these the same as
@@ -1359,7 +1385,7 @@ def build_eval_prompt(
             f"{coach_directive.strip()}\n\n"
         )
 
-    memories = store.read_coach_memories(limit=5, agent_id=target_cat)
+    memories = store.read_coach_memories(limit=10, agent_id=target_cat)
     notebook_block = ""
     if memories:
         notes_lines = []
@@ -1404,7 +1430,7 @@ def build_eval_prompt(
         if eliminated_cats:
             elim_items = ", ".join(
                 f"{cid} (final score before death: {eliminated_scoreboard.get(cid, 0)})"
-                for cid in eliminated_cats
+            for cid in eliminated_cats
             )
             elim_line = (
                 f"Eliminated / Dead Cats [DO NOT TARGET OR MESSAGE — ALREADY DEAD]: {elim_items}\n"
@@ -1417,9 +1443,11 @@ def build_eval_prompt(
 
     # No tick indices reach the model -- not on the lines, not in this
     # header. See format_transcript() for why.
+    recent_window = records[-25:] if records else []
+    rendered_window = format_transcript(recent_window) if recent_window else "(No play recorded yet)"
     transcript_block = (
-        f"--- CAT TRANSCRIPT STATUS ({len(records)} consecutive ticks recorded) ---\n"
-        "(Query recent slices on demand via pull_transcript)\n\n"
+        f"--- CAT TRANSCRIPT SLIDING WINDOW (last {len(recent_window)} of {len(records)} consecutive ticks recorded) ---\n"
+        f"{rendered_window}\n\n"
     )
 
     # A2A Strategic Peer Comms block
@@ -1515,7 +1543,7 @@ def build_eval_prompt(
                     "text": notebook_block,
                 },
                 "transcript_status": {
-                    "label": f"Cat Transcript Status ({len(records)} consecutive ticks recorded)",
+                    "label": f"Cat Transcript Sliding Window (last {len(recent_window)} of {len(records)} ticks)",
                     "delivered": bool(records),
                     "text": transcript_block,
                 },

@@ -169,7 +169,7 @@ THINKING_BUDGET_MIN, THINKING_BUDGET_MAX, THINKING_CAN_BE_DISABLED = (
 #     10/10 vs 1/10 result was measured at budget 0. It has not been re-measured
 #     with a real scratchpad available, and the field order is retained on the
 #     assumption that it is still neutral-to-helpful rather than on evidence.
-THINKING_BUDGET_DEFAULT = 512
+THINKING_BUDGET_DEFAULT = 128
 
 DEFAULT_THINKING_BUDGET_ENV = "CAT_THINKING_BUDGET"
 
