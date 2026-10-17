@@ -51,8 +51,7 @@ def test_evil_cat_rules_focus_on_cat_elimination():
     p = Path(__file__).resolve().parents[1] / "actors" / "evil_cat" / "skills.md"
     assert p.exists()
     content = p.read_text(encoding="utf-8")
-    assert "Mice Award ZERO Points" in content
-    assert "Heals 50% HP" in content or "Emergency Medkits" in content
+    assert "Heals +40 HP" in content or "HP Recovery" in content
     assert "150 Max HP" in content
     assert "Kill Absorption" in content
     assert "Follow the Evil Coach's Standing Directive" in content

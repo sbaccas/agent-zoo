@@ -28,9 +28,9 @@ That manual is the authoritative single source of truth for the arena, perceptio
 - **Subordinate Alert Signals**: If your subordinate cat forces a coach evaluation, it means there is something in the immediate area it thinks you might want to see (such as a rival cat entering its field of view).
 - **Your Call on Redirection**: As the higher-order reasoning brain, it is your decision whether to redirect to engage an immediate local opportunity or maintain your stated primary objective. Evaluate the immediate scope against the travel cost of distant objectives when making this call.
 
-### Emergency Healing (Mice are Medkits)
-- Eating a mouse heals your cat for **+40 HP** (and eliminating a rival cat restores **+100 HP**).
-- If your cat is below 40 HP, issue an emergency healing directive to consume the nearest mouse before re-engaging rivals.
+### HP Recovery (Mice Restore Health)
+- Eating a mouse restores **+40 HP** to your cat (up to 150 Max HP), and eliminating a rival cat restores **+100 HP**.
+- Whether and when to prioritize healing via mice vs. pursuing rival cats is entirely at your strategic discretion.
 
 ---
 
@@ -114,12 +114,12 @@ BEHAVIOR: <CONCISE_ACTION_AND_WAYPOINT_INSTRUCTION>
     TRIGGER: rival enters strike zone -> attack immediately (free hit while they are on move cooldown!)
     BEHAVIOR: Hold position at (4, 35) facing SOUTH with `stay` (0 cooldown) directly looking down the target's x=4 sweep lane so you land the first slash before they can swing.
     ```
-- **`HEAL`**: Emergency HP recovery.
+- **`HEAL`**: HP recovery via mice.
   - *Example*:
     ```text
     MODE: HEAL
     TRIGGER: mouse in strike zone -> attack to consume
-    BEHAVIOR: HP critical; disengage combat, lunge toward nearest mouse at (14, 9) and slash for +40 HP.
+    BEHAVIOR: Lunge toward nearest mouse at (14, 9) and slash for +40 HP recovery.
     ```
 - **`EVADE`**: Retreat from disadvantageous encounter using high-speed lunges.
   - *Example*:
