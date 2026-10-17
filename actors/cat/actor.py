@@ -1280,6 +1280,10 @@ def build_decision_prompt(
     return prompt
 
 
+from app.otel.decorators import record_genai_metrics, traced_genai
+
+
+@traced_genai(role="actor", model=ACTOR_MODEL, span_name="genai.actor_deliberation")
 async def query_adk_gemini(
     obs: Observation,
     history: Optional[List[Dict[str, Any]]] = None,
@@ -1313,6 +1317,11 @@ async def query_adk_gemini(
     session_id = f"session_{agent_id}"
 
     timeout_sec = get_deliberation_timeout()
+    _started = time.monotonic()
+    ttft_ms: Optional[float] = None
+    input_tokens = 0
+    output_tokens = 0
+    thoughts_tokens: Optional[int] = None
     try:
         async with asyncio.timeout(timeout_sec):
             async with _llm_lock:
@@ -1339,23 +1348,27 @@ async def query_adk_gemini(
 
                 msg = types.Content(role="user", parts=[types.Part.from_text(text=prompt)])
                 decision = None
-                # What the model actually billed for thinking on this call. The
-                # budget is a ceiling, not a spend: at AUTO especially, the only way
-                # to know whether the cat thought at all is to read it back. Summed
-                # across events because a single decision can arrive as several.
-                thoughts_tokens: Optional[int] = None
                 _started = time.monotonic()
 
                 agen = adk_runner.run_async(user_id=user_id, session_id=session_id, new_message=msg)
                 try:
                     while True:
                         event = await agen.__anext__()
+                        if ttft_ms is None:
+                            ttft_ms = round((time.monotonic() - _started) * 1000.0, 2)
                         if event.error_code or event.error_message:
                             raise RuntimeError(f"ADK Error: {event.error_code} - {event.error_message}")
                         usage = getattr(event, "usage_metadata", None)
-                        spent = getattr(usage, "thoughts_token_count", None) if usage else None
-                        if spent is not None:
-                            thoughts_tokens = (thoughts_tokens or 0) + int(spent)
+                        if usage:
+                            p_tok = getattr(usage, "prompt_token_count", None)
+                            c_tok = getattr(usage, "candidates_token_count", None)
+                            spent = getattr(usage, "thoughts_token_count", None)
+                            if p_tok is not None:
+                                input_tokens = max(input_tokens, int(p_tok))
+                            if c_tok is not None:
+                                output_tokens = max(output_tokens, int(c_tok))
+                            if spent is not None:
+                                thoughts_tokens = (thoughts_tokens or 0) + int(spent)
                         if event.actions and event.actions.state_delta and "decision" in event.actions.state_delta:
                             decision = event.actions.state_delta["decision"]
                         elif event.content and event.content.parts:
@@ -1371,12 +1384,10 @@ async def query_adk_gemini(
                 if isinstance(decision, dict):
                     decision = CatTacticalDecision(**decision)
 
+                lat_ms = round((time.monotonic() - _started) * 1000.0, 2)
                 if capture is not None:
-                    capture["latency_ms"] = round((time.monotonic() - _started) * 1000)
-                    # None means the response carried no usage metadata, which is
-                    # not the same as zero thinking. Left distinguishable on
-                    # purpose: "we did not measure" must not read as "it did not
-                    # think" in an experiment about exactly that.
+                    capture["latency_ms"] = round(lat_ms)
+                    capture["ttft_ms"] = ttft_ms
                     capture["thoughts_token_count"] = thoughts_tokens
 
                 # Every exit below reports *why* it gave up. Returning a bare None here
@@ -1395,6 +1406,17 @@ async def query_adk_gemini(
                                 "target_id": t_id,
                                 "target_mouse_id": decision.target_mouse_id,
                             }
+                        record_genai_metrics(
+                            role="actor",
+                            model=ACTOR_MODEL,
+                            latency_ms=lat_ms,
+                            ttft_ms=ttft_ms,
+                            input_tokens=input_tokens,
+                            output_tokens=output_tokens,
+                            thinking_tokens=thoughts_tokens or 0,
+                            status="OK",
+                            decision_source="adk_gemini",
+                        )
                         return decision, "adk_gemini", None
                     else:
                         reason = (
@@ -1402,24 +1424,59 @@ async def query_adk_gemini(
                             f"(legal: {legal})"
                         )
                         print(f"[ADK Warning] {reason}", flush=True)
+                        record_genai_metrics(
+                            role="actor",
+                            model=ACTOR_MODEL,
+                            latency_ms=lat_ms,
+                            ttft_ms=ttft_ms,
+                            input_tokens=input_tokens,
+                            output_tokens=output_tokens,
+                            thinking_tokens=thoughts_tokens or 0,
+                            status="ERROR",
+                            decision_source="heuristic_fallback",
+                            error_type="illegal_action",
+                        )
                         return None, "heuristic_fallback", reason
 
     except asyncio.TimeoutError:
-        # Names the thinking budget too: once it is adjustable, overrunning
-        # this ceiling is the expected consequence of having raised it, and
-        # a reason that omits the cause sends you looking at the network.
+        lat_ms = round((time.monotonic() - _started) * 1000.0, 2)
         reason = (
             f"Gemini call exceeded the {timeout_sec:g}s deliberation "
             f"budget (thinking budget: "
             f"{describe_thinking_budget(get_thinking_budget())})"
         )
         print(f"[ADK Timeout] {reason} (falling back to heuristics)", flush=True)
+        record_genai_metrics(
+            role="actor",
+            model=ACTOR_MODEL,
+            latency_ms=lat_ms,
+            ttft_ms=ttft_ms,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            thinking_tokens=thoughts_tokens or 0,
+            status="ERROR",
+            decision_source="heuristic_fallback",
+            error_type="timeout",
+        )
         return None, "heuristic_fallback", reason
 
     except Exception as exc:
+        lat_ms = round((time.monotonic() - _started) * 1000.0, 2)
         err_msg = str(exc)
         mark_auth_error(err_msg)
         print(f"[ADK Error] Gemini execution failure: {err_msg} (falling back to heuristics)", flush=True)
+        record_genai_metrics(
+            role="actor",
+            model=ACTOR_MODEL,
+            latency_ms=lat_ms,
+            ttft_ms=ttft_ms,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            thinking_tokens=thoughts_tokens or 0,
+            status="ERROR",
+            decision_source="heuristic_fallback",
+            error_type=err_msg,
+        )
         return None, "heuristic_fallback", err_msg
 
     return None, "heuristic_fallback", "model returned no parseable decision"

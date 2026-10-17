@@ -107,10 +107,20 @@
   function resizeCanvas() {
     if (!canvasWrapper) return;
     const rect = canvasWrapper.getBoundingClientRect();
-    const size = Math.min(rect.width - 24, rect.height - 24, 1000);
-    if (size > 100) {
-      canvas.width = Math.floor(size);
-      canvas.height = Math.floor(size);
+    const boardW = currentState?.width || 100;
+    const boardH = currentState?.height || 100;
+    const aspect = boardW / Math.max(1, boardH);
+    const maxW = Math.min(rect.width - 24, 1600);
+    const maxH = Math.min(rect.height - 24, 1000);
+    if (maxW > 100 && maxH > 100) {
+      let w = maxW;
+      let h = w / aspect;
+      if (h > maxH) {
+        h = maxH;
+        w = h * aspect;
+      }
+      canvas.width = Math.max(100, Math.floor(w));
+      canvas.height = Math.max(100, Math.floor(h));
       if (currentState) {
         renderBoard(currentState);
       }
@@ -1682,7 +1692,13 @@
     metricCaptures.textContent = String(state.captures || 0);
     metricDimensions.textContent = `${state.width || 100} × ${state.height || 100}`;
 
-    renderBoard(state);
+    const targetAspect = (state.width || 100) / Math.max(1, state.height || 100);
+    const currentAspect = canvas.width / Math.max(1, canvas.height);
+    if (Math.abs(targetAspect - currentAspect) > 0.05) {
+      resizeCanvas();
+    } else {
+      renderBoard(state);
+    }
     renderEventFeed(state.recent_events);
 
     // Sync Agent Inspector

@@ -1724,10 +1724,48 @@ def create_mcp_app(server: Optional[MCPServer] = None):
         except Exception as exc:
             return JSONResponse({"ok": False, "error": str(exc)}, status_code=500)
 
+    # --- OpenTelemetry & SRE Observability Endpoints ---
+    from starlette.responses import PlainTextResponse
+    from app.otel.setup import get_otel_config, init_otel, render_prometheus_metrics
+    from app.otel.dashboard import (
+        SRE_DASHBOARD_HTML,
+        broadcast_otel_config_update,
+        fetch_cluster_sre_snapshot,
+    )
+
+    _mcp_sre_store = init_otel(service_name="cm-mcp-server", agent_id="mcp-server", port=DEFAULT_MCP_PORT)
+
+    async def sre_dashboard_endpoint(request: Request) -> Response:
+        return HTMLResponse(content=SRE_DASHBOARD_HTML)
+
+    async def prometheus_metrics_endpoint(request: Request) -> Response:
+        return PlainTextResponse(
+            content=render_prometheus_metrics(_mcp_sre_store),
+            media_type="text/plain; version=0.0.4; charset=utf-8",
+        )
+
+    async def sre_status_endpoint(request: Request) -> JSONResponse:
+        return JSONResponse(_mcp_sre_store.get_summary(include_spans=True, span_limit=80))
+
+    async def sre_cluster_endpoint(request: Request) -> JSONResponse:
+        return JSONResponse(await fetch_cluster_sre_snapshot(local_node_id="mcp-server"))
+
+    async def sre_config_endpoint(request: Request) -> JSONResponse:
+        if request.method == "POST":
+            body = await request.json()
+            updated = await broadcast_otel_config_update(body)
+            return JSONResponse(updated)
+        return JSONResponse(get_otel_config())
+
     # Register additional HTTP routes
     app.add_route("/", dashboard_endpoint, methods=["GET"])
     app.add_route("/chat", chat_page_endpoint, methods=["GET"])
     app.add_route("/notes", notes_page_endpoint, methods=["GET"])
+    app.add_route("/sre", sre_dashboard_endpoint, methods=["GET"])
+    app.add_route("/metrics", prometheus_metrics_endpoint, methods=["GET"])
+    app.add_route("/api/sre/status", sre_status_endpoint, methods=["GET"])
+    app.add_route("/api/sre/cluster", sre_cluster_endpoint, methods=["GET"])
+    app.add_route("/api/sre/config", sre_config_endpoint, methods=["GET", "POST"])
     app.add_route("/api/mcp/stream", stream_endpoint, methods=["GET"])
     app.add_route("/api/mcp/status", status_endpoint, methods=["GET"])
     app.add_route("/api/mcp/history", history_endpoint, methods=["GET"])

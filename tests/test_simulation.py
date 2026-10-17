@@ -62,15 +62,17 @@ async def test_simulation_reset():
 
 @pytest.mark.asyncio
 async def test_default_population_is_prey_dense():
-    """250 mice on the default board, not a token handful.
+    """500 mice and 25 cats on the default 100x100 board, not a token handful.
 
     The cat is slower than its prey and loses any straight chase, so encounter
     frequency has to come from density rather than from pursuit skill.
     """
     sim = Simulation()
     state = sim.get_state()
-    assert state.cat_count == 10
-    assert state.mouse_count == 250
+    assert state.width == 100
+    assert state.height == 100
+    assert state.cat_count == 25
+    assert state.mouse_count == 500
 
 
 @pytest.mark.asyncio

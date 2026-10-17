@@ -74,15 +74,16 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     # browser loads to render the UI is in here: the static bundle plus the
     # three HTML shells, which are served by FileResponse routes rather than
     # from the /static mount.
-    _REVALIDATE_EXACT = frozenset({"/", "/settings", "/boxscore", "/heatmap", "/archive", "/gamestats", "/stats"})
+    _REVALIDATE_EXACT = frozenset({"/", "/settings", "/boxscore", "/heatmap", "/archive", "/gamestats", "/stats", "/sre"})
 
     async def dispatch(self, request: Request, call_next):
         response: Response = await call_next(request)
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
+        script_src = "'self' 'unsafe-inline'" if request.url.path == "/sre" else "'self'"
         response.headers["Content-Security-Policy"] = (
             "default-src 'self'; "
-            "script-src 'self'; "
+            f"script-src {script_src}; "
             "style-src 'self' 'unsafe-inline'; "
             "img-src 'self' data:; "
             "connect-src 'self' ws: wss:;"
@@ -172,5 +173,53 @@ async def heatmap_page():
 @app.get("/archive")
 async def archive_page():
     return FileResponse(static_dir / "archive.html")
+
+
+# --- OpenTelemetry & SRE Observability Endpoints ---
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
+from app.otel.setup import get_otel_config, init_otel, render_prometheus_metrics
+from app.otel.dashboard import (
+    SRE_DASHBOARD_HTML,
+    broadcast_otel_config_update,
+    fetch_cluster_sre_snapshot,
+)
+
+_game_sre_store = init_otel(service_name="cm-game-server", agent_id="game-server", port=8000)
+
+
+@app.get("/sre", response_class=HTMLResponse)
+async def sre_dashboard_page():
+    return HTMLResponse(content=SRE_DASHBOARD_HTML)
+
+
+@app.get("/metrics", response_class=PlainTextResponse)
+async def prometheus_metrics_endpoint():
+    return PlainTextResponse(
+        content=render_prometheus_metrics(_game_sre_store),
+        media_type="text/plain; version=0.0.4; charset=utf-8",
+    )
+
+
+@app.get("/api/sre/status")
+async def sre_status_endpoint():
+    return JSONResponse(_game_sre_store.get_summary(include_spans=True, span_limit=80))
+
+
+@app.get("/api/sre/cluster")
+async def sre_cluster_endpoint():
+    return JSONResponse(await fetch_cluster_sre_snapshot(local_node_id="game-server"))
+
+
+@app.get("/api/sre/config")
+async def get_sre_config_endpoint():
+    return JSONResponse(get_otel_config())
+
+
+@app.post("/api/sre/config")
+async def update_sre_config_endpoint(request: Request):
+    body = await request.json()
+    updated = await broadcast_otel_config_update(body)
+    return JSONResponse(updated)
+
 
 

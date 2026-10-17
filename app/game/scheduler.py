@@ -1,6 +1,7 @@
 import logging
 import math
 import random
+import time
 from typing import Any, Dict, List, Optional, Set, Tuple
 import httpx
 from actors.cat.api import act as cat_agent_act, Observation as CatObservation
@@ -13,6 +14,7 @@ from app.game.ws_manager import ws_agent_manager, COLLECT_STALE
 from app.models.action import ActionType
 from app.models.entity import Direction, Entity, EntityType, Position
 from app.models.simulation import GameEvent
+from app.otel.decorators import record_sim_tick_metrics, traced_span
 
 logger = logging.getLogger("simulation.events")
 
@@ -517,7 +519,9 @@ class Scheduler:
                 z for z in self.action_handler.hazard_zones if z.lethal_until_tick >= self.tick
             ]
 
+    @traced_span("sim.tick")
     async def execute_simulation_step(self, skip_entity_id: Optional[str] = None, advance_clock: bool = True) -> int:
+        _tick_start = time.perf_counter()
         if advance_clock:
             self.step_logical_clock()
 
@@ -785,6 +789,17 @@ class Scheduler:
         # simulation nothing.
         await self._dispatch_observations(skip_entity_id=skip_entity_id)
 
+        _tick_dur_ms = (time.perf_counter() - _tick_start) * 1000.0
+        _budget_ms = (self.tick_budget_sec * 1000.0) if self.tick_budget_sec else None
+        record_sim_tick_metrics(
+            tick=self.tick,
+            round_num=self.round,
+            duration_ms=_tick_dur_ms,
+            tick_budget_ms=_budget_ms,
+            alive_cats=len([c for c in cats if c.alive]),
+            alive_mice=len([m for m in mice if m.alive]),
+        )
+
         return self.tick
 
     def _check_game_over(self) -> None:
@@ -848,6 +863,7 @@ class Scheduler:
             },
         ))
 
+    @traced_span("sim.dispatch_observations")
     async def _dispatch_observations(self, skip_entity_id: Optional[str] = None) -> None:
         """Sends each connected agent the observation it will answer next tick.
 

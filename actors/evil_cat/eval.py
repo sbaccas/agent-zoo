@@ -103,10 +103,13 @@ def _boxscore_unavailable(reason: str) -> Dict[str, Any]:
     return {"available": False, "reason": reason}
 
 
+from app.otel.decorators import record_genai_metrics, record_tool_metrics, traced_genai, traced_tool
+
 _TOOL_RESPONSE_CACHE: Dict[str, Tuple[float, Dict[str, Any]]] = {}
 _TOOL_CACHE_TTL_SEC = 12.0
 
 
+@traced_tool(tool_name="get_boxscore")
 async def get_boxscore() -> Dict[str, Any]:
     """Reads the game engine's box score for the game currently in progress."""
     if not _boxscore_fetch_enabled():
@@ -120,6 +123,7 @@ async def get_boxscore() -> Dict[str, Any]:
     if use_cache and cache_key in _TOOL_RESPONSE_CACHE:
         cached_at, cached_val = _TOOL_RESPONSE_CACHE[cache_key]
         if now - cached_at <= _TOOL_CACHE_TTL_SEC:
+            record_tool_metrics("get_boxscore", duration_ms=0.1, status="OK", cached=True)
             return copy.deepcopy(cached_val)
 
     mcp_url = (
@@ -149,6 +153,7 @@ async def get_boxscore() -> Dict[str, Any]:
         return _boxscore_unavailable(f"MCP server unavailable at {mcp_url}: {type(exc).__name__}: {exc}")
 
 
+@traced_tool(tool_name="get_coverage_map")
 async def get_coverage_map() -> Dict[str, Any]:
     """Inspects the spatial grid heatmap showing where cats have spent their ticks across the arena via MCP."""
     if not _boxscore_fetch_enabled():
@@ -160,6 +165,7 @@ async def get_coverage_map() -> Dict[str, Any]:
     if use_cache and cache_key in _TOOL_RESPONSE_CACHE:
         cached_at, cached_val = _TOOL_RESPONSE_CACHE[cache_key]
         if now - cached_at <= _TOOL_CACHE_TTL_SEC:
+            record_tool_metrics("get_coverage_map", duration_ms=0.1, status="OK", cached=True)
             return copy.deepcopy(cached_val)
 
     mcp_url = (
@@ -184,6 +190,7 @@ async def get_coverage_map() -> Dict[str, Any]:
         return {"available": False, "reason": f"MCP server unavailable at {mcp_url}: {type(exc).__name__}: {exc}"}
 
 
+@traced_tool(tool_name="get_event_reel")
 async def get_event_reel(
     limit: Optional[int] = 20,
     since_tick: Optional[int] = None,
@@ -283,6 +290,7 @@ def format_transcript(records: List[Dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+@traced_tool(tool_name="write_coach_note")
 async def write_coach_note(
     note: str,
     category: str = "tactical",
@@ -340,6 +348,7 @@ async def write_coach_note(
     return {"status": "saved", "memory": record}
 
 
+@traced_tool(tool_name="read_coach_notes")
 async def read_coach_notes(
     limit: Optional[int] = 10,
     category: Optional[str] = None,
@@ -370,6 +379,7 @@ async def read_coach_notes(
     return {"available": True, "count": len(memories), "memories": memories}
 
 
+@traced_tool(tool_name="pull_transcript")
 async def pull_transcript(
     last_n: Optional[int] = 50,
     limit: Optional[int] = None,
@@ -412,6 +422,7 @@ async def pull_transcript(
     }
 
 
+@traced_tool(tool_name="a2a_send_coach_message")
 async def a2a_send_coach_message(
     recipient_coach: str = "",
     message: str = "",
@@ -519,6 +530,7 @@ async def a2a_send_coach_message(
         }
 
 
+@traced_tool(tool_name="a2a_broadcast")
 async def a2a_broadcast(
     message: str,
     impersonate_cat: bool = False,
@@ -1117,6 +1129,7 @@ def _strip_to_directives(text: str) -> str:
         return ""
 
 
+@traced_genai(role="coach", model=EVAL_MODEL, span_name="genai.coach_eval")
 async def evaluate(records: List[Dict[str, Any]], agent_id: str = "cat-3") -> Tuple[str, str]:
     global _current_eval_tick
     epoch_at_start = _reset_epoch
@@ -1153,11 +1166,15 @@ async def evaluate(records: List[Dict[str, Any]], agent_id: str = "cat-3") -> Tu
     session_id = f"session_evil_eval_{agent_id}"
 
     started = time.monotonic()
+    ttft_ms: Optional[float] = None
+    input_tokens = 0
+    output_tokens = 0
     budget = _eval_thinking_budget
     timeout_sec = _eval_timeout_sec
     thoughts: Optional[int] = None
     timed_out = False
     cancelled = False
+    eval_err: Optional[str] = None
     tool_calls: List[Dict[str, Any]] = []
     capture: Dict[str, Any] = {}
     out_source = "adk_gemini"
@@ -1183,6 +1200,8 @@ async def evaluate(records: List[Dict[str, Any]], agent_id: str = "cat-3") -> Tu
                 try:
                     while True:
                         event = await agen.__anext__()
+                        if ttft_ms is None:
+                            ttft_ms = round((time.monotonic() - started) * 1000.0, 2)
                         if _reset_epoch != epoch_at_start:
                             cancelled = True
                             return "", "cancelled_by_reset"
@@ -1190,9 +1209,16 @@ async def evaluate(records: List[Dict[str, Any]], agent_id: str = "cat-3") -> Tu
                             continue
 
                         usage = getattr(event, "usage_metadata", None)
-                        spent = getattr(usage, "thoughts_token_count", None)
-                        if spent is not None:
-                            thoughts = (thoughts or 0) + spent
+                        if usage:
+                            p_tok = getattr(usage, "prompt_token_count", None)
+                            c_tok = getattr(usage, "candidates_token_count", None)
+                            spent = getattr(usage, "thoughts_token_count", None)
+                            if p_tok is not None:
+                                input_tokens += int(p_tok)
+                            if c_tok is not None:
+                                output_tokens += int(c_tok)
+                            if spent is not None:
+                                thoughts = (thoughts or 0) + int(spent)
 
                         for p in event.content.parts:
                             fc = getattr(p, "function_call", None)
@@ -1235,11 +1261,13 @@ async def evaluate(records: List[Dict[str, Any]], agent_id: str = "cat-3") -> Tu
                     "thinking_budget": budget,
                     "thoughts_token_count": thoughts,
                     "latency_ms": dur_ms,
+                    "ttft_ms": ttft_ms,
                     "timed_out": False,
                     "tool_calls": tool_calls,
                 })
                 if capture and _reset_epoch == epoch_at_start:
                     capture["latency_ms"] = dur_ms
+                    capture["ttft_ms"] = ttft_ms
                     capture["thinking_budget"] = budget
                     capture["thoughts_token_count"] = thoughts
                     capture["timed_out"] = False
@@ -1255,10 +1283,12 @@ async def evaluate(records: List[Dict[str, Any]], agent_id: str = "cat-3") -> Tu
             raise
         except asyncio.TimeoutError:
             timed_out = True
+            eval_err = "timeout"
             logger.warning("Evil Coach evaluation timed out after %ss", timeout_sec)
         except Exception as exc:
-            mark_auth_error(str(exc))
-            logger.warning("Evil Coach evaluation failed: %s", exc)
+            eval_err = str(exc)
+            mark_auth_error(eval_err)
+            logger.warning("Evil Coach evaluation failed: %s", eval_err)
         finally:
             if not cancelled and _reset_epoch == epoch_at_start:
                 dur_ms = int((time.monotonic() - started) * 1000)
@@ -1266,9 +1296,22 @@ async def evaluate(records: List[Dict[str, Any]], agent_id: str = "cat-3") -> Tu
                     "thinking_budget": budget,
                     "thoughts_token_count": thoughts,
                     "latency_ms": dur_ms,
+                    "ttft_ms": ttft_ms,
                     "timed_out": timed_out,
                     "tool_calls": tool_calls,
                 })
+                record_genai_metrics(
+                    role="coach",
+                    model=EVAL_MODEL,
+                    latency_ms=float(dur_ms),
+                    ttft_ms=ttft_ms,
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                    thinking_tokens=thoughts or 0,
+                    status="ERROR" if (timed_out or eval_err) else "OK",
+                    decision_source="adk_gemini" if not (timed_out or eval_err) else "heuristic_fallback",
+                    error_type=eval_err,
+                )
                 if capture and capture.get("output") is None:
                     fallback_out = (
                         previous_notes
@@ -1276,6 +1319,7 @@ async def evaluate(records: List[Dict[str, Any]], agent_id: str = "cat-3") -> Tu
                         else DEFAULT_STANDING_DIRECTIVE.to_block()
                     )
                     capture["latency_ms"] = dur_ms
+                    capture["ttft_ms"] = ttft_ms
                     capture["thinking_budget"] = budget
                     capture["thoughts_token_count"] = thoughts
                     capture["timed_out"] = timed_out

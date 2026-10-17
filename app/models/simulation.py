@@ -168,7 +168,7 @@ class SimulationConfig(BaseModel):
     width: int = Field(default=100, ge=5, le=1000)
     height: int = Field(default=100, ge=5, le=1000)
     topology: Topology = Topology.BOUNDED
-    populations: Dict[str, int] = Field(default_factory=lambda: {"cats": 10, "mice": 250})
+    populations: Dict[str, int] = Field(default_factory=lambda: {"cats": 25, "mice": 500})
     species: Dict[str, SpeciesConfig] = Field(
         default_factory=lambda: {
             "cat": SpeciesConfig(

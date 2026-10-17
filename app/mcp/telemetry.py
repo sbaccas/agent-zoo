@@ -52,6 +52,16 @@ class MCPTelemetryTracker:
                 self.tool_counts[tool] = self.tool_counts.get(tool, 0) + 1
             if duration_ms is not None:
                 self.latencies.append(duration_ms)
+            try:
+                from app.otel.setup import get_sre_store
+                get_sre_store().record_tool_call(
+                    tool_name=f"mcp.{tool or 'unknown'}",
+                    duration_ms=float(duration_ms or 0.0),
+                    status="ERROR" if (level == "error" or status == "error") else "OK",
+                    cached=False,
+                )
+            except Exception:
+                pass
         elif event_type == "resource_read":
             self.total_resource_reads += 1
         elif event_type == "request":

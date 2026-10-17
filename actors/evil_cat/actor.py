@@ -652,6 +652,10 @@ def build_decision_prompt(
     return prompt
 
 
+from app.otel.decorators import record_genai_metrics, traced_genai
+
+
+@traced_genai(role="actor", model=ACTOR_MODEL, span_name="genai.actor_deliberation")
 async def query_adk_gemini(
     obs: Observation,
     history: Optional[List[Dict[str, Any]]] = None,
@@ -677,6 +681,10 @@ async def query_adk_gemini(
 
     user_id = f"evil_actor_{agent_id}"
     session_id = f"session_evil_actor_{agent_id}"
+    ttft_ms: Optional[float] = None
+    input_tokens = 0
+    output_tokens = 0
+    thoughts_tokens: Optional[int] = None
 
     try:
         try:
@@ -696,18 +704,27 @@ async def query_adk_gemini(
         effective_timeout = timeout_seconds or get_deliberation_timeout()
 
         async def _run_stream() -> Tuple[Optional[CatTacticalDecision], Optional[int]]:
+            nonlocal ttft_ms, input_tokens, output_tokens, thoughts_tokens
             final_decision: Optional[CatTacticalDecision] = None
-            thoughts_tokens: Optional[int] = None
             agen = adk_runner.run_async(user_id=user_id, session_id=session_id, new_message=msg)
             try:
                 while True:
                     ev = await agen.__anext__()
+                    if ttft_ms is None:
+                        ttft_ms = round((time.monotonic() - started) * 1000.0, 2)
                     if ev.error_code or ev.error_message:
                         logger.warning("Evil Cat ADK Error: %s - %s", ev.error_code, ev.error_message)
                     usage = getattr(ev, "usage_metadata", None)
-                    spent = getattr(usage, "thoughts_token_count", None) if usage else None
-                    if spent is not None:
-                        thoughts_tokens = (thoughts_tokens or 0) + int(spent)
+                    if usage:
+                        p_tok = getattr(usage, "prompt_token_count", None)
+                        c_tok = getattr(usage, "candidates_token_count", None)
+                        spent = getattr(usage, "thoughts_token_count", None)
+                        if p_tok is not None:
+                            input_tokens = max(input_tokens, int(p_tok))
+                        if c_tok is not None:
+                            output_tokens = max(output_tokens, int(c_tok))
+                        if spent is not None:
+                            thoughts_tokens = (thoughts_tokens or 0) + int(spent)
                     if ev.actions and ev.actions.state_delta and "decision" in ev.actions.state_delta:
                         final_decision = ev.actions.state_delta["decision"]
                     elif ev.content and ev.content.parts:
@@ -728,23 +745,62 @@ async def query_adk_gemini(
             return final_decision, thoughts_tokens
 
         decision, thoughts_tokens = await asyncio.wait_for(_run_stream(), timeout=effective_timeout)
+        lat_ms = round((time.monotonic() - started) * 1000.0, 2)
 
         if capture is not None:
-            capture["latency_ms"] = round((time.monotonic() - started) * 1000)
+            capture["latency_ms"] = round(lat_ms)
+            capture["ttft_ms"] = ttft_ms
             capture["thoughts_token_count"] = thoughts_tokens
 
         if decision is not None:
             clear_auth_error()
+            record_genai_metrics(
+                role="actor",
+                model=ACTOR_MODEL,
+                latency_ms=lat_ms,
+                ttft_ms=ttft_ms,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                thinking_tokens=thoughts_tokens or 0,
+                status="OK",
+                decision_source="adk_gemini",
+            )
             return decision, "adk_gemini", None
 
     except asyncio.TimeoutError:
+        lat_ms = round((time.monotonic() - started) * 1000.0, 2)
         reason = f"Evil Cat deliberation timed out after {timeout_seconds or get_deliberation_timeout()}s"
         logger.warning(reason)
+        record_genai_metrics(
+            role="actor",
+            model=ACTOR_MODEL,
+            latency_ms=lat_ms,
+            ttft_ms=ttft_ms,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            thinking_tokens=thoughts_tokens or 0,
+            status="ERROR",
+            decision_source="heuristic_fallback",
+            error_type="timeout",
+        )
         return None, "heuristic_fallback", reason
     except Exception as exc:
+        lat_ms = round((time.monotonic() - started) * 1000.0, 2)
         err = str(exc)
         mark_auth_error(err)
         logger.warning("Evil Cat deliberation error: %s", err)
+        record_genai_metrics(
+            role="actor",
+            model=ACTOR_MODEL,
+            latency_ms=lat_ms,
+            ttft_ms=ttft_ms,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            thinking_tokens=thoughts_tokens or 0,
+            status="ERROR",
+            decision_source="heuristic_fallback",
+            error_type=err,
+        )
         return None, "heuristic_fallback", err
 
     return None, "heuristic_fallback", "Gemini returned empty decision"

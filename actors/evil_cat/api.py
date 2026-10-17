@@ -366,6 +366,12 @@ def reset_reflexion_state(current_tick: Optional[int] = None) -> None:
     state.eval_pending = False
 
 
+from app.otel.decorators import extract_traceparent, traced_span
+from app.otel.setup import get_sre_store
+from opentelemetry import context as otel_context
+
+
+@traced_span("agent.act")
 async def act_async(obs: Observation, decoupled: bool = False) -> ActionResponse:
     """Evaluates an observation for Evil Cat, arbitrating between override, LLM, and Evil Cat reflex."""
     obs_dict = obs.model_dump()
@@ -528,6 +534,13 @@ async def act_async(obs: Observation, decoupled: bool = False) -> ActionResponse
     else:
         is_locked = not can_act
     tick_type = "cooldown" if is_locked else "play"
+    try:
+        sre_src = "cooldown_fastpath" if is_locked else source
+        if sre_src != "adk_gemini":
+            sre_store = get_sre_store()
+            sre_store.decision_sources[sre_src] = sre_store.decision_sources.get(sre_src, 0) + 1
+    except Exception:
+        pass
 
     pos = obs.self.get("position", {"x": 0, "y": 0})
     facing = obs.self.get("facing", "north")
@@ -752,9 +765,12 @@ class EvilWsClientManager:
         ws,
         obs_dict: Dict[str, Any],
         budget_sec: Optional[float],
+        traceparent: Optional[str] = None,
     ) -> None:
         started = time.monotonic()
         tick = obs_dict.get("tick")
+        parent_ctx = extract_traceparent({"traceparent": traceparent} if traceparent else None)
+        ctx_token = otel_context.attach(parent_ctx) if parent_ctx is not None else None
 
         def elapsed_ms() -> int:
             return int((time.monotonic() - started) * 1000)
@@ -776,6 +792,12 @@ class EvilWsClientManager:
             self._record_deliberation(tick, elapsed_ms(), "error")
             print(f"⚠️ [EVIL WS CLIENT] Error computing action for tick {tick}: {err}", flush=True)
             return
+        finally:
+            if ctx_token is not None:
+                try:
+                    otel_context.detach(ctx_token)
+                except Exception:
+                    pass
 
         meta = state.latest_autonomous.get("meta", {}) if state.latest_autonomous else {}
         try:
@@ -851,6 +873,7 @@ class EvilWsClientManager:
                                     ws,
                                     data.get("payload", {}),
                                     data.get("budget_sec"),
+                                    traceparent=data.get("traceparent"),
                                 )
                             )
 
@@ -1106,9 +1129,10 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response: Response = await call_next(request)
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
+        script_src = "'self' 'unsafe-inline'" if request.url.path == "/sre" else "'self'"
         response.headers["Content-Security-Policy"] = (
             "default-src 'self'; "
-            "script-src 'self'; "
+            f"script-src {script_src}; "
             "style-src 'self' 'unsafe-inline'; "
             "img-src 'self' data:; "
             "connect-src 'self' ws: wss:;"
@@ -1845,6 +1869,60 @@ def get_general_directive() -> Dict[str, Any]:
 def clear_general_directive() -> Dict[str, Any]:
     had = clear_coach_directive()
     return {"status": "ok", "cleared": had}
+
+
+# --- OpenTelemetry & SRE Observability Endpoints ---
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
+from app.otel.setup import get_otel_config, init_otel, render_prometheus_metrics
+from app.otel.dashboard import (
+    SRE_DASHBOARD_HTML,
+    broadcast_otel_config_update,
+    fetch_cluster_sre_snapshot,
+)
+
+_evil_port = int(os.environ.get("PORT", "8005"))
+_evil_sre_store = init_otel(
+    service_name=f"cm-agent-{state.agent_id}",
+    agent_id=state.agent_id,
+    port=_evil_port,
+)
+
+
+@app.get("/sre", response_class=HTMLResponse)
+async def sre_dashboard_page():
+    return HTMLResponse(content=SRE_DASHBOARD_HTML)
+
+
+@app.get("/metrics", response_class=PlainTextResponse)
+async def prometheus_metrics_endpoint():
+    _evil_sre_store.agent_id = state.agent_id
+    return PlainTextResponse(
+        content=render_prometheus_metrics(_evil_sre_store),
+        media_type="text/plain; version=0.0.4; charset=utf-8",
+    )
+
+
+@app.get("/api/sre/status")
+async def sre_status_endpoint():
+    _evil_sre_store.agent_id = state.agent_id
+    return JSONResponse(_evil_sre_store.get_summary(include_spans=True, span_limit=80))
+
+
+@app.get("/api/sre/cluster")
+async def sre_cluster_endpoint():
+    return JSONResponse(await fetch_cluster_sre_snapshot(local_node_id=state.agent_id))
+
+
+@app.get("/api/sre/config")
+async def get_sre_config_endpoint():
+    return JSONResponse(get_otel_config())
+
+
+@app.post("/api/sre/config")
+async def update_sre_config_endpoint(request: Request):
+    body = await request.json()
+    updated = await broadcast_otel_config_update(body)
+    return JSONResponse(updated)
 
 
 # Mount static assets and serve Evil Cat workbench dashboard from actors/evil_cat/static

@@ -230,7 +230,7 @@ class Simulation:
         # board-level survival/depletion counters in the box score payload.
         if getattr(self.config, "disclosure", None) and self.config.disclosure.coach_sees_population:
             mice_alive = self.entity_manager.count_by_type(EntityType.MOUSE)
-            mice_initial = (self.config.populations or {}).get("mice", 250)
+            mice_initial = (self.config.populations or {}).get("mice", 500)
             res["mice_alive"] = mice_alive
             res["mice_initial"] = mice_initial
             res["captures"] = self.scheduler.captures

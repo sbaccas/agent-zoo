@@ -213,6 +213,11 @@ class WsAgentManager:
         if budget_sec is not None:
             envelope["budget_sec"] = budget_sec
         try:
+            from app.otel.decorators import inject_traceparent
+            inject_traceparent(envelope)
+        except Exception:
+            pass
+        try:
             await websocket.send_json(envelope)
             if tick is not None:
                 self.last_dispatched_tick[agent_id] = tick

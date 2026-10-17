@@ -203,12 +203,13 @@ async def test_lunge_into_the_boundary_is_recorded_as_a_wall_bonk():
     clip from the imagined risk.
     """
     sim = _empty_sim()
-    cat = sim.entity_manager.spawn_entity(EntityType.CAT, pos=Position(x=98, y=10), facing=Direction.EAST)
+    edge_x = sim.world.width - 2
+    cat = sim.entity_manager.spawn_entity(EntityType.CAT, pos=Position(x=edge_x, y=10), facing=Direction.EAST)
 
     sim.action_handler.apply_action(cat, ActionType.LUNGE, current_tick=1)
 
     stats = _stats_for(sim, cat.id)
-    assert cat.position.x == 99, "setup failed: expected the lunge to clip the edge"
+    assert cat.position.x == sim.world.width - 1, "setup failed: expected the lunge to clip the edge"
     assert stats.lunges == 1
     assert stats.wall_bonks == 1
     assert stats.tiles_run == 1, "a clipped lunge covers one tile, not two"
@@ -229,7 +230,7 @@ async def test_ground_covered_counts_each_tile_once():
     row = _row_for(sim, cat.id)
     assert row["tiles_run"] == 3
     assert row["unique_tiles"] == 2
-    assert row["ground_covered"] == 2 / 10000
+    assert row["ground_covered"] == 2 / (sim.world.width * sim.world.height)
     assert row["ticks_per_tile"] == 1.5, "three ticks spent across two tiles"
 
 
@@ -374,7 +375,7 @@ async def test_boxscore_endpoint_returns_a_row_per_cat():
     assert resp.status_code == 200
     body = resp.json()
     assert body["arena"]["tiles"] == body["arena"]["width"] * body["arena"]["height"]
-    assert len(body["cats"]) == 10
+    assert len(body["cats"]) == SimulationConfig().populations["cats"]
     expected = {
         "id", "mode", "alive", "kills", "kills_per_100_ticks",
         "tiles_per_kill", "slash_attempts", "slash_accuracy", "whiffs",
