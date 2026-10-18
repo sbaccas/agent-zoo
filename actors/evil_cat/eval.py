@@ -422,8 +422,7 @@ async def pull_transcript(
     }
 
 
-@traced_tool(tool_name="a2a_send_coach_message")
-async def a2a_send_coach_message(
+async def _send_coach_message_impl(
     recipient_coach: str = "",
     message: str = "",
     message_type: str = "DIRECT_MESSAGE",
@@ -431,7 +430,6 @@ async def a2a_send_coach_message(
     recipient: Optional[str] = None,
     cat_id: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Sends an Agent-to-Agent (A2A) strategic message or deceptive radio transmission."""
     target_cat = cat_id or "cat-3"
 
     if impersonate_cat:
@@ -530,6 +528,26 @@ async def a2a_send_coach_message(
         }
 
 
+@traced_tool(tool_name="a2a_send_coach_message")
+async def a2a_send_coach_message(
+    recipient_coach: str = "",
+    message: str = "",
+    message_type: str = "DIRECT_MESSAGE",
+    impersonate_cat: bool = False,
+    recipient: Optional[str] = None,
+    cat_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Sends an Agent-to-Agent (A2A) strategic message or deceptive radio transmission."""
+    return await _send_coach_message_impl(
+        recipient_coach=recipient_coach,
+        message=message,
+        message_type=message_type,
+        impersonate_cat=impersonate_cat,
+        recipient=recipient,
+        cat_id=cat_id,
+    )
+
+
 @traced_tool(tool_name="a2a_broadcast")
 async def a2a_broadcast(
     message: str,
@@ -537,7 +555,7 @@ async def a2a_broadcast(
     cat_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Publicly broadcasts an Agent-to-Agent (A2A) message across the arena to all peer Coaches asynchronously."""
-    return await a2a_send_coach_message(
+    return await _send_coach_message_impl(
         recipient="*",
         message=message,
         message_type="BROADCAST",
@@ -756,6 +774,33 @@ def _general_radio_instruction_provider(_ctx: ReadonlyContext) -> str:
     return get_eval_instruction() + "\n\n" + get_general_radio_instruction()
 
 
+MAX_COACH_LLM_CALLS = 2
+
+
+def _enforce_two_call_max_before_model(callback_context: Any, llm_request: Any) -> Optional[Any]:
+    """Enforces the 2-call maximum for Evil Coach evaluations:
+    - Call 1: Model receives skills + observations + full context, and may invoke 0 or more tools in parallel.
+    - Call 2 (only if tools were called in Call 1): All tool outputs are injected into the prompt and tool calling is disabled so the model must return its final standing directive immediately.
+    """
+    has_tool_results = any(
+        any(getattr(p, "function_response", None) is not None for p in (getattr(c, "parts", None) or []))
+        for c in (getattr(llm_request, "contents", None) or [])
+    )
+    if has_tool_results:
+        if getattr(llm_request, "config", None) is not None:
+            llm_request.config.tools = None
+            llm_request.config.tool_config = None
+        if getattr(llm_request, "tools_dict", None) is not None:
+            llm_request.tools_dict.clear()
+        if hasattr(llm_request, "append_instructions"):
+            llm_request.append_instructions([
+                "All requested tool outputs from your first turn have been injected above. "
+                "Tool calling is now closed for this evaluation cycle (maximum 2 LLM calls per evaluation). "
+                "Output your final standing directive in MODE / TRIGGER / BEHAVIOR format now."
+            ])
+    return None
+
+
 eval_agent = LlmAgent(
     name="evil_cat_coach",
     model=EVAL_MODEL,
@@ -769,6 +814,7 @@ eval_agent = LlmAgent(
         a2a_send_coach_message,
         a2a_get_peer_coach_card,
     ],
+    before_model_callback=_enforce_two_call_max_before_model,
     generate_content_config=types.GenerateContentConfig(
         thinking_config=types.ThinkingConfig(thinking_budget=_eval_thinking_budget)
     ),

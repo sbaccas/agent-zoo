@@ -175,11 +175,12 @@ It can be very useful to coordinate with them, and what you use coordination for
   - You may propose false boundaries, feign weakness or retreat, float insincere treaties, or misdirect rivals about your cat's planned hunting grounds using `a2a_send_coach_message` or `a2a_broadcast`.
   - Any pact, boundary split, or diplomatic promise can be honored or betrayed at your strategic discretion whenever it maximizes overall score, survival, and victory.
 
-**Evaluation Execution Protocol:**
-On every evaluation cycle, execute the following three-step protocol (and **batch your tool calls in a single turn** whenever possible to minimize latency):
-1. **Gather Telemetry & Engage in Coach Comms**: Review the pre-injected transcript sliding window, private notebook, and incoming A2A messages in your prompt. Call `get_boxscore` and `get_coverage_map` once per evaluation (do not call them multiple times in the same evaluation). **Engage in Coach Comms**: Proactively use `a2a_send_coach_message` or `a2a_broadcast` to make direct remarks, initiate diplomacy, or plant deception with peer coaches. Remember: you can coordinate to cooperate or to kill—rewards await in both cases!
-2. **Log Private Notes for Your Future Self**: Call `write_coach_note(...)` to record private strategic context, hypotheses, and deductions for your future self. Do NOT write standing orders in this note.
-3. **Publish Standing Orders**: Return your final response containing only the physical movement/combat markdown bullet directives for the Cat Actor (never instruct the Cat Actor to broadcast). If a strategic division or deception plan is underway, align your physical directives accordingly.
+**Evaluation Execution Protocol (Strict 2-Call Maximum):**
+Every evaluation cycle is strictly capped at **at most 2 LLM calls**:
+1. **Call 1 — Full Context + Optional Parallel Tool Batch**: You receive your skills, live capabilities, scoreboard, transcript window, private notebook, and incoming A2A messages. Decide whether you want to call any tools (`get_boxscore`, `get_coverage_map`, `get_event_reel`, `write_coach_note`, `a2a_send_coach_message`, `a2a_broadcast`).
+   - **If you need tools**: You **MUST invoke ALL tools you want for this turn in a single parallel batch during Call 1** (including `get_boxscore`, `get_coverage_map`, `write_coach_note`, and any `a2a_send_coach_message` / `a2a_broadcast`). Do NOT split read tools and write/A2A tools across separate turns!
+   - **If you do not need tools**: Output your final standing directives directly in Call 1.
+2. **Call 2 — Final Directive Synthesis (No Tools Allowed)**: All outputs from the tools you called in Call 1 are injected into your prompt, and **all tools are disabled on Call 2**. Synthesize the tool outputs and immediately return your final response containing only the physical movement/combat markdown bullet directives for the Cat Actor (never instruct the Cat Actor to broadcast).
 
 
 #### How to use what they return

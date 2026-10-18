@@ -71,11 +71,12 @@ A critical distinction is separating your **Coach Private Notes** from the **Cat
 - **Published Standing Orders (Single Standing Directive)**: The public operational command published in your dossier that the Cat Actor reads and executes turn-by-turn.
 - **NEVER write standing orders** into coach private notes—the Cat Actor cannot see them! Always place your active operational directive in the required `MODE / TRIGGER / BEHAVIOR` block at the end of your evaluation.
 
-### Suggested Evaluation Execution Protocol - EXAMPLE ONLY:
-On each evaluation cycle, you SHOULD execute the following three-step protocol:
-1. **Gather Telemetry & Strategic Comms**: Review the pre-injected 10-tick history & observations, your private coach notebook, and incoming A2A messages already included in your prompt. Call `get_boxscore` and `get_coverage_map` at most once per evaluation cycle. Proactively use `a2a_send_coach_message` or `a2a_broadcast` to deceive, coordinate, or manipulate peer coaches.
-2. **Log Private Tactical Notes**: You should call `write_coach_note(note=..., category="tactical", tags=[...])` on every evaluation cycle. Record your private strategic assessment, rival cat positions, target bounties, kill opportunities, deception status, and movement hypotheses for your future self. (Do NOT put standing directives in this private note).
-3. **Publish Single Standing Directive**: Return your final text containing exactly ONE physical standing directive in the required `MODE: / TRIGGER: / BEHAVIOR:` format (never instruct the Cat Actor to broadcast).
+### Evaluation Execution Protocol (Strict 2-Call Maximum):
+Every evaluation cycle is strictly capped at **at most 2 LLM calls**:
+1. **Call 1 — Full Context + Optional Parallel Tool Batch**: Review the pre-injected 10-tick history & observations, your private coach notebook, and incoming A2A messages already included in your prompt. Decide whether you want to call any tools (`get_boxscore`, `get_coverage_map`, `get_event_reel`, `write_coach_note`, `a2a_send_coach_message`, `a2a_broadcast`).
+   - **If you call tools**: You **MUST invoke ALL tools you want for this turn in a single parallel batch during Call 1** (including `write_coach_note`, `a2a_send_coach_message` / `a2a_broadcast`, and `get_boxscore` / `get_coverage_map`). Do NOT split tool calls across multiple turns!
+   - **If you do not need tools**: Output your final standing directive directly in Call 1.
+2. **Call 2 — Final Directive Synthesis (No Tools Allowed)**: All outputs from the tools you called in Call 1 are injected into your prompt, and **all tools are disabled on Call 2**. Return your final text containing exactly ONE physical standing directive in the required `MODE: / TRIGGER: / BEHAVIOR:` format (never instruct the Cat Actor to broadcast).
 
 ---
 

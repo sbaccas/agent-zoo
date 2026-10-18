@@ -238,3 +238,43 @@ def test_build_trace_trees_hierarchy():
     assert t["spans"][2]["tree_prefix"] == "    └─ "
     assert t["spans"][2]["crossed_network"] is True
 
+
+def test_coach_eval_two_call_maximum_enforcement():
+    """Verify both Cat Coach and Evil Coach enforce a strict 2-call maximum:
+    Call 1 allows tool calls; Call 2 injects tool outputs and strips all tools so evaluation finishes after Call 2.
+    """
+    from google.genai import types
+    from google.adk.models import LlmRequest
+    from actors.cat.subagents import eval as cat_eval
+    from actors.evil_cat import eval as evil_eval
+
+    for mod in (cat_eval, evil_eval):
+        assert mod.MAX_COACH_LLM_CALLS == 2
+        cb = mod._enforce_two_call_max_before_model
+        assert cb in mod.eval_agent.canonical_before_model_callbacks
+
+        # Call 1: No function_response in contents -> tools remain available
+        req1 = LlmRequest(
+            contents=[types.Content(role="user", parts=[types.Part.from_text(text="eval context")])],
+            config=types.GenerateContentConfig(tools=[types.Tool(function_declarations=[])]),
+        )
+        req1.tools_dict["get_boxscore"] = object()
+        cb(None, req1)
+        assert req1.config.tools is not None
+        assert "get_boxscore" in req1.tools_dict
+
+        # Call 2: function_response present -> tools are stripped and closing instruction appended
+        req2 = LlmRequest(
+            contents=[
+                types.Content(role="user", parts=[types.Part.from_text(text="eval context")]),
+                types.Content(role="model", parts=[types.Part.from_function_call(name="get_boxscore", args={})]),
+                types.Content(role="user", parts=[types.Part.from_function_response(name="get_boxscore", response={"available": True})]),
+            ],
+            config=types.GenerateContentConfig(tools=[types.Tool(function_declarations=[])]),
+        )
+        req2.tools_dict["get_boxscore"] = object()
+        cb(None, req2)
+        assert req2.config.tools is None
+        assert len(req2.tools_dict) == 0
+        assert "maximum 2 LLM calls" in (req2.config.system_instruction or "")
+

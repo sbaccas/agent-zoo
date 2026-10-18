@@ -727,8 +727,7 @@ async def pull_transcript(
     }
 
 
-@traced_tool(tool_name="a2a_send_coach_message")
-async def a2a_send_coach_message(
+async def _send_coach_message_impl(
     recipient_coach: str = "",
     message: str = "",
     message_type: str = "DIRECT_MESSAGE",
@@ -736,20 +735,6 @@ async def a2a_send_coach_message(
     recipient: Optional[str] = None,
     cat_id: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Sends an Agent-to-Agent (A2A) strategic message or radio transmission.
-
-    Args:
-        recipient_coach: Target coach identifier (e.g. 'coach(cat-2)') or peer cat identifier (e.g. 'cat-2' or '*').
-        message: The strategic proposition or message content.
-        message_type: 'DIRECT_MESSAGE', 'PROPOSAL', or 'PACT'. Default is 'DIRECT_MESSAGE'.
-        impersonate_cat: If True, dispatches the transmission under the Cat's identity (e.g. 'cat-1')
-            rather than 'coach(cat-1)', appearing directly on the tactical cat radio.
-        recipient: Optional alias for recipient_coach.
-        cat_id: Optional explicit sender cat id (defaults to current active cat).
-
-    Returns:
-        Status dictionary confirming dispatch and message ID.
-    """
     target_cat = _resolve_target_cat(cat_id)
 
     if impersonate_cat:
@@ -861,6 +846,39 @@ async def a2a_send_coach_message(
         }
 
 
+@traced_tool(tool_name="a2a_send_coach_message")
+async def a2a_send_coach_message(
+    recipient_coach: str = "",
+    message: str = "",
+    message_type: str = "DIRECT_MESSAGE",
+    impersonate_cat: bool = False,
+    recipient: Optional[str] = None,
+    cat_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Sends an Agent-to-Agent (A2A) strategic message or radio transmission.
+
+    Args:
+        recipient_coach: Target coach identifier (e.g. 'coach(cat-2)') or peer cat identifier (e.g. 'cat-2' or '*').
+        message: The strategic proposition or message content.
+        message_type: 'DIRECT_MESSAGE', 'PROPOSAL', or 'PACT'. Default is 'DIRECT_MESSAGE'.
+        impersonate_cat: If True, dispatches the transmission under the Cat's identity (e.g. 'cat-1')
+            rather than 'coach(cat-1)', appearing directly on the tactical cat radio.
+        recipient: Optional alias for recipient_coach.
+        cat_id: Optional explicit sender cat id (defaults to current active cat).
+
+    Returns:
+        Status dictionary confirming dispatch and message ID.
+    """
+    return await _send_coach_message_impl(
+        recipient_coach=recipient_coach,
+        message=message,
+        message_type=message_type,
+        impersonate_cat=impersonate_cat,
+        recipient=recipient,
+        cat_id=cat_id,
+    )
+
+
 @traced_tool(tool_name="a2a_broadcast")
 async def a2a_broadcast(
     message: str,
@@ -874,7 +892,7 @@ async def a2a_broadcast(
         impersonate_cat: Optional legacy flag (defaults to False so broadcasts come from coach(cat-X)).
         cat_id: Optional explicit sender cat id (defaults to current active cat).
     """
-    return await a2a_send_coach_message(
+    return await _send_coach_message_impl(
         recipient="*",
         message=message,
         message_type="BROADCAST",
@@ -934,6 +952,33 @@ async def a2a_get_peer_coach_card(
         return {"status": "error", "error": str(exc)}
 
 
+MAX_COACH_LLM_CALLS = 2
+
+
+def _enforce_two_call_max_before_model(callback_context: Any, llm_request: Any) -> Optional[Any]:
+    """Enforces the 2-call maximum for Coach evaluations:
+    - Call 1: Model receives skills + observations + full context, and may invoke 0 or more tools in parallel.
+    - Call 2 (only if tools were called in Call 1): All tool outputs are injected into the prompt and tool calling is disabled so the model must return its final standing directives immediately.
+    """
+    has_tool_results = any(
+        any(getattr(p, "function_response", None) is not None for p in (getattr(c, "parts", None) or []))
+        for c in (getattr(llm_request, "contents", None) or [])
+    )
+    if has_tool_results:
+        if getattr(llm_request, "config", None) is not None:
+            llm_request.config.tools = None
+            llm_request.config.tool_config = None
+        if getattr(llm_request, "tools_dict", None) is not None:
+            llm_request.tools_dict.clear()
+        if hasattr(llm_request, "append_instructions"):
+            llm_request.append_instructions([
+                "All requested tool outputs from your first turn have been injected above. "
+                "Tool calling is now closed for this evaluation cycle (maximum 2 LLM calls per evaluation). "
+                "Output your final standing directives now."
+            ])
+    return None
+
+
 # The budget the coach starts on, and it is deliberately ~16x the actor's.
 #
 # The two agents are the same model doing opposite jobs, and the shape of the
@@ -979,6 +1024,7 @@ eval_agent = LlmAgent(
         a2a_send_coach_message,
         a2a_get_peer_coach_card,
     ],
+    before_model_callback=_enforce_two_call_max_before_model,
     generate_content_config=types.GenerateContentConfig(
         thinking_config=types.ThinkingConfig(thinking_budget=_initial_eval_budget)
     ),
