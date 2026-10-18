@@ -1183,13 +1183,25 @@ async def evaluate(records: List[Dict[str, Any]], agent_id: str = "cat-3") -> Tu
         if _reset_epoch != epoch_at_start:
             return "", "cancelled_by_reset"
         try:
-            try:
-                await eval_session_service.delete_session(app_name="evil_cat_eval_app", user_id=user_id, session_id=session_id)
-            except Exception:
-                pass
-            await eval_session_service.create_session(app_name="evil_cat_eval_app", user_id=user_id, session_id=session_id)
+            from opentelemetry import trace as _otel_trace
+            from opentelemetry.trace import SpanKind as _SpanKind, Status as _Status, StatusCode as _StatusCode
+            _tracer = _otel_trace.get_tracer("cm.genai")
 
-            prompt = build_coach_eval_prompt(records, agent_id=agent_id, capture=capture)
+            with _tracer.start_as_current_span(
+                "coach.prepare_prompt",
+                kind=_SpanKind.INTERNAL,
+                attributes={"cm.agent_id": agent_id, "cm.records_count": len(records)},
+            ) as _prep_span:
+                try:
+                    await eval_session_service.delete_session(app_name="evil_cat_eval_app", user_id=user_id, session_id=session_id)
+                except Exception:
+                    pass
+                await eval_session_service.create_session(app_name="evil_cat_eval_app", user_id=user_id, session_id=session_id)
+
+                prompt = build_coach_eval_prompt(records, agent_id=agent_id, capture=capture)
+                _prep_span.set_attribute("cm.prompt_chars", len(prompt))
+                _prep_span.set_status(_Status(_StatusCode.OK))
+
             msg = types.Content(role="user", parts=[types.Part.from_text(text=prompt)])
 
             final_chunks: List[str] = []

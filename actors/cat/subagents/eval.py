@@ -1737,27 +1737,38 @@ async def evaluate(
         cancelled = False
         eval_err: Optional[str] = None
         try:
-            # Each evaluation is independent; drop any prior session state.
-            try:
-                await eval_session_service.delete_session(
+            from opentelemetry import trace as _otel_trace
+            from opentelemetry.trace import SpanKind as _SpanKind, Status as _Status, StatusCode as _StatusCode
+            _tracer = _otel_trace.get_tracer("cm.genai")
+
+            with _tracer.start_as_current_span(
+                "coach.prepare_prompt",
+                kind=_SpanKind.INTERNAL,
+                attributes={"cm.agent_id": target_cat, "cm.records_count": len(records)},
+            ) as _prep_span:
+                # Each evaluation is independent; drop any prior session state.
+                try:
+                    await eval_session_service.delete_session(
+                        app_name="cat_evaluator_app", user_id=user_id, session_id=session_id
+                    )
+                except Exception:
+                    pass
+                await eval_session_service.create_session(
                     app_name="cat_evaluator_app", user_id=user_id, session_id=session_id
                 )
-            except Exception:
-                pass
-            await eval_session_service.create_session(
-                app_name="cat_evaluator_app", user_id=user_id, session_id=session_id
-            )
 
-            standing_order = (get_coach_directive() or {}).get("directive")
-            previous_notes = store.read_coaching_notes(agent_id=target_cat)
-            capture_bundle: Dict[str, Any] = {}
-            prompt = build_eval_prompt(
-                records,
-                previous_notes,
-                standing_order,
-                agent_id=target_cat,
-                capture=capture_bundle,
-            )
+                standing_order = (get_coach_directive() or {}).get("directive")
+                previous_notes = store.read_coaching_notes(agent_id=target_cat)
+                capture_bundle: Dict[str, Any] = {}
+                prompt = build_eval_prompt(
+                    records,
+                    previous_notes,
+                    standing_order,
+                    agent_id=target_cat,
+                    capture=capture_bundle,
+                )
+                _prep_span.set_attribute("cm.prompt_chars", len(prompt))
+                _prep_span.set_status(_Status(_StatusCode.OK))
 
             msg = types.Content(role="user", parts=[types.Part.from_text(text=prompt)])
             final_chunks: List[str] = []

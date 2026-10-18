@@ -667,14 +667,25 @@ async def query_adk_gemini(
 ) -> Tuple[Optional[CatTacticalDecision], str, Optional[str]]:
     """Runs one tactical deliberation turn with Google ADK Gemini (multimodal 2D viewport + text)."""
     started = time.monotonic()
-    prompt = build_decision_prompt(
-        obs=obs,
-        history=history,
-        agent_id=agent_id,
-        history_window_size=history_window_size,
-        capture=capture,
-        commander_directive=commander_directive,
-    )
+    from opentelemetry import trace as _otel_trace
+    from opentelemetry.trace import SpanKind as _SpanKind, Status as _Status, StatusCode as _StatusCode
+    _tracer = _otel_trace.get_tracer("cm.genai")
+
+    with _tracer.start_as_current_span(
+        "actor.prepare_prompt",
+        kind=_SpanKind.INTERNAL,
+        attributes={"cm.agent_id": agent_id, "cm.tick": int(obs.tick)},
+    ) as _prep_span:
+        prompt = build_decision_prompt(
+            obs=obs,
+            history=history,
+            agent_id=agent_id,
+            history_window_size=history_window_size,
+            capture=capture,
+            commander_directive=commander_directive,
+        )
+        _prep_span.set_attribute("cm.prompt_chars", len(prompt))
+        _prep_span.set_status(_Status(_StatusCode.OK))
 
     if not has_gemini_credentials():
         return None, "heuristic_fallback", "no Gemini credentials configured"
@@ -687,13 +698,21 @@ async def query_adk_gemini(
     thoughts_tokens: Optional[int] = None
 
     try:
-        try:
-            await session_service.delete_session(app_name="evil_cat_agent_app", user_id=user_id, session_id=session_id)
-        except Exception:
-            pass
-        await session_service.create_session(app_name="evil_cat_agent_app", user_id=user_id, session_id=session_id)
+        with _tracer.start_as_current_span(
+            "actor.render_viewport_png",
+            kind=_SpanKind.INTERNAL,
+            attributes={"cm.agent_id": agent_id, "cm.tick": int(obs.tick)},
+        ) as _render_span:
+            try:
+                await session_service.delete_session(app_name="evil_cat_agent_app", user_id=user_id, session_id=session_id)
+            except Exception:
+                pass
+            await session_service.create_session(app_name="evil_cat_agent_app", user_id=user_id, session_id=session_id)
 
-        viewport_png = render_viewport_png(obs, agent_id=agent_id)
+            viewport_png = render_viewport_png(obs, agent_id=agent_id)
+            _render_span.set_attribute("cm.viewport_png_bytes", len(viewport_png or b""))
+            _render_span.set_status(_Status(_StatusCode.OK))
+
         msg = types.Content(
             role="user",
             parts=[

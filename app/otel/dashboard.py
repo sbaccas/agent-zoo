@@ -85,6 +85,203 @@ def build_trace_trees(all_spans: List[Dict[str, Any]], max_traces: int = 60) -> 
             if sid and sid not in span_by_id:
                 span_by_id[sid] = dict(sp)
 
+        if not span_by_id:
+            continue
+
+        # Step A: Reconnect parent_span_id for any backfilled / partially-evicted / in-flight spans
+        coach_or_actor_root = next(
+            (
+                sp for sp in span_by_id.values()
+                if any(k in (sp.get("name") or "") for k in ("genai.coach_eval", "coach.evaluate", "genai.actor_deliberation"))
+            ),
+            None,
+        )
+        client_tool_spans = [
+            sp for sp in span_by_id.values()
+            if (sp.get("name") or "").startswith("mcp.tool.")
+        ]
+
+        # If a Coach or Actor trace is currently in-flight (or its outer root span aged out),
+        # synthesize the outer root bar spanning [min_start, max_end] so the Gantt chart has a single 100% root
+        if not coach_or_actor_root and len(span_by_id) >= 2:
+            s_names = [sp.get("name") or "" for sp in span_by_id.values()]
+            is_coach_like = any(
+                any(k in n for k in ("coach.", "execute_tool", "mcp.tool.", "tools/call", "mcp."))
+                for n in s_names
+            )
+            is_actor_like = any("actor." in n for n in s_names)
+            if is_coach_like or is_actor_like:
+                ref_sp = next(
+                    (sp for sp in span_by_id.values() if sp.get("node_id") != "mcp-server"),
+                    next(iter(span_by_id.values())),
+                )
+                ref_starts = [s.get("start_time_ns") or 0 for s in span_by_id.values() if s.get("start_time_ns")]
+                ref_ends = [
+                    (s.get("end_time_ns") or ((s.get("start_time_ns") or 0) + int((s.get("duration_ms") or 0) * 1_000_000)))
+                    for s in span_by_id.values()
+                    if s.get("start_time_ns")
+                ]
+                r_start = min(ref_starts) if ref_starts else 0
+                r_end = max(ref_ends) if ref_ends else r_start
+                r_dur = round(max(0.01, (r_end - r_start) / 1_000_000.0), 2)
+                syn_root_sid = f"{tid[:12]}root"
+                r_node = ref_sp.get("node_id") if ref_sp.get("node_id") != "mcp-server" else ((ref_sp.get("attributes") or {}).get("cm.agent_id") or "cat-2")
+                r_svc = ref_sp.get("service_name") if ref_sp.get("node_id") != "mcp-server" else f"cm-agent-{r_node}"
+                coach_or_actor_root = {
+                    "trace_id": tid,
+                    "span_id": syn_root_sid,
+                    "parent_span_id": None,
+                    "name": "genai.coach_eval" if is_coach_like else "genai.actor_deliberation",
+                    "kind": "CLIENT",
+                    "service_name": r_svc,
+                    "agent_id": r_node,
+                    "node_id": r_node,
+                    "start_time_ns": r_start,
+                    "end_time_ns": r_end,
+                    "duration_ms": r_dur,
+                    "time_str": ref_sp.get("time_str") or "",
+                    "status": "OK",
+                    "attributes": {
+                        "gen_ai.system": "google_genai",
+                        "gen_ai.role": "coach" if is_coach_like else "actor",
+                        "gen_ai.request.model": "gemini-2.5-flash",
+                    },
+                }
+                span_by_id[syn_root_sid] = coach_or_actor_root
+
+        # Link server-side `mcp.<tool>` / `tools/call <tool>` spans to matching client-side `mcp.tool.<tool>` spans if parent missing
+        for sp in span_by_id.values():
+            pid = sp.get("parent_span_id")
+            sname = sp.get("name") or ""
+            is_server_mcp = (sname.startswith("mcp.") and not sname.startswith("mcp.tool.")) or sname.startswith("tools/call ")
+            if (not pid or pid not in span_by_id) and is_server_mcp:
+                short_tool = sname[len("mcp."):] if sname.startswith("mcp.") else sname[len("tools/call "):]
+                s_start = sp.get("start_time_ns") or 0
+                best_client = None
+                best_dist = 10_000_000_000  # 10s in ns
+                for csp in client_tool_spans:
+                    cname = csp.get("name") or ""
+                    if cname.endswith(short_tool) and csp.get("span_id") != sp.get("span_id"):
+                        dist = abs((csp.get("start_time_ns") or 0) - s_start)
+                        if dist < best_dist:
+                            best_dist = dist
+                            best_client = csp
+                if best_client:
+                    sp["parent_span_id"] = best_client.get("span_id")
+                elif coach_or_actor_root:
+                    sp["parent_span_id"] = coach_or_actor_root.get("span_id")
+
+        if coach_or_actor_root:
+            root_sid = coach_or_actor_root.get("span_id")
+            for sp in span_by_id.values():
+                if sp is coach_or_actor_root:
+                    continue
+                pid = sp.get("parent_span_id")
+                if not pid or pid not in span_by_id:
+                    sp["parent_span_id"] = root_sid
+
+        # Step B: Partition untraced LLM sub-turn gaps in multi-turn Coach / MCP traces
+        has_explicit_llm_turns = any(
+            any(k in (s.get("name") or "") for k in ("llm_turn", "call_llm", "generate_content"))
+            for s in span_by_id.values()
+        )
+        tool_like_spans = [
+            sp for sp in span_by_id.values()
+            if (sp.get("name") or "").startswith("mcp.tool.")
+            or (
+                ((sp.get("name") or "").startswith("mcp.") or (sp.get("name") or "").startswith("tools/call"))
+                and (sp.get("parent_span_id") not in span_by_id or sp.get("parent_span_id") == (coach_or_actor_root or {}).get("span_id"))
+            )
+        ]
+
+        if not has_explicit_llm_turns and (coach_or_actor_root or len(tool_like_spans) >= 2):
+            host_span = coach_or_actor_root or (client_tool_spans[0] if client_tool_spans else next(iter(span_by_id.values())))
+            host_node_id = host_span.get("node_id") or host_span.get("agent_id") or "cat-1"
+            if host_node_id == "mcp-server":
+                # Infer calling agent if only mcp-server spans survived
+                host_node_id = (host_span.get("attributes") or {}).get("cm.agent_id") or "cat-2"
+            host_service = host_span.get("service_name") if host_span.get("node_id") != "mcp-server" else f"cm-agent-{host_node_id}"
+            host_agent = host_span.get("agent_id") if host_span.get("node_id") != "mcp-server" else host_node_id
+            root_attrs = (coach_or_actor_root or {}).get("attributes") or {}
+            model_val = root_attrs.get("gen_ai.request.model") or "gemini-2.5-flash"
+
+            all_starts = [s.get("start_time_ns") or 0 for s in span_by_id.values() if s.get("start_time_ns")]
+            all_ends = [
+                (s.get("end_time_ns") or ((s.get("start_time_ns") or 0) + int((s.get("duration_ms") or 0) * 1_000_000)))
+                for s in span_by_id.values()
+                if s.get("start_time_ns")
+            ]
+            t_min_ns = (coach_or_actor_root.get("start_time_ns") if coach_or_actor_root else None) or (min(all_starts) if all_starts else 0)
+            t_max_ns = (coach_or_actor_root.get("end_time_ns") if coach_or_actor_root else None) or (max(all_ends) if all_ends else t_min_ns)
+            if all_starts:
+                t_min_ns = min(t_min_ns, min(all_starts))
+            if all_ends:
+                t_max_ns = max(t_max_ns, max(all_ends))
+
+            # Build merged tool execution batches (clustering parallel tool calls within 150ms)
+            raw_intervals = []
+            for tsp in sorted(tool_like_spans, key=lambda x: x.get("start_time_ns") or 0):
+                ts_s = tsp.get("start_time_ns") or 0
+                ts_e = tsp.get("end_time_ns") or (ts_s + int((tsp.get("duration_ms") or 0) * 1_000_000))
+                t_short = (tsp.get("name") or "").replace("mcp.tool.", "").replace("mcp.", "")
+                if ts_s > 0 and ts_e >= ts_s:
+                    raw_intervals.append([ts_s, ts_e, [t_short]])
+
+            batches = []
+            for iv in raw_intervals:
+                if not batches:
+                    batches.append(iv)
+                else:
+                    prev = batches[-1]
+                    # Within 150ms = same parallel tool execution batch
+                    if iv[0] <= prev[1] + 150_000_000:
+                        prev[1] = max(prev[1], iv[1])
+                        if iv[2][0] not in prev[2]:
+                            prev[2].append(iv[2][0])
+                    else:
+                        batches.append(iv)
+
+            gap_windows = []
+            min_gap_ns = 40_000_000  # 40ms threshold
+            if batches:
+                if batches[0][0] - t_min_ns >= min_gap_ns:
+                    gap_windows.append((t_min_ns, batches[0][0], "initial_prompt_and_tool_selection", ",".join(batches[0][2])))
+                for b_idx in range(len(batches) - 1):
+                    g_s = batches[b_idx][1]
+                    g_e = batches[b_idx + 1][0]
+                    if g_e - g_s >= min_gap_ns:
+                        gap_windows.append((g_s, g_e, "tool_result_synthesis_and_reasoning", ",".join(batches[b_idx + 1][2])))
+                if t_max_ns - batches[-1][1] >= min_gap_ns:
+                    gap_windows.append((batches[-1][1], t_max_ns, "final_directive_generation", "final_directive"))
+            elif coach_or_actor_root and (t_max_ns - t_min_ns >= min_gap_ns) and len(span_by_id) == 1:
+                gap_windows.append((t_min_ns, t_max_ns, "single_turn_generation", "decision"))
+
+            parent_sid_for_turns = coach_or_actor_root.get("span_id") if coach_or_actor_root else None
+            for turn_i, (g_s, g_e, phase_desc, req_tools) in enumerate(gap_windows, start=1):
+                syn_sid = f"{tid[:10]}turn{turn_i:02d}"
+                dur_ms_val = round((g_e - g_s) / 1_000_000.0, 2)
+                span_by_id[syn_sid] = {
+                    "trace_id": tid,
+                    "span_id": syn_sid,
+                    "parent_span_id": parent_sid_for_turns,
+                    "name": f"genai.llm_turn.{turn_i}",
+                    "kind": "CLIENT",
+                    "service_name": host_service,
+                    "agent_id": host_agent,
+                    "node_id": host_node_id,
+                    "start_time_ns": g_s,
+                    "end_time_ns": g_e,
+                    "duration_ms": dur_ms_val,
+                    "status": "OK",
+                    "attributes": {
+                        "gen_ai.system": "google_genai",
+                        "gen_ai.request.model": model_val,
+                        "gen_ai.turn_index": turn_i,
+                        "cm.turn_phase": phase_desc,
+                        "cm.requested_tools": req_tools,
+                    },
+                }
+
         spans_list = list(span_by_id.values())
         if not spans_list:
             continue
@@ -428,10 +625,97 @@ async def fetch_cluster_sre_snapshot(local_node_id: Optional[str] = None) -> Dic
             lg_copy["node_id"] = nid
             all_logs.append(lg_copy)
 
+    # Backfill any GenAI root spans or tool client spans that aged out of a node's fast-rolling span buffer
+    known_span_ids = {sp.get("span_id") for sp in all_spans if sp.get("span_id")}
+    for nid, snap in node_snapshots.items():
+        if not snap.get("online"):
+            continue
+        svc_name = snap.get("service_name") or f"cm-{nid}"
+        ag_id = snap.get("agent_id") or nid
+        g = snap.get("genai") or {}
+        for ev in g.get("recent_events") or []:
+            tid = ev.get("trace_id")
+            sid = ev.get("span_id")
+            if not tid or not sid or sid in known_span_ids:
+                continue
+            ts_sec = float(ev.get("ts") or 0.0)
+            dur_ms = float(ev.get("latency_ms") or 0.0)
+            if ts_sec <= 0 or dur_ms <= 0:
+                continue
+            end_ns = int(ts_sec * 1_000_000_000)
+            start_ns = end_ns - int(dur_ms * 1_000_000)
+            role = ev.get("role") or "actor"
+            sname = "genai.coach_eval" if role == "coach" else "genai.actor_deliberation"
+            all_spans.append({
+                "trace_id": tid,
+                "span_id": sid,
+                "parent_span_id": None,
+                "name": sname,
+                "kind": "CLIENT",
+                "service_name": ev.get("service") or svc_name,
+                "agent_id": ev.get("agent_id") or ag_id,
+                "node_id": nid,
+                "start_time_ns": start_ns,
+                "end_time_ns": end_ns,
+                "duration_ms": round(dur_ms, 2),
+                "time_str": ev.get("time_str") or "",
+                "status": "ERROR" if str(ev.get("status") or "OK").upper() not in ("OK", "SUCCESS") else "OK",
+                "attributes": {
+                    "gen_ai.system": "google_genai",
+                    "gen_ai.role": role,
+                    "gen_ai.request.model": ev.get("model") or "gemini-2.5-flash",
+                    "gen_ai.usage.input_tokens": int(ev.get("input_tokens") or 0),
+                    "gen_ai.usage.output_tokens": int(ev.get("output_tokens") or 0),
+                    "gen_ai.usage.thinking_tokens": int(ev.get("thinking_tokens") or 0),
+                    "gen_ai.response.ttft_ms": float(ev.get("ttft_ms") or 0.0),
+                    "cm.tick": ev.get("tick"),
+                },
+            })
+            known_span_ids.add(sid)
+
+        t_info = snap.get("tools") or {}
+        for tc in t_info.get("recent_calls") or []:
+            tid = tc.get("trace_id")
+            sid = tc.get("span_id")
+            if not tid or not sid or sid in known_span_ids:
+                continue
+            ts_sec = float(tc.get("ts") or 0.0)
+            dur_ms = float(tc.get("duration_ms") or 0.0)
+            if ts_sec <= 0:
+                continue
+            end_ns = int(ts_sec * 1_000_000_000)
+            start_ns = end_ns - int(dur_ms * 1_000_000)
+            raw_tname = str(tc.get("tool_name") or "tool")
+            if nid != "mcp-server" and not raw_tname.startswith("mcp.tool."):
+                tname = f"mcp.tool.{raw_tname}"
+            else:
+                tname = raw_tname
+            all_spans.append({
+                "trace_id": tid,
+                "span_id": sid,
+                "parent_span_id": None,
+                "name": tname,
+                "kind": "CLIENT" if nid != "mcp-server" else "SERVER",
+                "service_name": tc.get("service") or svc_name,
+                "agent_id": tc.get("agent_id") or ag_id,
+                "node_id": nid,
+                "start_time_ns": start_ns,
+                "end_time_ns": end_ns,
+                "duration_ms": round(dur_ms, 2),
+                "time_str": tc.get("time_str") or "",
+                "status": "ERROR" if str(tc.get("status") or "ok").lower() not in ("ok", "success") else "OK",
+                "attributes": {
+                    "cm.tool.name": raw_tname,
+                    "cm.tool.duration_ms": round(dur_ms, 2),
+                    "cm.tool.cache_hit": bool(tc.get("cache_hit")),
+                },
+            })
+            known_span_ids.add(sid)
+
     all_spans.sort(key=lambda x: x.get("start_time_ns") or 0, reverse=True)
     all_logs.sort(key=lambda x: x.get("timestamp") or "", reverse=True)
 
-    trace_trees = build_trace_trees(all_spans, max_traces=65)
+    trace_trees = build_trace_trees(all_spans, max_traces=80)
     timeseries = build_exemplar_timeseries(node_snapshots, trace_trees)
 
     total_cache_ops = total_cache_hits + total_cache_misses
@@ -1046,10 +1330,10 @@ SRE_DASHBOARD_HTML = """<!DOCTYPE html>
 
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; flex-wrap:wrap; gap:8px;">
         <div class="exemplar-legend" id="exemplar-legend">
-          <span class="legend-item"><span class="legend-dot" style="background:#0284c7"></span>cat-1 (Actor)</span>
-          <span class="legend-item"><span class="legend-dot" style="background:#16a34a"></span>cat-2 (Actor)</span>
-          <span class="legend-item"><span class="legend-dot" style="background:#dc2626"></span>cat-3 Evil (Actor)</span>
-          <span class="legend-item"><span class="legend-dot" style="background:#7c3aed"></span>Coach Evaluations (Multi-Tool Spikes)</span>
+          <span class="legend-item"><span class="legend-dot" style="background:#0284c7"></span>cat-1 (Actor &amp; Coach)</span>
+          <span class="legend-item"><span class="legend-dot" style="background:#16a34a"></span>cat-2 (Actor &amp; Coach)</span>
+          <span class="legend-item"><span class="legend-dot" style="background:#dc2626"></span>cat-3 Evil (Actor &amp; Coach)</span>
+          <span class="legend-item"><span style="display:inline-block; width:16px; border-top:2px dashed #475569;"></span>Coach Eval Series (Dashed)</span>
           <span class="legend-item"><span class="legend-dot" style="background:#ffffff; border:2.5px solid #f59e0b"></span>P90+ Spike Halo (Click Dot ➔ Open Trace)</span>
         </div>
         <span style="font-size:11px; color:var(--muted);" id="exemplar-points-badge">0 exemplar measurements</span>
@@ -1303,12 +1587,13 @@ SRE_DASHBOARD_HTML = """<!DOCTYPE html>
     }
 
     function seriesColor(nodeId, role) {
+      const id = String(nodeId || '').toLowerCase();
+      if (id.includes('cat-1') || id.includes('cat_1')) return '#0284c7';
+      if (id.includes('cat-2') || id.includes('cat_2')) return '#16a34a';
+      if (id.includes('cat-3') || id.includes('cat_3')) return '#dc2626';
+      if (id === 'game-server') return '#0ea5e9';
+      if (id === 'mcp-server') return '#059669';
       if (role === 'coach') return '#7c3aed';
-      if (nodeId === 'cat-1') return '#0284c7';
-      if (nodeId === 'cat-2') return '#16a34a';
-      if (nodeId === 'cat-3') return '#dc2626';
-      if (nodeId === 'game-server') return '#0ea5e9';
-      if (nodeId === 'mcp-server') return '#059669';
       return '#4f46e5';
     }
 
@@ -1329,7 +1614,7 @@ SRE_DASHBOARD_HTML = """<!DOCTYPE html>
             displayVal: `${Number(p.latency_ms || 0).toLocaleString()} ms (TTFT: ${p.ttft_ms || 0} ms)`,
             seriesKey: `${p.node_id}:${p.role}`,
             seriesLabel: `${p.node_id} (${p.role})`,
-            color: seriesColor(p.node_id, p.role),
+            color: seriesColor(p.node_id || p.agent_id, p.role),
           }));
         yUnit = 'ms';
       } else if (currentMetricChart === 'tokens') {
@@ -1341,7 +1626,7 @@ SRE_DASHBOARD_HTML = """<!DOCTYPE html>
             displayVal: `${Number(p.total_tokens || 0).toLocaleString()} tokens`,
             seriesKey: `${p.node_id}:${p.role}`,
             seriesLabel: `${p.node_id} (${p.role})`,
-            color: seriesColor(p.node_id, p.role),
+            color: seriesColor(p.node_id || p.agent_id, p.role),
           }));
         yUnit = 'tok';
       } else {
@@ -1353,7 +1638,7 @@ SRE_DASHBOARD_HTML = """<!DOCTYPE html>
             displayVal: `${p.tool_name}: ${p.duration_ms || 0} ms`,
             seriesKey: `tool:${p.node_id}`,
             seriesLabel: `${p.node_id} tool (${p.tool_name})`,
-            color: '#059669',
+            color: seriesColor(p.node_id || p.agent_id, 'tool'),
           }));
         const tickPts = (ts.ticks || [])
           .filter(p => currentFilter === 'all' || currentFilter === 'game-server')
@@ -1403,7 +1688,7 @@ SRE_DASHBOARD_HTML = """<!DOCTYPE html>
       const bySeries = {};
       for (const c of coords) {
         if (!bySeries[c.pt.seriesKey]) {
-          bySeries[c.pt.seriesKey] = { color: c.pt.color, pts: [] };
+          bySeries[c.pt.seriesKey] = { color: c.pt.color, role: c.pt.role, pts: [] };
         }
         bySeries[c.pt.seriesKey].pts.push(`${c.x},${c.y}`);
       }
@@ -1428,7 +1713,8 @@ SRE_DASHBOARD_HTML = """<!DOCTYPE html>
       let linesSvg = '';
       for (const s of Object.values(bySeries)) {
         if (s.pts.length > 1) {
-          linesSvg += `<polyline fill="none" stroke="${s.color}" stroke-width="1.75" stroke-opacity="0.65" points="${s.pts.join(' ')}" />`;
+          const dashAttr = s.role === 'coach' ? ' stroke-dasharray="5,3"' : '';
+          linesSvg += `<polyline fill="none" stroke="${s.color}" stroke-width="1.75" stroke-opacity="0.7"${dashAttr} points="${s.pts.join(' ')}" />`;
         }
       }
 

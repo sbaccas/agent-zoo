@@ -1325,26 +1325,37 @@ async def query_adk_gemini(
     try:
         async with asyncio.timeout(timeout_sec):
             async with _llm_lock:
-                # Refresh session to prevent token explosion across ticks
-                try:
-                    await session_service.delete_session(
+                from opentelemetry import trace as _otel_trace
+                from opentelemetry.trace import SpanKind as _SpanKind, Status as _Status, StatusCode as _StatusCode
+                _tracer = _otel_trace.get_tracer("cm.genai")
+
+                with _tracer.start_as_current_span(
+                    "actor.prepare_prompt",
+                    kind=_SpanKind.INTERNAL,
+                    attributes={"cm.agent_id": agent_id, "cm.tick": int(obs.tick)},
+                ) as _prep_span:
+                    # Refresh session to prevent token explosion across ticks
+                    try:
+                        await session_service.delete_session(
+                            app_name="cat_agent_app", user_id=user_id, session_id=session_id
+                        )
+                    except Exception:
+                        pass
+                    await session_service.create_session(
                         app_name="cat_agent_app", user_id=user_id, session_id=session_id
                     )
-                except Exception:
-                    pass
-                await session_service.create_session(
-                    app_name="cat_agent_app", user_id=user_id, session_id=session_id
-                )
 
-                legal = obs.legal_actions or ["stay", "north", "south", "east", "west"]
-                prompt = build_decision_prompt(
-                    obs,
-                    history=history,
-                    agent_id=agent_id,
-                    history_window_size=history_window_size,
-                    capture=capture,
-                    commander_directive=commander_directive,
-                )
+                    legal = obs.legal_actions or ["stay", "north", "south", "east", "west"]
+                    prompt = build_decision_prompt(
+                        obs,
+                        history=history,
+                        agent_id=agent_id,
+                        history_window_size=history_window_size,
+                        capture=capture,
+                        commander_directive=commander_directive,
+                    )
+                    _prep_span.set_attribute("cm.prompt_chars", len(prompt))
+                    _prep_span.set_status(_Status(_StatusCode.OK))
 
                 msg = types.Content(role="user", parts=[types.Part.from_text(text=prompt)])
                 decision = None

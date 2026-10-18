@@ -162,7 +162,7 @@ def _percentile(values: Sequence[float], pct: float) -> float:
 class SRETelemetryStore:
     """Thread-safe in-memory store for OTel spans, GenAI metrics, tool calls, and correlated logs."""
 
-    def __init__(self, service_name: str = "cm-service", agent_id: str = "", max_spans: int = 600) -> None:
+    def __init__(self, service_name: str = "cm-service", agent_id: str = "", max_spans: int = 1500) -> None:
         self.service_name = service_name
         self.agent_id = agent_id
         self.start_time = time.time()
@@ -170,6 +170,9 @@ class SRETelemetryStore:
 
         # Rolling spans & correlated log entries
         self.spans: Deque[Dict[str, Any]] = deque(maxlen=max_spans)
+        # Dedicated priority buffer for multi-step GenAI, Coach, MCP, A2A, and error spans
+        # so high-frequency 500ms tick spans never evict slower multi-server traces.
+        self.priority_spans: Deque[Dict[str, Any]] = deque(maxlen=max_spans)
         self.logs: Deque[Dict[str, Any]] = deque(maxlen=250)
 
         # GenAI sliding window events
@@ -205,8 +208,33 @@ class SRETelemetryStore:
         self.latency_when_logging_off: Deque[float] = deque(maxlen=150)
 
     def record_span_dict(self, span_dict: Dict[str, Any]) -> None:
+        sname = str(span_dict.get("name") or "").lower()
+        is_priority = (
+            any(
+                k in sname
+                for k in (
+                    "genai.",
+                    "coach.",
+                    "actor.",
+                    "mcp",
+                    "a2a",
+                    "eval",
+                    "invocation",
+                    "invoke_agent",
+                    "call_llm",
+                    "generate_content",
+                    "execute_tool",
+                    "tools/call",
+                    "tools/list",
+                    "initialize",
+                )
+            )
+            or span_dict.get("status") == "ERROR"
+        )
         with self._lock:
             self.spans.append(span_dict)
+            if is_priority:
+                self.priority_spans.append(span_dict)
 
     def record_log(
         self,
@@ -582,7 +610,23 @@ class SRETelemetryStore:
                 "logs": list(self.logs)[-60:],
             }
             if include_spans:
-                res["spans"] = list(self.spans)[-span_limit:]
+                recent_tail = list(self.spans)[-span_limit:]
+                prio_tail = list(self.priority_spans)[-span_limit:]
+                prio_trace_ids = {sp.get("trace_id") for sp in prio_tail if sp.get("trace_id")}
+                related_spans = [
+                    sp for sp in self.spans
+                    if sp.get("trace_id") in prio_trace_ids
+                ]
+                merged_by_id: Dict[str, Dict[str, Any]] = {}
+                for sp in prio_tail + related_spans + recent_tail:
+                    sid = sp.get("span_id")
+                    if sid:
+                        merged_by_id[sid] = sp
+                merged_spans = sorted(
+                    merged_by_id.values(),
+                    key=lambda x: x.get("start_time_ns") or 0,
+                )
+                res["spans"] = merged_spans[-(span_limit * 2):]
             return res
 
 
