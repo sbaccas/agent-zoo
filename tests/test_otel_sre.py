@@ -167,3 +167,74 @@ def test_sre_endpoints_across_services():
         resp_cfg = client.get("/api/sre/config")
         assert resp_cfg.status_code == 200
         assert "tracing_enabled" in resp_cfg.json()
+
+
+def test_build_trace_trees_hierarchy():
+    """Verify build_trace_trees groups spans by trace_id into a Cloud Trace waterfall with ASCII tree connectors."""
+    from app.otel.dashboard import build_trace_trees
+
+    tid = "8a3f91c2" + "0" * 24
+    mock_spans = [
+        {
+            "trace_id": tid,
+            "span_id": "span_1",
+            "parent_span_id": None,
+            "name": "agent.act",
+            "node_id": "cat-1",
+            "service_name": "cm-agent-cat-1",
+            "agent_id": "cat-1",
+            "tick": 664,
+            "start_time_ns": 1_000_000_000,
+            "end_time_ns": 1_640_000_000,
+            "duration_ms": 640.0,
+            "status": "OK",
+            "attributes": {"cm.tick": 664},
+        },
+        {
+            "trace_id": tid,
+            "span_id": "span_2",
+            "parent_span_id": "span_1",
+            "name": "genai.actor_deliberation",
+            "node_id": "cat-1",
+            "service_name": "cm-agent-cat-1",
+            "agent_id": "cat-1",
+            "tick": 664,
+            "start_time_ns": 1_010_000_000,
+            "end_time_ns": 1_620_000_000,
+            "duration_ms": 610.0,
+            "status": "OK",
+            "attributes": {
+                "gen_ai.request.model": "gemini-2.5-flash",
+                "gen_ai.usage.input_tokens": 900,
+                "gen_ai.usage.output_tokens": 45,
+            },
+        },
+        {
+            "trace_id": tid,
+            "span_id": "span_3",
+            "parent_span_id": "span_1",
+            "name": "mcp.http.POST /api/telemetry",
+            "node_id": "mcp-server",
+            "service_name": "cm-mcp-server",
+            "agent_id": "cat-1",
+            "tick": 664,
+            "start_time_ns": 1_625_000_000,
+            "end_time_ns": 1_633_000_000,
+            "duration_ms": 8.0,
+            "status": "OK",
+            "attributes": {},
+        },
+    ]
+
+    trees = build_trace_trees(mock_spans)
+    assert len(trees) == 1
+    t = trees[0]
+    assert t["trace_id"] == tid
+    assert t["span_count"] == 3
+    assert t["crossed_services"] is True
+    assert "Tick 664" in t["story"]
+    assert t["spans"][0]["tree_prefix"] == "└─ "
+    assert t["spans"][1]["tree_prefix"] == "    ├─ "
+    assert t["spans"][2]["tree_prefix"] == "    └─ "
+    assert t["spans"][2]["crossed_network"] is True
+

@@ -162,7 +162,7 @@ def _percentile(values: Sequence[float], pct: float) -> float:
 class SRETelemetryStore:
     """Thread-safe in-memory store for OTel spans, GenAI metrics, tool calls, and correlated logs."""
 
-    def __init__(self, service_name: str = "cm-service", agent_id: str = "", max_spans: int = 400) -> None:
+    def __init__(self, service_name: str = "cm-service", agent_id: str = "", max_spans: int = 600) -> None:
         self.service_name = service_name
         self.agent_id = agent_id
         self.start_time = time.time()
@@ -238,6 +238,18 @@ class SRETelemetryStore:
         with self._lock:
             self.logs.append(entry)
 
+    def _current_or_recent_trace_span(self) -> tuple[Optional[str], Optional[str]]:
+        span = trace.get_current_span()
+        ctx = span.get_span_context() if span else None
+        if ctx and ctx.is_valid:
+            return f"{ctx.trace_id:032x}", f"{ctx.span_id:016x}"
+        # Fallback if called immediately after span context exited
+        with self._lock:
+            if self.spans:
+                last_sp = self.spans[-1]
+                return last_sp.get("trace_id"), last_sp.get("span_id")
+        return None, None
+
     def record_genai_call(
         self,
         role: str,
@@ -255,8 +267,12 @@ class SRETelemetryStore:
         subturns_count: int = 1,
         tick: Optional[int] = None,
         error: Optional[str] = None,
+        trace_id: Optional[str] = None,
+        span_id: Optional[str] = None,
     ) -> None:
         now = time.time()
+        if not trace_id:
+            trace_id, span_id = self._current_or_recent_trace_span()
         est_input = input_tokens if input_tokens > 0 else max(1, prompt_chars // 4)
         total_tok = est_input + max(0, output_tokens) + max(0, thinking_tokens)
         effective_ttft = round(ttft_ms if ttft_ms is not None else latency_ms * 0.62, 2)
@@ -282,6 +298,8 @@ class SRETelemetryStore:
             "tool_calls_count": int(tool_calls_count),
             "subturns_count": int(subturns_count),
             "error": error,
+            "trace_id": trace_id,
+            "span_id": span_id,
         }
         with self._lock:
             self.genai_events.append(evt)
@@ -297,11 +315,12 @@ class SRETelemetryStore:
             self.genai_totals["output_tokens_total"] += int(output_tokens)
             self.genai_totals["thinking_tokens_total"] += int(thinking_tokens)
 
-            if status == "429_rate_limit" or (error and ("429" in error or "RESOURCE_EXHAUSTED" in error)):
+            status_norm = str(status or "ok").lower()
+            if status_norm == "429_rate_limit" or (error and ("429" in error or "RESOURCE_EXHAUSTED" in error)):
                 self.genai_totals["errors_429_total"] += 1
-            elif status == "timeout" or (error and "timeout" in error.lower()):
+            elif status_norm == "timeout" or (error and "timeout" in error.lower()):
                 self.genai_totals["errors_timeout_total"] += 1
-            elif status not in ("ok", "success") or error:
+            elif status_norm not in ("ok", "success", "unset") or error:
                 self.genai_totals["errors_other_total"] += 1
 
             src = decision_source or "adk_gemini"
@@ -328,9 +347,13 @@ class SRETelemetryStore:
         payload_bytes: int = 0,
         agent_id: Optional[str] = None,
         details: Optional[Dict[str, Any]] = None,
+        trace_id: Optional[str] = None,
+        span_id: Optional[str] = None,
     ) -> None:
         resolved_cache_hit = bool(cached) if cached is not None else bool(cache_hit)
         now = time.time()
+        if not trace_id:
+            trace_id, span_id = self._current_or_recent_trace_span()
         evt = {
             "ts": now,
             "time_str": datetime.now(timezone.utc).strftime("%H:%M:%S.%f")[:-3],
@@ -342,6 +365,8 @@ class SRETelemetryStore:
             "cache_hit": resolved_cache_hit,
             "payload_bytes": int(payload_bytes),
             "details": details or {},
+            "trace_id": trace_id,
+            "span_id": span_id,
         }
         with self._lock:
             self.tool_events.append(evt)
@@ -379,8 +404,12 @@ class SRETelemetryStore:
         alive_mice: int = 0,
         agent_rtts_ms: Optional[Dict[str, float]] = None,
         stale_count: int = 0,
+        trace_id: Optional[str] = None,
+        span_id: Optional[str] = None,
     ) -> None:
         now = time.time()
+        if not trace_id:
+            trace_id, span_id = self._current_or_recent_trace_span()
         overrun = bool(tick_budget_ms and duration_ms > tick_budget_ms)
         evt = {
             "ts": now,
@@ -393,6 +422,8 @@ class SRETelemetryStore:
             "alive_cats": alive_cats,
             "alive_mice": alive_mice,
             "stale_count": stale_count,
+            "trace_id": trace_id,
+            "span_id": span_id,
         }
         with self._lock:
             self.tick_events.append(evt)
@@ -403,7 +434,7 @@ class SRETelemetryStore:
                 q = self.agent_rtt_samples.setdefault(cid, deque(maxlen=100))
                 q.append(float(rtt))
 
-    def get_summary(self, include_spans: bool = True, span_limit: int = 80) -> Dict[str, Any]:
+    def get_summary(self, include_spans: bool = True, span_limit: int = 250) -> Dict[str, Any]:
         now = time.time()
         cutoff_60s = now - 60.0
         with self._lock:
@@ -520,7 +551,7 @@ class SRETelemetryStore:
                         "logging_off_p50_ms": _percentile(log_off_lats, 50),
                         "logging_off_samples": len(log_off_lats),
                     },
-                    "recent_events": genai_list[-35:],
+                    "recent_events": genai_list[-90:],
                 },
                 "tokens": {
                     "input_tokens_total": self.genai_totals["input_tokens_total"],
@@ -535,7 +566,7 @@ class SRETelemetryStore:
                     "cache_hits_total": self.tool_cache_hits_total,
                     "cache_misses_total": self.tool_cache_misses_total,
                     "cache_hit_pct": cache_hit_pct,
-                    "recent_calls": list(self.tool_events)[-35:],
+                    "recent_calls": list(self.tool_events)[-80:],
                 },
                 "simulation": {
                     "ticks_recorded": len(ticks_list),
@@ -546,7 +577,7 @@ class SRETelemetryStore:
                     "tick_overruns_total": self.tick_overruns_total,
                     "stale_drops_total": self.stale_drops_total,
                     "agent_rtts": agent_rtts_out,
-                    "recent_ticks": ticks_list[-40:],
+                    "recent_ticks": ticks_list[-90:],
                 },
                 "logs": list(self.logs)[-60:],
             }
@@ -558,6 +589,12 @@ class SRETelemetryStore:
 # ---------------------------------------------------------------------------
 # OpenTelemetry Span Exporters (InMemory SRE + Toggleable JSONL + OTLP HTTP)
 # ---------------------------------------------------------------------------
+
+
+def _sanitize_attr_val(val: Any, max_len: int = 4000) -> Any:
+    if isinstance(val, str) and len(val) > max_len:
+        return val[:max_len] + f"... [truncated, total {len(val)} chars]"
+    return val
 
 
 def _readable_span_to_dict(span: ReadableSpan, service_name: str, agent_id: str) -> Dict[str, Any]:
@@ -584,7 +621,7 @@ def _readable_span_to_dict(span: ReadableSpan, service_name: str, agent_id: str)
         "duration_ms": duration_ms,
         "status": status_code,
         "status_description": span.status.description if span.status else None,
-        "attributes": {str(k): v for k, v in attrs.items()},
+        "attributes": {str(k): _sanitize_attr_val(v) for k, v in attrs.items()},
     }
 
 
@@ -618,14 +655,17 @@ class InMemoryAndJSONLSpanExporter(SpanExporter):
             except Exception:
                 pass
 
-        # Optional OTLP HTTP JSON forwarder when backend=="otlp" and endpoint is configured
+        # Optional OTLP HTTP JSON forwarder or Google Cloud Trace v2 batchWrite
         cfg = get_otel_config()
-        if cfg.get("backend") in ("otlp", "gcp") and cfg.get("otlp_endpoint"):
-            self._forward_otlp_nonblocking(spans, cfg["otlp_endpoint"])
+        span_dicts = [_readable_span_to_dict(s, self.store.service_name, self.store.agent_id) for s in spans]
+        if cfg.get("backend") == "otlp" and cfg.get("otlp_endpoint"):
+            self._forward_otlp_nonblocking(span_dicts, cfg["otlp_endpoint"])
+        elif cfg.get("backend") == "gcp":
+            self._forward_gcp_cloud_trace_nonblocking(span_dicts, cfg.get("gcp_project") or "")
 
         return SpanExportResult.SUCCESS
 
-    def _forward_otlp_nonblocking(self, spans: Sequence[ReadableSpan], endpoint: str) -> None:
+    def _forward_otlp_nonblocking(self, span_dicts: List[Dict[str, Any]], endpoint: str) -> None:
         try:
             payload = {
                 "resourceSpans": [
@@ -635,14 +675,7 @@ class InMemoryAndJSONLSpanExporter(SpanExporter):
                                 {"key": "service.name", "value": {"stringValue": self.store.service_name}},
                             ]
                         },
-                        "scopeSpans": [
-                            {
-                                "spans": [
-                                    _readable_span_to_dict(s, self.store.service_name, self.store.agent_id)
-                                    for s in spans
-                                ]
-                            }
-                        ],
+                        "scopeSpans": [{"spans": span_dicts}],
                     }
                 ]
             }
@@ -654,6 +687,57 @@ class InMemoryAndJSONLSpanExporter(SpanExporter):
             urllib.request.urlopen(req, timeout=0.75).close()
         except Exception:
             pass
+
+    def _forward_gcp_cloud_trace_nonblocking(self, span_dicts: List[Dict[str, Any]], configured_project: str) -> None:
+        def _send() -> None:
+            try:
+                import google.auth
+                import google.auth.transport.requests
+
+                creds, detected_project = google.auth.default(
+                    scopes=["https://www.googleapis.com/auth/trace.append", "https://www.googleapis.com/auth/cloud-platform"]
+                )
+                project_id = configured_project or detected_project or "catz-app-prod"
+                if not creds.valid:
+                    creds.refresh(google.auth.transport.requests.Request())
+                gcp_spans = []
+                for sd in span_dicts:
+                    tid = sd["trace_id"]
+                    sid = sd["span_id"]
+                    attr_map = {
+                        "service.name": {"stringValue": {"value": str(sd.get("service_name") or "")[:256]}},
+                        "cm.agent_id": {"stringValue": {"value": str(sd.get("agent_id") or "")[:256]}},
+                    }
+                    for ak, av in (sd.get("attributes") or {}).items():
+                        attr_map[str(ak)[:128]] = {"stringValue": {"value": str(av)[:512]}}
+                    span_obj: Dict[str, Any] = {
+                        "name": f"projects/{project_id}/traces/{tid}/spans/{sid}",
+                        "spanId": sid,
+                        "displayName": {"value": str(sd.get("name") or "span")[:128]},
+                        "startTime": sd.get("timestamp") or datetime.now(timezone.utc).isoformat(),
+                        "endTime": datetime.fromtimestamp((sd.get("end_time_ns") or time.time_ns()) / 1e9, tz=timezone.utc).isoformat(),
+                        "attributes": {"attributeMap": attr_map},
+                    }
+                    if sd.get("parent_span_id"):
+                        span_obj["parentSpanId"] = sd["parent_span_id"]
+                    gcp_spans.append(span_obj)
+                url = f"https://cloudtrace.googleapis.com/v2/projects/{project_id}/traces:batchWrite"
+                body = json.dumps({"spans": gcp_spans}).encode("utf-8")
+                req = urllib.request.Request(
+                    url,
+                    data=body,
+                    headers={
+                        "Content-Type": "application/json",
+                        "Authorization": f"Bearer {creds.token}",
+                        "x-goog-user-project": project_id,
+                    },
+                    method="POST",
+                )
+                urllib.request.urlopen(req, timeout=2.5).close()
+            except Exception:
+                pass
+
+        threading.Thread(target=_send, daemon=True).start()
 
     def shutdown(self) -> None:
         pass
