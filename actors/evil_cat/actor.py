@@ -524,10 +524,10 @@ def build_decision_prompt(
 
     # Observation & Live Capabilities (matching actors/cat/actor.py)
     caps = obs.capabilities or {}
-    atk_range = caps.get("attack_range", 2)
-    vision_rad = caps.get("vision_radius", 4)
+    atk_range = caps.get("attack_range", 4)
+    vision_rad = caps.get("vision_radius", 10)
     vision_rear = caps.get("vision_rear", 2)
-    vision_half = caps.get("vision_half_width", 3)
+    vision_half = caps.get("vision_half_width", 5)
     move_cd = caps.get("move_cooldown", 3)
     atk_cd = caps.get("attack_cooldown", 3)
     lunge_cd = caps.get("lunge_cooldown", 2)

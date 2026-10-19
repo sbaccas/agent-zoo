@@ -335,6 +335,12 @@ hundred ticks better than the last hundred.
   tiles deep and 3 wide, ahead only. Neither is a cone and neither widens with
   distance. Seeing a mouse does not mean it can hit it -- that is what turning
   is for.
+- **Never invert the Cartesian compass when giving directional orders:**
+  - **`north` decreases `y`** (`y - 1`, moving toward the northern boundary `y = 0`).
+  - **`south` increases `y`** (`y + 1`, moving toward the southern boundary `y = 99`).
+  - **`west` decreases `x`** (`x - 1`, moving toward the western boundary `x = 0`).
+  - **`east` increases `x`** (`x + 1`, moving toward the eastern boundary `x = 99`).
+  - Never command the Cat to move `south` when it is at `y = 99` (or to decrease `y`), and never command it to move `north` when it is at `y = 0` (or to increase `y`). Doing so forces the Actor to output an illegal boundary action on every tick!
 - **Relax the 3–4 lines condition; let the dossier grow with the game.**
   You are NOT constrained to 3 or 4 directives or lines. There is no artificial
   ceiling or fixed target count. Do not compress your insights or drop valuable
