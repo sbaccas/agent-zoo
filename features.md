@@ -32,9 +32,9 @@
 - **Summary**: Cache `_viewport_png_bytes` inside `capture` during `build_decision_prompt` and reuse those bytes directly in `query_adk_gemini` instead of rendering the 260×260 PIL PNG a second time on every `cat-3` tick.
 
 ### 4. `OPT-03`: Deduplicate Triplicated History in `cat-3` Coach Prompt (`build_coach_eval_prompt`)
-- **Status**: 🔍 In Review (Selecting Which Representation to Keep)
-- **Target**: [`actors/evil_cat/eval.py`](file:///Users/shanebaccas/Desktop/workspace/C+M/actors/evil_cat/eval.py#L945-L1085)
-- **Summary**: `build_coach_eval_prompt` currently injects the same tick history in three separate formats (`last_10_history_block`, `last_10_observations_block`, and `latest_actor_payload_block`), adding ~3,500–4,500 redundant input tokens per Evil Coach call. Reviewing side-by-side samples to pick the single best representation.
+- **Status**: ✅ Implemented (Kept Section 3 `LATEST ACTOR PAYLOAD` as Single Source of Truth)
+- **Target**: [`actors/evil_cat/eval.py`](file:///Users/shanebaccas/Desktop/workspace/C+M/actors/evil_cat/eval.py#L945-L1085), [`actors/evil_cat/actor.py`](file:///Users/shanebaccas/Desktop/workspace/C+M/actors/evil_cat/actor.py#L494-L500)
+- **Summary**: Removed the redundant `last_10_history_block` (Section 1) and `last_10_observations_block` (Section 2) from `build_coach_eval_prompt`, enriched `build_decision_prompt`'s 25-tick history lines with `HP: {hp}/{max_hp}`, and appended the current tick's subordinate decision to `latest_actor_payload_block` (Section 3), saving ~2,000–3,000 duplicate input tokens per Evil Coach call.
 
 ### 5. `OPT-01`: Coach Thinking Budgets (`Call 1` vs. `Call 2` Allocation)
 - **Status**: ⏸️ Deferred / Needs Independent Tuning

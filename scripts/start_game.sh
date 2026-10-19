@@ -291,9 +291,15 @@ for ((idx = 0; idx < TOTAL_AGENTS; idx++)); do
 done
 rm -f "${PID_FILE}"
 
-RELOAD_FLAG=""
+GAME_RELOAD_FLAGS=""
+CAT_RELOAD_FLAGS=""
+EVIL_CAT_RELOAD_FLAGS=""
+MCP_RELOAD_FLAGS=""
 if [[ "${USE_RELOAD}" -eq 1 ]]; then
-  RELOAD_FLAG="--reload"
+  GAME_RELOAD_FLAGS="--reload --reload-dir app"
+  CAT_RELOAD_FLAGS="--reload --reload-dir actors/cat --reload-dir actors/a2a"
+  EVIL_CAT_RELOAD_FLAGS="--reload --reload-dir actors/evil_cat --reload-dir actors/a2a"
+  MCP_RELOAD_FLAGS="--reload"
 fi
 
 wait_for_http() {
@@ -314,7 +320,7 @@ wait_for_http() {
 
 # 3. Start Authoritative Game Server (:8000)
 echo -e "${BOLD}1️⃣  Starting Authoritative Game Server on http://${HOST}:${GAME_PORT} ...${RESET}"
-python -m uvicorn app.main:app --host "${HOST}" --port "${GAME_PORT}" ${RELOAD_FLAG} --no-access-log \
+python -m uvicorn app.main:app --host "${HOST}" --port "${GAME_PORT}" ${GAME_RELOAD_FLAGS} --no-access-log \
   > "${LOG_DIR}/game_server.log" 2>&1 &
 GAME_PID=$!
 echo "game-server:${GAME_PID}:${GAME_PORT}" >> "${PID_FILE}"
@@ -334,7 +340,7 @@ fi
 # 4. Start MCP Server (:9050)
 if [[ "${START_MCP}" -eq 1 ]]; then
   echo -e "${BOLD}2️⃣  Starting MCP Telemetry Server on http://${HOST}:${MCP_PORT} ...${RESET}"
-  python -m app.mcp.run --host "${HOST}" --port "${MCP_PORT}" ${RELOAD_FLAG} \
+  python -m app.mcp.run --host "${HOST}" --port "${MCP_PORT}" ${MCP_RELOAD_FLAGS} \
     > "${LOG_DIR}/mcp_server.log" 2>&1 &
   MCP_PID=$!
   echo "mcp-server:${MCP_PID}:${MCP_PORT}" >> "${PID_FILE}"
@@ -360,7 +366,7 @@ for ((idx = 0; idx < TOTAL_AGENTS; idx++)); do
     CAT_SKILLS_PATH="actors/evil_cat/skills.md" \
     EVAL_SKILLS_PATH="actors/evil_cat/coach_skills.md" \
     CAT_EVAL_TIMEOUT_SEC="none" \
-    python -m uvicorn actors.evil_cat.api:app --host "${HOST}" --port "${cport}" ${RELOAD_FLAG} --no-access-log \
+    python -m uvicorn actors.evil_cat.api:app --host "${HOST}" --port "${cport}" ${EVIL_CAT_RELOAD_FLAGS} --no-access-log \
       > "${LOG_DIR}/${cid}.log" 2>&1 &
   else
     PORT="${cport}" \
@@ -369,7 +375,7 @@ for ((idx = 0; idx < TOTAL_AGENTS; idx++)); do
     CAT_SKILLS_PATH="actors/cat/actor_skills.md" \
     EVAL_SKILLS_PATH="actors/cat/subagents/eval_skills.md" \
     CAT_EVAL_TIMEOUT_SEC="${CAT_EVAL_TIMEOUT_SEC:-900}" \
-    python -m uvicorn actors.cat.api:app --host "${HOST}" --port "${cport}" ${RELOAD_FLAG} --no-access-log \
+    python -m uvicorn actors.cat.api:app --host "${HOST}" --port "${cport}" ${CAT_RELOAD_FLAGS} --no-access-log \
       > "${LOG_DIR}/${cid}.log" 2>&1 &
   fi
   apid=$!

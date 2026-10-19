@@ -47,6 +47,7 @@ def main():
             host=args.host,
             port=args.port,
             reload=True,
+            reload_dirs=["app/mcp"],
             log_level="info",
             timeout_graceful_shutdown=2,
         )

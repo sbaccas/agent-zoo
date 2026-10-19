@@ -942,73 +942,9 @@ def build_coach_eval_prompt(
         f"{eliminated_note}\n"
     )
 
-    # 1. Last 10 Ticks: Tactical History & Reasoning
-    history_lines: List[str] = []
-    obs_payload_entries: List[str] = []
-    for r in last_10_ticks:
-        r_obs = r.get("observation") if isinstance(r_obs_raw := r.get("observation"), dict) else {}
-        r_tick = r.get("tick", r_obs.get("tick", "?"))
-        r_self = r_obs.get("self") if isinstance(r_obs.get("self"), dict) else {}
-        r_pos = r_self.get("position") or {"x": r.get("x", 0), "y": r.get("y", 0)}
-        r_facing = r.get("facing") or r_self.get("facing", "north")
-        r_hp = r_self.get("hp", 150)
-        r_max_hp = r_self.get("max_hp", 150)
-        r_score = r.get("score", r_obs.get("score", 0))
-        r_resp = r.get("response") if isinstance(r.get("response"), dict) else {}
-        raw_act = r.get("action") or r_resp.get("action") or "stay"
-        if isinstance(raw_act, dict):
-            raw_act = raw_act.get("direction") or raw_act.get("action") or "stay"
-        r_act = str(raw_act).upper()
-        r_thought = str(r.get("thought") or r_resp.get("thought") or "")
-        r_source = str(r.get("source") or r_resp.get("source") or "model")
-        r_cd = int(r_self.get("action_cooldown", r.get("action_cooldown", 0)) or 0)
-        r_can_act = r_self.get("can_act")
-        if r.get("tick_type") == "cooldown" or r.get("executed") is False:
-            is_locked = True
-        else:
-            is_locked = (r_cd > 0) if r_can_act is None else (not r_can_act)
-        status_str = (
-            f"LOCKED (recovering from {r.get('locked_action') or r_self.get('locked_action') or 'previous action'})"
-            if is_locked
-            else "EXECUTED"
-        )
-        r_vis = r.get("visible") or r_obs.get("visible_entities") or []
-        if r_vis:
-            vis_parts = []
-            for v in r_vis:
-                vid = v.get("id", "entity")
-                vpos = v.get("position") if isinstance(v.get("position"), dict) else {"x": v.get("x"), "y": v.get("y")}
-                vis_parts.append(f"{vid}@({vpos.get('x')},{vpos.get('y')})")
-            seen_str = ", ".join(vis_parts)
-        else:
-            seen_str = "nothing"
-        history_lines.append(
-            f"- Tick #{r_tick}: Pos ({r_pos.get('x', 0)}, {r_pos.get('y', 0)}) facing {str(r_facing).upper()} "
-            f"| HP: {r_hp}/{r_max_hp} | Score: {r_score} | Saw: {seen_str} "
-            f"| Action: {r_act} [{status_str}] ({r_source}) | Reasoning: \"{r_thought}\""
-        )
-        slim_obs = {
-            k: v
-            for k, v in r_obs.items()
-            if k not in ("incoming_transmissions", "capabilities")
-        }
-        obs_payload_entries.append(
-            f"[Tick #{r_tick} Observation Payload]:\n{json.dumps(slim_obs, separators=(',', ':'))}"
-        )
-
-    last_10_history_block = (
-        "--- LAST 10 TICKS: TACTICAL HISTORY & REASONING ---\n"
-        f"{chr(10).join(history_lines) if history_lines else '(No history recorded yet)'}\n\n"
-    )
-
-    # 2. Last 10 Ticks: Observation Payloads
-    last_10_observations_block = (
-        "--- LAST 10 TICKS: OBSERVATION PAYLOADS ---\n"
-        f"{chr(10).join(obs_payload_entries) if obs_payload_entries else '(No observation payloads recorded yet)'}\n\n"
-    )
-
-    # 3. Entirety of the Latest Payload that the Actor is Facing (includes 25-tick sliding window + current observation)
+    # Entirety of the Latest Payload that the Actor is Facing (includes 25-tick sliding window + current observation)
     latest_actor_payload_text = "(No actor payload available yet)"
+    latest_tick_decision_line = ""
     if records:
         try:
             obs_dict_for_actor = dict(last_obs) if isinstance(last_obs, dict) else {}
@@ -1042,12 +978,34 @@ def build_coach_eval_prompt(
                 agent_id=agent_id,
                 history_window_size=25,
             )
+            last_resp = last_rec.get("response") if isinstance(last_rec.get("response"), dict) else {}
+            raw_last_act = last_rec.get("action") or last_resp.get("action") or "stay"
+            if isinstance(raw_last_act, dict):
+                raw_last_act = raw_last_act.get("direction") or raw_last_act.get("action") or "stay"
+            last_act_str = str(raw_last_act).upper()
+            last_thought_str = str(last_rec.get("thought") or last_resp.get("thought") or "")
+            last_source_str = str(last_rec.get("source") or last_resp.get("source") or "model")
+            last_cd = int(self_data.get("action_cooldown", last_rec.get("action_cooldown", 0)) or 0)
+            last_can_act = self_data.get("can_act")
+            if last_rec.get("tick_type") == "cooldown" or last_rec.get("executed") is False:
+                last_locked = True
+            else:
+                last_locked = (last_cd > 0) if last_can_act is None else (not last_can_act)
+            last_status_str = (
+                f"LOCKED (recovering from {last_rec.get('locked_action') or self_data.get('locked_action') or 'previous action'})"
+                if last_locked
+                else "EXECUTED"
+            )
+            latest_tick_decision_line = (
+                f"\n\nSubordinate Decision on Tick #{last_tick}: "
+                f"Action={last_act_str} [{last_status_str}] ({last_source_str}) | Reasoning: \"{last_thought_str}\""
+            )
         except Exception as exc:
             logger.debug("Could not reconstruct latest actor payload for coach prompt: %s", exc)
 
     latest_actor_payload_block = (
         "--- LATEST ACTOR PAYLOAD (EXACT PROMPT FACING SUBORDINATE) ---\n"
-        f"{latest_actor_payload_text}\n\n"
+        f"{latest_actor_payload_text}{latest_tick_decision_line}\n\n"
     )
 
     notebook_block = (
@@ -1076,8 +1034,6 @@ def build_coach_eval_prompt(
         f"{coach_identity_block}"
         f"{actor_manual_block}"
         f"{scoreboard_block}"
-        f"{last_10_history_block}"
-        f"{last_10_observations_block}"
         f"{latest_actor_payload_block}"
         f"{notebook_block}"
         f"{diplomacy_block}"
@@ -1112,16 +1068,6 @@ def build_coach_eval_prompt(
                     "label": "Scoreboard & Bounties",
                     "delivered": bool(scoreboard),
                     "text": scoreboard_block,
-                },
-                "recent_history": {
-                    "label": f"Last {len(last_10_ticks)} Ticks: Tactical History & Reasoning",
-                    "delivered": bool(last_10_ticks),
-                    "text": last_10_history_block,
-                },
-                "recent_observations": {
-                    "label": f"Last {len(last_10_ticks)} Ticks: Observation Payloads",
-                    "delivered": bool(last_10_ticks),
-                    "text": last_10_observations_block,
                 },
                 "latest_actor_payload": {
                     "label": "Latest Actor Payload (Exact Prompt Facing Subordinate)",

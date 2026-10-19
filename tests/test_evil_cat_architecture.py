@@ -79,9 +79,9 @@ def test_evil_coach_has_a2a_tools_and_emits_standing_order_pattern():
     records = [{"tick": 1, "observation": {"self": {"hp": 150}, "scoreboard": {"cat-1": 8}}}]
     coach_prompt = build_coach_eval_prompt(records, agent_id="cat-3")
     assert "Scoreboard & Bounties (absorbed when you kill them):" in coach_prompt
-    assert "--- LAST 10 TICKS: TACTICAL HISTORY & REASONING ---" in coach_prompt
-    assert "--- LAST 10 TICKS: OBSERVATION PAYLOADS ---" in coach_prompt
     assert "--- LATEST ACTOR PAYLOAD (EXACT PROMPT FACING SUBORDINATE) ---" in coach_prompt
+    assert "--- LAST 10 TICKS: TACTICAL HISTORY & REASONING ---" not in coach_prompt
+    assert "--- LAST 10 TICKS: OBSERVATION PAYLOADS ---" not in coach_prompt
     assert "--- YOUR SUBORDINATE'S MANUAL (skills.md) ---" in coach_prompt
     assert "YOUR MISSION:" not in coach_prompt
     assert "MODE: <MODE_NAME>" not in coach_prompt
@@ -614,25 +614,17 @@ def test_coach_eval_prompt_includes_last_10_history_observations_and_latest_acto
     capture = {}
     coach_prompt = build_coach_eval_prompt(records, agent_id="cat-3", capture=capture)
 
-    # 1. Last 10 history & reasoning (ticks 6..15 in last 10 block, not tick 1..5)
-    hist_sec = capture["sections"]["recent_history"]["text"]
-    assert "Tick #6:" in hist_sec
-    assert "Tick #15:" in hist_sec
-    assert "Reasoning on tick 15" in hist_sec
-    assert "Tick #5:" not in hist_sec
-
-    # 2. Last 10 observation payloads (ticks 6..15)
-    obs_sec = capture["sections"]["recent_observations"]["text"]
-    assert "[Tick #6 Observation Payload]:" in obs_sec
-    assert "[Tick #15 Observation Payload]:" in obs_sec
-    assert "[Tick #5 Observation Payload]:" not in obs_sec
-
-    # 3. Entirety of the latest payload facing the Actor (contains 25-tick window -> ticks 1..14 + current obs tick 15)
+    # Entirety of the latest payload facing the Actor (contains 25-tick window -> ticks 1..14 + current obs tick 15 + subordinate decision on tick 15)
+    assert "recent_history" not in capture["sections"]
+    assert "recent_observations" not in capture["sections"]
     actor_sec = capture["sections"]["latest_actor_payload"]["text"]
     assert "--- RECENT TACTICAL HISTORY ---" in actor_sec
     assert "- Tick 1:" in actor_sec
+    assert "HP: 150/150" in actor_sec
     assert "- Tick 14:" in actor_sec
     assert "--- CURRENT OBSERVATION (Tick 15, Round 1) ---" in actor_sec
+    assert "Subordinate Decision on Tick #15:" in actor_sec
+    assert "Reasoning on tick 15" in actor_sec
     assert coach_prompt == capture["full_prompt"]
 
 

@@ -494,8 +494,10 @@ def build_decision_prompt(
             vis_str = f" | Saw: {', '.join(vis_parts)}"
         else:
             vis_str = " | Saw: nothing"
+        h_hp = h_self.get("hp", 150)
+        h_max_hp = h_self.get("max_hp", 150)
         history_lines.append(
-            f"- Tick {h_tick}: {posture_str} | Score: {h_score}{vis_str} | Move: {h_act} [{outcome}] | Thought: {h_th}"
+            f"- Tick {h_tick}: {posture_str} | HP: {h_hp}/{h_max_hp} | Score: {h_score}{vis_str} | Move: {h_act} [{outcome}] | Thought: {h_th}"
         )
     history_context = ""
     if history_lines:
