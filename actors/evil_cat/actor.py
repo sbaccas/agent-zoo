@@ -631,6 +631,7 @@ def build_decision_prompt(
             "model": ACTOR_MODEL,
             "thinking_budget": get_thinking_budget(),
             "multimodal_viewport_bytes": len(viewport_png_bytes),
+            "_viewport_png_bytes": viewport_png_bytes,
             "sections": {
                 "skills": {"label": "Evil Cat Skills", "delivered": True, "text": get_skills_instruction(agent_id)},
                 "history": {"label": "Recent History", "delivered": bool(history_context), "text": history_context},
@@ -709,7 +710,8 @@ async def query_adk_gemini(
                 pass
             await session_service.create_session(app_name="evil_cat_agent_app", user_id=user_id, session_id=session_id)
 
-            viewport_png = render_viewport_png(obs, agent_id=agent_id)
+            cached_png = capture.pop("_viewport_png_bytes", None) if isinstance(capture, dict) else None
+            viewport_png = cached_png if cached_png is not None else render_viewport_png(obs, agent_id=agent_id)
             _render_span.set_attribute("cm.viewport_png_bytes", len(viewport_png or b""))
             _render_span.set_status(_Status(_StatusCode.OK))
 
