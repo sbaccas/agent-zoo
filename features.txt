@@ -1,0 +1,7 @@
+ - need to understand the bug with the cat3 score. 
+ - need to know the hp settigns. and optimize. 
+ - investigate 1-tick observation/decision desynchronization in WebSocket `decoupled=True` mode (where `WsClientManager._deliberate_and_reply` answers `can_act=True` (`cd=0`) observations in 0-1ms using the decision computed on the prior `cd=1` tick instead of deliberating on the fresh `cd=0` board state within the 4.0s `budget_sec` window).
+ - evaluate down-tick (`action_cooldown > 0`) LLM call skipping (`cooldown_fastpath`) one change at a time so we don't introduce coordinate lag or missed strike-zone arrivals.
+ - cache `_viewport_png_bytes` in Evil Cat (`actors/evil_cat/actor.py`) `capture` step so `prepare_prompt_bundle` doesn't render the PNG twice per tick.
+ - tune Coach Call-2 thinking budget cap (`CALL_2_THINKING_BUDGET_CAP`) independently after baseline verification.
+ - prevent Coach from issuing self-contradictory territorial boundary rules (e.g., `x <= 25` combined with `never move WEST from x=25`) or single-tile facing-hold loops (e.g., oscillating EAST/WEST between `(70,72)` and `(71,72)` when trying to face EAST at `(70,72)`).
