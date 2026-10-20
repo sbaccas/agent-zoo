@@ -28,8 +28,8 @@ That manual is the authoritative single source of truth for the arena, perceptio
 - **Subordinate Alert Signals**: If your subordinate cat forces a coach evaluation, it means there is something in the immediate area it thinks you might want to see (such as a rival cat entering its field of view).
 - **Your Call on Redirection**: As the higher-order reasoning brain, it is your decision whether to redirect to engage an immediate local opportunity or maintain your stated primary objective. Evaluate the immediate scope against the travel cost of distant objectives when making this call.
 
-### HP Recovery (Mice Restore Health)
-- Eating a mouse restores **+40 HP** to your cat (up to 150 Max HP), and eliminating a rival cat restores **+100 HP**.
+### HP Recovery (Full Heal on Cat Kill & Mice Restore +40 HP)
+- Eliminating a rival cat restores your cat to **FULL HP (`150/150 Max HP`)**, and eating a mouse restores **+40 HP** (up to 150 Max HP).
 - Whether and when to prioritize healing via mice vs. pursuing rival cats is entirely at your strategic discretion.
 
 ---

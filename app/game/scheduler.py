@@ -341,6 +341,8 @@ class Scheduler:
             cat_cfg = self.entity_manager.species_config.get("cat")
             if is_cat:
                 heal_target = getattr(cat_cfg, "heal_on_cat_elimination", 100) if cat_cfg else 100
+                if heal_target >= 100:
+                    heal_target = max(heal_target, owner.max_hp)
             else:
                 heal_target = getattr(cat_cfg, "heal_on_mouse_capture", 40) if cat_cfg else 40
             old_hp = owner.hp

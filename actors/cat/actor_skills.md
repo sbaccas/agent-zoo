@@ -223,7 +223,10 @@ numbers rather than fixed laws:
     - **Hit 1**: 100 → 66 HP (alive, combat capable)
     - **Hit 2**: 66 → 32 HP (alive, critical condition)
     - **Hit 3**: 32 → 0 HP (**knocked out / eliminated**; `alive: false`)
-  - A cat reduced to 0 HP is eliminated from the simulation, locked permanently, and awards a takedown point to the attacker.
+  - A cat reduced to 0 HP is eliminated from the simulation, locked permanently, and awards a takedown point (plus full score absorption when active) to the attacker.
+- **HP Recovery (Full Heal on Cat Kill & +40 HP on Mouse Capture)**:
+  - **Eliminating another cat restores you to FULL HP (`max_hp`, 100/100 HP)**: After winning a fight and eliminating a rival cat, your health goes right back to full (`100/100 HP`).
+  - **Capturing a mouse restores `+40 HP`** (up to `max_hp`).
 - **Prey (Mice)**:
   - Mice are fragile and eliminated in a single cat slash.
 
