@@ -6,9 +6,9 @@
 # ==============================================================================
 set -e
 
-PROJECT_ID="${GCP_PROJECT:-catz-app-prod}"
+PROJECT_ID="${GCP_PROJECT:-your-gcp-project-id}"
 REGION="${GCP_REGION:-northamerica-northeast1}"
-GAR_REPO="${GAR_REPO_ID:-catz-repo}"
+GAR_REPO="${GAR_REPO_ID:-agent-zoo-repo}"
 REGISTRY="${REGION}-docker.pkg.dev"
 REPO_PATH="${REGISTRY}/${PROJECT_ID}/${GAR_REPO}"
 

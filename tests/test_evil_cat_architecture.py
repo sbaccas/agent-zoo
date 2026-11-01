@@ -447,7 +447,7 @@ def test_check_gemini_auth_health_reuses_credentials_object_across_ttl(monkeypat
     monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     monkeypatch.setenv("GOOGLE_GENAI_USE_VERTEXAI", "true")
-    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "catz-app-prod")
+    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "test-gcp-project")
 
     default_calls = 0
     refresh_calls = 0
@@ -464,7 +464,7 @@ def test_check_gemini_auth_health_reuses_credentials_object_across_ttl(monkeypat
     def _fake_default():
         nonlocal default_calls
         default_calls += 1
-        return _FakeCreds(), "catz-app-prod"
+        return _FakeCreds(), "test-gcp-project"
 
     monkeypatch.setattr(google.auth, "default", _fake_default)
 

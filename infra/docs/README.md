@@ -21,7 +21,7 @@ Welcome to the infrastructure and architecture documentation for the **Cat & Mou
 3. **[Security & IAM Architecture (`security.md`)](security.md)**
    * Service Accounts & Principle of Least Privilege
    * OIDC ID Token Lifecycle & Application-Layer Verification
-   * GCP Organization Policy Compliance (`domain:shanebaccas.altostrat.com`)
+   * GCP Organization Policy Compliance (`domain:your-organization.example.com`)
 
 4. **[Operations Runbook (`operations.md`)](operations.md)**
    * Connecting to the Jumpbox Web GUI via IAP

@@ -15,7 +15,7 @@ The Linux Jumpbox runs a containerized Chromium desktop with web rendering over 
 gcloud compute start-iap-tunnel browser-jumpbox 3000 \
   --local-host-port=localhost:3000 \
   --zone=northamerica-northeast1-a \
-  --project=catz-app-prod
+  --project=your-gcp-project-id
 ```
 
 Once running, open your local browser:
@@ -63,23 +63,23 @@ tar czf /tmp/catz_build.tar.gz Dockerfile requirements.txt app/ actors/ scripts/
 # 2. Upload archive to Jumpbox via IAP SCP
 gcloud compute scp /tmp/catz_build.tar.gz browser-jumpbox:/tmp/catz_build.tar.gz \
   --zone=northamerica-northeast1-a \
-  --project=catz-app-prod
+  --project=your-gcp-project-id
 
 # 3. Trigger build & push directly inside Jumpbox
-gcloud compute ssh browser-jumpbox --zone=northamerica-northeast1-a --project=catz-app-prod --command="
+gcloud compute ssh browser-jumpbox --zone=northamerica-northeast1-a --project=your-gcp-project-id --command="
   set -e
   rm -rf /tmp/build && mkdir -p /tmp/build && cd /tmp/build
   tar xzf /tmp/catz_build.tar.gz
   gcloud auth configure-docker northamerica-northeast1-docker.pkg.dev --quiet
-  docker build --target cat-agent -t northamerica-northeast1-docker.pkg.dev/catz-app-prod/catz-repo/cat-agent:latest .
-  docker push northamerica-northeast1-docker.pkg.dev/catz-app-prod/catz-repo/cat-agent:latest
+  docker build --target cat-agent -t northamerica-northeast1-docker.pkg.dev/your-gcp-project-id/catz-repo/cat-agent:latest .
+  docker push northamerica-northeast1-docker.pkg.dev/your-gcp-project-id/catz-repo/cat-agent:latest
 "
 
 # 4. Deploy updated revision to Cloud Run
 gcloud run deploy cat-agent \
-  --image=northamerica-northeast1-docker.pkg.dev/catz-app-prod/catz-repo/cat-agent:latest \
+  --image=northamerica-northeast1-docker.pkg.dev/your-gcp-project-id/catz-repo/cat-agent:latest \
   --region=northamerica-northeast1 \
-  --project=catz-app-prod \
+  --project=your-gcp-project-id \
   --quiet
 ```
 
@@ -91,7 +91,7 @@ Run these commands to verify the operational state:
 
 ### 1. Check Cat Agent Live Status & WebSocket Connection
 ```bash
-gcloud compute ssh browser-jumpbox --zone=northamerica-northeast1-a --project=catz-app-prod --command="
+gcloud compute ssh browser-jumpbox --zone=northamerica-northeast1-a --project=your-gcp-project-id --command="
   curl -s http://agent.catz.internal/api/agent/server/status
 "
 ```
@@ -102,7 +102,7 @@ gcloud compute ssh browser-jumpbox --zone=northamerica-northeast1-a --project=ca
 
 ### 2. Check Game Server Status
 ```bash
-gcloud compute ssh browser-jumpbox --zone=northamerica-northeast1-a --project=catz-app-prod --command="
+gcloud compute ssh browser-jumpbox --zone=northamerica-northeast1-a --project=your-gcp-project-id --command="
   curl -s http://game.catz.internal/api/simulations/active
 "
 ```
@@ -111,7 +111,7 @@ gcloud compute ssh browser-jumpbox --zone=northamerica-northeast1-a --project=ca
 ```bash
 # View recent Cat Agent logs
 gcloud logging read 'resource.type="cloud_run_revision" AND resource.labels.service_name="cat-agent"' \
-  --project=catz-app-prod \
+  --project=your-gcp-project-id \
   --limit=25 \
   --format="value(textPayload)"
 ```

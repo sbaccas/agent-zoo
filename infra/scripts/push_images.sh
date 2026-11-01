@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ==============================================================================
 # Script: infra/scripts/push_images.sh
-# Description: Tags and pushes local container images from CloudTop to GAR
+# Description: Tags and pushes local container images to GAR
 # ==============================================================================
 
 set -euo pipefail
@@ -13,7 +13,7 @@ RED='\033[0;31m'
 BOLD='\033[1m'
 NC='\033[0m'
 
-PROJECT_ID="${1:-$(gcloud config get-value project 2>/dev/null || echo "catz-app-prod")}"
+PROJECT_ID="${1:-$(gcloud config get-value project 2>/dev/null || echo "your-gcp-project-id")}"
 REGION="${REGION:-northamerica-northeast1}"
 REPO_NAME="${REPO_NAME:-catz-repo}"
 TAG="${TAG:-v1}"

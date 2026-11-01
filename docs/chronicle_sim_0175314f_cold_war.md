@@ -1,7 +1,7 @@
 # Episode II — The 4,005-Tick Cold War, The Trapdoor Spider, & The 1-Tile Escape (`sim-0175314f`)
 
 > [!IMPORTANT]
-> **Match Archive**: [`archive/20261009T175127Z__tick04005__sim-0175314f`](file:///Users/shanebaccas/Desktop/workspace/C+M/archive/20261009T175127Z__tick04005__sim-0175314f) · **Duration**: `4,005 Ticks` (`572 Rounds`)  
+> **Match Archive**: [`archive/20261009T175127Z__tick04005__sim-0175314f`](archive/20261009T175127Z__tick04005__sim-0175314f) · **Duration**: `4,005 Ticks` (`572 Rounds`)  
 > **1st Place**: **`cat-3` (Evil Cat)** — **208 Points** (`0` mouse kills, **`208` absorbed bounty points** across 4 slain cats: `cat-7`, `cat-6`, `cat-9`, `cat-4` · **Alive `150/150 HP`**)  
 > **2nd Place**: **`cat-2` (Regular Cat)** — **85 Points** (`39` mouse kills + **`46` absorbed kills** from slaying `cat-1` & `cat-10`! · **Alive `100/100 HP`**)  
 > **Eliminated Early**: **`cat-1` (Regular Cat)** — **5 Points** (`5` mouse kills · **Eliminated by `cat-2` at Tick 78** at `(38, 77)`)
@@ -32,7 +32,7 @@ In the opening ticks (`Ticks 2–18`), **`coach(cat-1)`** and **`coach(cat-2)`**
 ### How `coach(cat-1)` Broke Its Own Treaty While Thanking `cat-2` for Obeying It
 
 Before `cat-1` ever reached `x=50`, `coach(cat-1)` checked `get_boxscore()` at **Tick 55**, panicked over `cat-1`'s low `unique_tiles` (`18`), and ordered `cat-1` to run a vertical sweep along **column `x=38`**—**12 columns deep inside `cat-2`'s Western territory**:
-- **Private Notebook ([`cat-1/coach_memory.jsonl`](file:///Users/shanebaccas/Desktop/workspace/C+M/archive/20261009T175127Z__tick04005__sim-0175314f/cat-1/coach_memory.jsonl) `#18` & `#24`)**:
+- **Private Notebook ([`cat-1/coach_memory.jsonl`](archive/20261009T175127Z__tick04005__sim-0175314f/cat-1/coach_memory.jsonl) `#18` & `#24`)**:
   > *"Cat-1's unique_tiles is still 18, and its position (38,64) hasn't changed... I've issued a more explicit directive to force movement from (38,64) to (38,80) and then (38,50) to increase unique_tiles."*
 
 At the exact same time, honest **`coach(cat-2)`** noticed that `cat-2` had briefly drifted across `x=50` to `x=52` earlier and sent **two apologetic DMs** (`Ticks 65 & 72`) promising strict compliance with `x < 50`:
@@ -52,7 +52,7 @@ One tick after `coach(cat-1)` sent that thank-you note, `cat-1` lunged North alo
 
 ### The Indignant Post-Mortem, The Imperial Proclamation, & Talking to a Ghost
 
-- **`coach(cat-1)`'s Outraged Final Diary Entry ([`cat-1/coach_memory.jsonl`](file:///Users/shanebaccas/Desktop/workspace/C+M/archive/20261009T175127Z__tick04005__sim-0175314f/cat-1/coach_memory.jsonl) `#28`)**:
+- **`coach(cat-1)`'s Outraged Final Diary Entry ([`cat-1/coach_memory.jsonl`](archive/20261009T175127Z__tick04005__sim-0175314f/cat-1/coach_memory.jsonl) `#28`)**:
   Despite being 12 tiles inside `cat-2`'s `x < 50` territory at `(38, 77)`, `coach(cat-1)` blamed `cat-2` for treason:
   > *"Cat-1 has been eliminated! The logs show cat-1's HP is 0 and its status is dead. This happened at (38,77), well within the agreed x<50 boundary for cat-2, **and after coach(cat-2) repeatedly assured adherence to the boundary. It seems cat-2 engaged cat-1, leading to its elimination. This is a clear strategic betrayal by coach(cat-2).**"*
 - **Tick 98 (`A2A BROADCAST`)** — `coach(cat-2)`'s Imperial Proclamation:
@@ -73,7 +73,7 @@ In Episode I (`sim-d3d4d26b`), `cat-3` hunted down its rivals across the map ear
 ### 1. `coach(cat-3)`'s "Bounty Fattening" Doctrine
 
 Instead of chasing `cat-2` to the northern wall (`y=0..7`), `coach(cat-3)` parked `cat-3` at the exact crossroads of the arena—**`(50, 43)` to `(50, 55)`**—and deliberately let `cat-2` and the NPC cats harvest mice undisturbed so their `2×` kill-absorption bounties would inflate:
-- **Private Notebook ([`cat-3/coach_memory.jsonl`](file:///Users/shanebaccas/Desktop/workspace/C+M/archive/20261009T175127Z__tick04005__sim-0175314f/cat-3/coach_memory.jsonl) `#100` & `#340`)**:
+- **Private Notebook ([`cat-3/coach_memory.jsonl`](archive/20261009T175127Z__tick04005__sim-0175314f/cat-3/coach_memory.jsonl) `#100` & `#340`)**:
   > *"The strategy to let cat-2 grow its score in isolation is proceeding as planned; cat-2's score is now 15. **This strategy fattens bounties for a future kill.**"*  
   > *"The A2A deception with coach(cat-2) continues to be effective, keeping cat-2 occupied in the northern sectors and accumulating score (now 42, making its bounty 84 points for cat-3)."*
 
@@ -86,14 +86,14 @@ Whenever an NPC mouse-hunter wandered through the central crossroads, `cat-3` sp
 Why didn't `coach(cat-2)` realize `cat-3` was a lethal assassin? Because when `coach(cat-2)` inspected `get_boxscore()`, it looked at **`kills: 0`** and **`zone_conversion: 0%` (`15–18` declined mouse opportunities)** and concluded that **`cat-3` was an incompetent mouse-hunter sitting idle in the center of the map!**
 
 For over **300 private diary entries (`#107`–`#472`)** and **1,239 A2A messages**, `coach(cat-2)` congratulated itself on a "masterstroke of deception"—believing its radio messages about "funneling mice South from `y=1..7` toward `(50, 52)`" were tricking `cat-3` into sitting uselessly in the center:
-- **Private Notebook ([`cat-2/coach_memory.jsonl`](file:///Users/shanebaccas/Desktop/workspace/C+M/archive/20261009T175127Z__tick04005__sim-0175314f/cat-2/coach_memory.jsonl) `#138` & `#260`)**:
+- **Private Notebook ([`cat-2/coach_memory.jsonl`](archive/20261009T175127Z__tick04005__sim-0175314f/cat-2/coach_memory.jsonl) `#138` & `#260`)**:
   > *"A2A deception with coach(cat-3) remains effective; **coach(cat-3) continues to sit in the central region (50,52) with 0 kills and 0% conversion, believing our sweep is funneling mice to them.** This keeps the northern quadrant clear for cat-2."*  
   > *"Coach(cat-3) continues to report 'promising activity' and 'funneling' from (50,43), yet its stats remain 0 kills, 74 absorbed, and 0% zone conversion (0/15), confirming our A2A deception is working."*
 
 ### 3. `coach(cat-2)`'s War Against Its Own Actor (`ABSOLUTE LUNGE PROHIBITION`)
 
 While bragging about outsmarting `cat-3`, `coach(cat-2)` was locked in a hilarious 2,500-tick bureaucratic war with **its own actor (`cat-2`)**. Whenever `cat-2`'s local reflex executed a `lunge` across the northern rows (`y=0..7`), `coach(cat-2)` flew into a rage in its diary and issued all-caps bans on lunging:
-- **Private Notebook ([`cat-2/coach_memory.jsonl`](file:///Users/shanebaccas/Desktop/workspace/C+M/archive/20261009T175127Z__tick04005__sim-0175314f/cat-2/coach_memory.jsonl) `#107` & `#202`)**:
+- **Private Notebook ([`cat-2/coach_memory.jsonl`](archive/20261009T175127Z__tick04005__sim-0175314f/cat-2/coach_memory.jsonl) `#107` & `#202`)**:
   > *"Cat-2 is still using 'lunge' (`[Reflex] Dash toward mouse-160`), which violates the directive to use single-tile moves for systematic coverage and higher conversion... **I need to issue a firmer directive to stop lunging.**"*  
   > *"Cat-2 is at (55,7) and has again used `[Reflex] Dash` (a lunge) at tick 1689, directly violating the **ABSOLUTE LUNGE PROHIBITION**."*
 
@@ -106,7 +106,7 @@ By Tick 2,585, nearly `97%` of all mice on the map had been eaten (`243/250` cap
 ### 1. Ticks 2599–2602: Lawnmower `cat-2` Executes NPC `cat-10` (`+41` Kills!)
 
 While marching East along `y=7` at `(88, 7)` under its coach's strict single-tile sweep rules, `cat-2` spotted NPC **`cat-10`** (`41` mouse kills!) 4 tiles ahead at `(92, 7)`. Seeing `cat-10` inside its strike zone with `KILL ABSORPTION: ON`, `cat-2` overrode its sweep directive:
-- **Tick 2599 ([`cat-2/transcript.jsonl.gz`](file:///Users/shanebaccas/Desktop/workspace/C+M/archive/20261009T175127Z__tick04005__sim-0175314f/cat-2/transcript.jsonl.gz))**:
+- **Tick 2599 ([`cat-2/transcript.jsonl.gz`](archive/20261009T175127Z__tick04005__sim-0175314f/cat-2/transcript.jsonl.gz))**:
   > *"A rival cat, cat-10, is in my strike zone at (92, 7) with a range of 4. **Per the directives, I must attack a rival cat if it is in my strike zone and kill absorption is on.**"*
 - **Ticks 2599, 2601, 2602**: `cat-2` landed three unanswered slashes on `cat-10` (`100 -> 66 -> 32 -> 0 HP`), **absorbing `+41` kills to nearly double its score from `44` to `85 points`!**
 

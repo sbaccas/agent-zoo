@@ -11,9 +11,9 @@ Three dedicated service accounts segment privileges according to operational bou
 ```mermaid
 graph TD
     subgraph SAs["Dedicated Service Accounts"]
-        JSA["jumpbox-sa@catz-app-prod<br/>(Jumpbox VM Identity)"]
-        CSA["catz-cloudrun-sa@catz-app-prod<br/>(Cloud Run Runtime Identity)"]
-        TSA["terraform-runner@catz-app-prod<br/>(CI/CD / Provisioning Identity)"]
+        JSA["jumpbox-sa@your-gcp-project-id<br/>(Jumpbox VM Identity)"]
+        CSA["catz-cloudrun-sa@your-gcp-project-id<br/>(Cloud Run Runtime Identity)"]
+        TSA["terraform-runner@your-gcp-project-id<br/>(CI/CD / Provisioning Identity)"]
     end
 
     subgraph Targets["Target Services & Roles"]
@@ -79,7 +79,7 @@ The deployment strictly complies with organizational constraints:
 
 * **`constraints/iam.allowedPolicyMemberDomains`**:
   * Prevents public (`allUsers`) IAM bindings on Cloud Run services.
-  * Invocations are restricted to authorized identities belonging to `domain:shanebaccas.altostrat.com` and explicitly bound service accounts (`jumpbox-sa`, `catz-cloudrun-sa`).
+  * Invocations are restricted to authorized identities belonging to `domain:your-organization.example.com` and explicitly bound service accounts (`jumpbox-sa`, `catz-cloudrun-sa`).
 * **`constraints/compute.vmExternalIpAccess`**:
   * Blocks assigning external IPv4/IPv6 addresses to Compute Engine VM instances.
   * All administrative access is tunneled through IAP TCP forwarding.

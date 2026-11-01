@@ -15,7 +15,7 @@ flowchart TB
         TunnelCLI["gcloud compute start-iap-tunnel<br/>Port 3000 -> 3000"]
     end
 
-    subgraph GCP["Google Cloud Platform — Project: catz-app-prod (Region: northamerica-northeast1)"]
+    subgraph GCP["Google Cloud Platform — Project: your-gcp-project-id (Region: northamerica-northeast1)"]
         IAP["Google Cloud Identity-Aware Proxy (IAP)<br/>TCP Tunneling Service (35.235.240.0/20)"]
 
         subgraph VPC["Isolated VPC Network (catz-vpc)"]

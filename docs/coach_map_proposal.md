@@ -93,14 +93,14 @@ nothing" from "never looked".
 
 Cheap, because the plumbing exists:
 
-- [The evaluate loop](file:///Users/shanebaccas/Desktop/workspace/C+M/actors/cat/subagents/eval.py#L1088-L1093) already walks ADK
+- [The evaluate loop](actors/cat/subagents/eval.py#L1088-L1093) already walks ADK
   event parts. Tool calls arrive as `function_call` / `function_response` parts,
   which the current loop skips (it filters on `p.text`). Capturing them is a few
   lines inside the loop that already runs.
-- [`_last_eval_telemetry`](file:///Users/shanebaccas/Desktop/workspace/C+M/actors/cat/subagents/eval.py#L607-L612) already
+- [`_last_eval_telemetry`](actors/cat/subagents/eval.py#L607-L612) already
   carries latency and thinking spend to
-  [api.py's `last_run`](file:///Users/shanebaccas/Desktop/workspace/C+M/actors/cat/api.py#L1460), which
-  [workbench.js renders](file:///Users/shanebaccas/Desktop/workspace/C+M/actors/cat/static/workbench.js#L1535-L1546). Add
+  [api.py's `last_run`](actors/cat/api.py#L1460), which
+  [workbench.js renders](actors/cat/static/workbench.js#L1535-L1546). Add
   `tool_calls: [{name, ok}]` and render beside the existing budget readout.
 
 Per-evaluation, not cumulative, matching how `last_run` already behaves.
@@ -115,9 +115,9 @@ Straightforward, with two things to be aware of.
 
 | File | |
 | --- | --- |
-| [models/simulation.py:85](file:///Users/shanebaccas/Desktop/workspace/C+M/app/models/simulation.py#L85-L92) | the real default |
-| [settings.js:197](file:///Users/shanebaccas/Desktop/workspace/C+M/app/static/settings.js#L194-L197) | "Reset to defaults" |
-| [app.js:1756](file:///Users/shanebaccas/Desktop/workspace/C+M/app/static/app.js#L1756) | the same, in the main window |
+| [models/simulation.py:85](app/models/simulation.py#L85-L92) | the real default |
+| [settings.js:197](app/static/settings.js#L194-L197) | "Reset to defaults" |
+| [app.js:1756](app/static/app.js#L1756) | the same, in the main window |
 
 > [!WARNING]
 > Changing only the model default leaves both **Reset** buttons setting the box
@@ -128,7 +128,7 @@ Straightforward, with two things to be aware of.
 
 > Turning it on by default would silently invalidate that baseline.
 
-But [archive.py](file:///Users/shanebaccas/Desktop/workspace/C+M/app/game/archive.py#L268-L272) already records the live
+But [archive.py](app/game/archive.py#L268-L272) already records the live
 `species` config — including `aim_assist` — in every run's manifest. Comparability
 is preserved by the *manifest*, not by the default. The fear the comment encodes
 was addressed when archiving shipped.

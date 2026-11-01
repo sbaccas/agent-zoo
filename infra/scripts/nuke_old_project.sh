@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ==============================================================================
 # Script: infra/scripts/nuke_old_project.sh
-# Description: Destroys/deletes old GCP project (default: proj1-487921)
+# Description: Destroys/deletes an old GCP project
 # ==============================================================================
 
 set -euo pipefail
@@ -13,7 +13,7 @@ BLUE='\033[0;34m'
 BOLD='\033[1m'
 NC='\033[0m'
 
-TARGET_PROJECT="${1:-proj1-487921}"
+TARGET_PROJECT="${1:-your-old-gcp-project-id}"
 
 echo -e "${RED}${BOLD}"
 echo "================================================================================"

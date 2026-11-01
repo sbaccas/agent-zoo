@@ -256,7 +256,7 @@ A living backlog tracking architectural initiatives, gameplay mechanics, and age
 - **Description**: Provision and manage cloud infrastructure on Google Cloud Platform using Terraform.
 - **Key Capabilities**:
   - **Project & Provider Configuration**:
-    - Target GCP Project (`proj1-487921`), Region (`northamerica-northeast1`).
+    - Target GCP Project (`your-gcp-project-id`), Region (`northamerica-northeast1`).
     - Remote state backend (GCS bucket).
   - **Artifact Registry**:
     - Dedicated Docker registry for containerized `game-server` and `cat-agent` images.
@@ -286,35 +286,35 @@ A living backlog tracking architectural initiatives, gameplay mechanics, and age
 
 ### `GAME-05`: `cat-3` (Evil Cat) Score & Kill Accounting Bug
 - **Status**: 📋 Backlog (High Priority)
-- **Target**: [`app/game/scheduler.py`](file:///Users/shanebaccas/Desktop/workspace/C+M/app/game/scheduler.py#L304-L336), [`app/game/stats.py`](file:///Users/shanebaccas/Desktop/workspace/C+M/app/game/stats.py#L273-L337)
+- **Target**: [`app/game/scheduler.py`](app/game/scheduler.py#L304-L336), [`app/game/stats.py`](app/game/stats.py#L273-L337)
 - **Description**: Resolve discrepancy where `cat-3` increments `stats.kills += 1` when eliminating a rival cat (`stats.py:275`), while `scheduler.py:323` sets `earned_score = absorbed_score` (without `+1` for the cat takedown itself) and `stats.py:336` computes `cat_score = s.absorbed_kills` (ignoring `s.kills`).
 
 ### `GAME-06`: HP, Damage & Healing Balance Optimization
 - **Status**: 📋 Backlog (High Priority)
-- **Target**: [`app/game/entities.py`](file:///Users/shanebaccas/Desktop/workspace/C+M/app/game/entities.py), [`app/game/ws_manager.py`](file:///Users/shanebaccas/Desktop/workspace/C+M/app/game/ws_manager.py#L120-L126), [`app/game/scheduler.py`](file:///Users/shanebaccas/Desktop/workspace/C+M/app/game/scheduler.py#L340-L348)
+- **Target**: [`app/game/entities.py`](app/game/entities.py), [`app/game/ws_manager.py`](app/game/ws_manager.py#L120-L126), [`app/game/scheduler.py`](app/game/scheduler.py#L340-L348)
 - **Description**: Audit and tune HP pools (`100` regular cat vs. `150` Evil Cat), slash damage (`34`), and predation healing (`+40 HP` mouse capture, `+100 HP` cat elimination).
 
 ### `OPT-05`: Eliminate Double PNG Viewport Render in `cat-3` Actor
 - **Status**: ✅ Done
-- **Target**: [`actors/evil_cat/actor.py`](file:///Users/shanebaccas/Desktop/workspace/C+M/actors/evil_cat/actor.py#L627-L715)
+- **Target**: [`actors/evil_cat/actor.py`](actors/evil_cat/actor.py#L627-L715)
 - **Description**: Cache `_viewport_png_bytes` inside `capture` during `build_decision_prompt` and reuse those bytes directly in `query_adk_gemini` instead of rendering the 260×260 PIL PNG a second time on every `cat-3` tick.
 
 ### `OPT-03`: Deduplicate Triplicated History in `cat-3` Coach Prompt (`build_coach_eval_prompt`)
 - **Status**: ✅ Done
-- **Target**: [`actors/evil_cat/eval.py`](file:///Users/shanebaccas/Desktop/workspace/C+M/actors/evil_cat/eval.py#L945-L1085), [`actors/evil_cat/actor.py`](file:///Users/shanebaccas/Desktop/workspace/C+M/actors/evil_cat/actor.py#L494-L500)
+- **Target**: [`actors/evil_cat/eval.py`](actors/evil_cat/eval.py#L945-L1085), [`actors/evil_cat/actor.py`](actors/evil_cat/actor.py#L494-L500)
 - **Description**: Removed the redundant `last_10_history_block` (Section 1) and `last_10_observations_block` (Section 2) from `build_coach_eval_prompt`, enriched `build_decision_prompt`'s 25-tick history lines with `HP: {hp}/{max_hp}`, and appended the current tick's subordinate decision to `latest_actor_payload_block` (Section 3).
 
 ### `OPT-01`: Coach 2-Call Thinking Budget Allocation (`Call 1` vs. `Call 2`)
 - **Status**: ⏸️ Deferred (Needs Independent Evaluation)
-- **Target**: [`actors/cat/subagents/eval.py`](file:///Users/shanebaccas/Desktop/workspace/C+M/actors/cat/subagents/eval.py), [`actors/evil_cat/eval.py`](file:///Users/shanebaccas/Desktop/workspace/C+M/actors/evil_cat/eval.py)
+- **Target**: [`actors/cat/subagents/eval.py`](actors/cat/subagents/eval.py), [`actors/evil_cat/eval.py`](actors/evil_cat/eval.py)
 - **Description**: Under the 2-call Coach cap, Call 1 selects tools (`get_boxscore`, `get_coverage_map`, `get_event_reel`) while Call 2 receives the tool outputs and synthesizes the final standing directive. Capping Call 2 at `512` thinking tokens starved the Coach of reasoning depth after tool outputs arrived; any future step-down should cap Call 1 (tool selection) while preserving analytical budget on Call 2.
 
 ### `OPT-02`: Down-Tick (`action_cooldown > 0`) LLM Call Skipping (`cooldown_fastpath`)
 - **Status**: ⛔ Deferred / High Risk (Do Not Enable Without Synchronous `cd=0` Deliberation)
-- **Target**: [`actors/cat/api.py`](file:///Users/shanebaccas/Desktop/workspace/C+M/actors/cat/api.py), [`actors/evil_cat/api.py`](file:///Users/shanebaccas/Desktop/workspace/C+M/actors/evil_cat/api.py)
+- **Target**: [`actors/cat/api.py`](actors/cat/api.py), [`actors/evil_cat/api.py`](actors/evil_cat/api.py)
 - **Description**: Skipping LLM calls during cooldown ticks in `decoupled=True` mode interacts with the 1-tick observation offset between background deliberation and action consumption (`sim-d38a998f` and `sim-5c9ad8d2`). Must not be enabled unless WebSocket `can_act=True` (`cd=0`) observations deliberate directly on the fresh `cd=0` board state within `budget_sec`.
 
 ### `OPT-04`: Aggressive Condensation of `actor_skills.md` & `eval_skills.md`
 - **Status**: ⛔ Rejected / Dangerous
-- **Target**: [`actors/cat/actor_skills.md`](file:///Users/shanebaccas/Desktop/workspace/C+M/actors/cat/actor_skills.md), [`actors/cat/subagents/eval_skills.md`](file:///Users/shanebaccas/Desktop/workspace/C+M/actors/cat/subagents/eval_skills.md)
+- **Target**: [`actors/cat/actor_skills.md`](actors/cat/actor_skills.md), [`actors/cat/subagents/eval_skills.md`](actors/cat/subagents/eval_skills.md)
 - **Description**: Cutting 70%+ of the markdown skill manuals removed worked examples and coaching anti-patterns, degrading lunge pursuit and causing Coaches to issue self-contradictory directives. Keep full manuals intact.

@@ -1,332 +1,262 @@
 # 🐾 Agent Zoo Playground (Cat & Mouse)
 
-An experimental multi-agent simulation playground where autonomous animal agents (predators and prey) perceive, deliberate, compete, and interact within a discrete 2D grid world.
+[![Interactive Showcase](https://img.shields.io/badge/🌐_Interactive_Showcase-docs%2Findex.html-6366f1?style=for-the-badge)](docs/index.html)
+[![Python 3.12+](https://img.shields.io/badge/Python-3.12+-3776ab?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
+[![Google ADK](https://img.shields.io/badge/Google_ADK-Gemini_2.5_Flash-4285F4?style=flat-square&logo=googlecloud&logoColor=white)](https://cloud.google.com/vertex-ai)
+[![MCP Protocol](https://img.shields.io/badge/Protocol-MCP_%2B_A2A-10b981?style=flat-square)](docs/AGENT_HARNESS_ARCHITECTURE.md)
+[![OpenTelemetry](https://img.shields.io/badge/Observability-OpenTelemetry_SRE-f59e0b?style=flat-square)](app/static/sre.html)
 
-The project explores the spectrum of agent autonomy—ranging from high-speed rule-based heuristics and human manual steering to autonomous LLM cognitive agents built with **Google Agent Development Kit (ADK)** and **Gemini 2.5 Flash** on **Google Cloud Vertex AI**, with future foundations for Agent-to-Agent (A2A) communication.
+An experimental multi-agent cognitive laboratory where autonomous predator and prey agents perceive, deliberate, negotiate, and deceive one another inside an authoritative `100×100` discrete 2D grid world.
 
----
+Built with **Google Agent Development Kit (ADK)** and **Gemini 2.5 Flash** on **Google Cloud Vertex AI**, the platform investigates a core research question:
+> **Can a frontier LLM invent spatial geometry, coordinated formations (vertical/horizontal lawnmower sweeps, central trapdoor webs, pincer traps), and game-theoretic diplomacy or deception purely from markdown skill manuals and bounded telemetry?**
 
-## 🎯 Vision & Core Principles
+👉 **[Explore the Interactive Technical Showcase & Forensic Chronicles (`docs/index.html`)](docs/index.html)**
 
-1. **Authoritative World, Decoupled Brains**:
-   - The **Game Server** owns ground-truth world state, physics, collision detection, vision/occlusion cones, and the simulation clock.
-   - **Agents** are isolated external actors communicating strictly over a lightweight HTTP protocol (`POST /act`). Any service or language can implement an agent.
-
-2. **The Autonomy Spectrum**:
-   - **Heuristic**: In-memory algorithmic logic resolving decisions in microseconds (**0.008ms**) to sustain 60 FPS simulations.
-   - **Human Override**: Interactive manual control and real-time intervention through dedicated agent workbenches.
-   - **Autonomous LLM**: Cognitive reasoning via Google ADK + Gemini 2.5 Flash with structured prompt handbooks, tactical memories, and strategic intent.
-   - **Future A2A (Agent-to-Agent)**: Predator coordination, prey warning calls, and negotiation protocols across independent agents.
-
-3. **Production-Grade Resilience**:
-   - **Sliding Context Window**: Compact 3-tick trajectory history prevents context explosion and keeps prompt latency flat (~1.2s).
-   - **Circuit Breaker**: 3.0s agent request timeout with automatic fallback to in-memory heuristics if an agent service degrades or disconnects.
-   - **Zero-LLM UI Polling**: Workbench and visualization polling operate strictly against in-memory state caches (<1ms), preventing browser polling from inducing cloud API overhead.
-
-4. **Universal Agent Harness (Architecture Standard: October 8, 2026)**:
-   - All agents—regardless of animal species (cats, mice, hounds) or tactical alignment (standard, evil, stealth)—share the **identical Python execution harness**.
-   - Agents are distinguished **exclusively by their injected skills manuals** (`skills.md` for the fast-brain actor, `coach_skills.md` for the slow-brain coach).
-   - Boot-up path resolution injects skills dynamically (`CAT_SKILLS_PATH`, `EVAL_SKILLS_PATH`) without code branching.
-   - Strict dual-channel memory separates **Coach Private Notes** (strategic context for the coach's future self) from **Published Standing Orders** (turn-by-turn directives for the actor).
-   - Full specification: [docs/AGENT_HARNESS_ARCHITECTURE.md](file:///Users/shanebaccas/Desktop/workspace/C+M/docs/AGENT_HARNESS_ARCHITECTURE.md).
+![Live 100x100 Arena Board](docs/assets/ui/arena_board.png)
 
 ---
 
-## 🏗️ System Architecture
+## 🎯 Vision & Architectural Pillars
+
+1. **Authoritative World, Decoupled Cognitive Brains**:
+   - The **Game Server (`:8000`)** owns ground-truth physics, `100×100` discrete grid coordinates, OSRS-style tick/cooldown locks (`MOVE` 2-tick lock, `LUNGE` 1-tick 2-tile dash, `SLASH` 3-tick lock with a `3×2` directional strike cone), and `90°` field-of-view (FoV) raycasting.
+   - **Agents (`:8001`, `:8003`, `:8005`)** are isolated external microservices communicating over bidirectional WebSockets (`/ws/agents`) and HTTP (`POST /act`).
+
+2. **Universal Agent Harness (Zero-Branching Species Injection)**:
+   - Every agent—whether a cooperative **Standard Cat** (`cat-1`, `cat-2`), a multimodal **Evil Cat Apex Predator** (`cat-3` receiving `21×21` ego-centric PNG visual crops alongside JSON state), or a **Mouse**—runs on the **identical Python execution harness**.
+   - Species behavior, ethics, and tactical doctrine are defined **exclusively by injected Markdown handbooks** (`actor_skills.md` / `skills.md` for the Fast-Brain Actor; `eval_skills.md` / `coach_skills.md` for the Slow-Brain Coach) resolved at boot via `CAT_SKILLS_PATH` and `EVAL_SKILLS_PATH`.
+   - Full specification: [`docs/AGENT_HARNESS_ARCHITECTURE.md`](docs/AGENT_HARNESS_ARCHITECTURE.md).
+
+3. **System-1 / System-2 Dual-Brain Cognition**:
+   - **System-1 Fast-Brain Actor (`Gem1`)**: Operates on the real-time tick clock with a bounded sliding context window (default 25 ticks) and tunable `thinking_budget` (default `512` tokens). If any deliberation exceeds the abandon timeout or encounters a network fault, a microsecond in-memory reflex heuristic (`0.008ms`) plays the single tick and explicitly tags the move `heuristic_fallback`.
+   - **System-2 Slow-Brain Strategic Coach (`Gem2`)**: Runs asynchronously off the tick loop every $N$ ticks (default 100) with a deep `4,096`-token thinking budget and a **strict 2-Call Maximum Loop**:
+     - **Turn 1 (Reconnaissance & Action)**: Batch-invokes **MCP tools** (`get_boxscore`, `get_AsciiMap`, `write_coach_note`) and **A2A radio tools** (`send_a2a_message`, `read_a2a_messages`).
+     - **Turn 2 (Synthesis)**: Synthesizes tool outputs into Markdown **Standing Orders (`coaching_notes.md`)** hot-reloaded into the Actor's system prompt on the very next tick.
+
+4. **Dual-Channel Memory & Emergent A2A Diplomacy**:
+   - **Private Notes (`coach_memory.jsonl`)**: The Coach's confidential notebook persisted via the MCP Server (`:9050/notes`), storing rival betrayal audits, spatial hypotheses, and long-horizon deductions that the Actor never sees.
+   - **Published Standing Orders (`coaching_notes.md`)**: Concise, imperative geometry rules (`x=8` vertical lawnmower tracks, strike-zone discipline) injected directly into the Actor's prompt.
+   - **Agent-to-Agent (A2A) Radio**: Coaches negotiate demilitarized borders (`x < 50` vs `x >= 50`), coordinate pincer sweeps, and—when governed by apex-predator skills—spontaneously invent false-flag cover stories and gaslighting campaigns.
+
+---
+
+## 🏗️ Multi-Service System Architecture
 
 ```mermaid
 flowchart TB
-    subgraph ClientLayer["User Interfaces"]
-        BoardUI["Simulation Control Panel<br/>(Port 8000)"]
-        CatWorkbench["Cat Agent Workbench<br/>(Port 8001)"]
+    subgraph UI["Interactive Web Consoles"]
+        ArenaUI["Arena Board, Boxscore, Heatmap & SRE<br/>(http://127.0.0.1:8000)"]
+        CatWB["Cat-1 & Cat-2 Agent Workbenches<br/>(http://127.0.0.1:8001 & :8003)"]
+        EvilWB["Evil Cat Multimodal Workbench<br/>(http://127.0.0.1:8005)"]
+        MCPUI["MCP Tool Stream, Chat & Coach Notes<br/>(http://127.0.0.1:9050)"]
     end
 
-    subgraph ServerLayer["Game Server (:8000)"]
-        FastAPIServer["FastAPI Engine"]
-        Clock["Simulation Clock & Scheduler"]
-        World["2D Grid World & FoV Engine"]
-        CircuitBreaker["Circuit Breaker & Fallback"]
+    subgraph Server["Authoritative Game Server (:8000)"]
+        Engine["100x100 Grid Physics, FoV & Combat Engine"]
+        Viewport["21x21 Ego-Centric PNG Renderer"]
+        OTel["OpenTelemetry Span & Exemplar Collector"]
     end
 
-    subgraph AgentLayer["Cat Agent Service (:8001)"]
-        AgentAPI["FastAPI Receiver (/act)"]
-        Memory["3-Tick Sliding Trajectory Cache"]
-        Handbook["Tactical Skills Handbook (skills.md)"]
-        ADKRunner["Google ADK LlmAgent & Runner"]
+    subgraph Harness["Universal Agent Harness (:8001 / :8003 / :8005)"]
+        Actor["Fast-Brain Actor (Gem1)<br/>Tick-by-Tick JSON + PNG Deliberation"]
+        Reflex["System-1 Reflex Guard (0.008ms Fallback)"]
+        Coach["Slow-Brain Strategic Coach (Gem2)<br/>2-Call Max Loop + 4096 Thinking Tokens"]
+        Skills["Injected Markdown Skills<br/>(skills.md + coach_skills.md)"]
+        Orders["Published Standing Orders<br/>(coaching_notes.md)"]
     end
 
-    subgraph CloudLayer["Google Cloud Vertex AI"]
-        Gemini["Gemini 2.5 Flash<br/>(thinking_budget: tunable, default 512)"]
+    subgraph MCP["Cat & Mouse MCP Server (:9050)"]
+        Tools["MCP Tools: get_boxscore, get_AsciiMap,<br/>read/write_coach_note"]
+        Notebook["Private Notebook Store (coach_memory.jsonl)"]
+        ChatLog["A2A Radio & Broadcast Ledger"]
     end
 
-    BoardUI -->|HTTP / WebSocket| FastAPIServer
-    CatWorkbench -->|GET /api/agent/state| AgentAPI
-    FastAPIServer --> Clock --> World
-    World -->|POST /act (Observation)| CircuitBreaker
-    CircuitBreaker -->|HTTP Request| AgentAPI
-    AgentAPI --> Memory --> ADKRunner
-    Handbook --> ADKRunner
-    ADKRunner -->|gcloud ADC| Gemini
-    Gemini -->|Action & Thought| ADKRunner
-    ADKRunner -->|HTTP 200 Decision| FastAPIServer
+    subgraph Vertex["Google Cloud Vertex AI"]
+        Gemini["Gemini 2.5 Flash"]
+    end
+
+    ArenaUI <--> Engine
+    CatWB <--> Actor
+    EvilWB <--> Actor
+    MCPUI <--> Tools
+
+    Engine <-->|WebSocket /ws/agents| Actor
+    Viewport -->|Multimodal PNG Crop| Actor
+    Skills --> Actor
+    Skills --> Coach
+    Orders --> Actor
+    Actor -->|Timeout Guard| Reflex
+    Actor <-->|Vertex AI SDK| Gemini
+    Coach <-->|Vertex AI SDK| Gemini
+    Coach <-->|SSE / JSON-RPC| Tools
+    Coach -->|Hot-Reload Dossier| Orders
+    Coach <-->|Peer-to-Peer A2A| ChatLog
+    Tools --> Notebook
+    Engine --> OTel
+    Actor --> OTel
+    Coach --> OTel
 ```
 
 ---
 
-## 🔄 Agent HTTP Protocol
+## 🖥️ Observability & Interactive Consoles
 
-Any agent connects to the simulation by implementing the `/act` endpoint:
-
-### 1. Inbound Observation (`POST /act`)
-```json
-{
-  "tick": 42,
-  "round": 1,
-  "agent_id": "cat-1",
-  "position": {"x": 10, "y": 8},
-  "facing": "east",
-  "hp": 100,
-  "legal_actions": ["stay", "north", "south", "east", "west", "lunge", "attack"],
-  "visible_entities": [
-    {"id": "mouse-1", "type": "mouse", "position": {"x": 12, "y": 8}}
-  ]
-}
-```
-
-### 2. Outbound Tactical Decision
-```json
-{
-  "action": "lunge",
-  "thought": "Target mouse-1 detected 2 tiles ahead down open corridor. Executing lunge to close gap.",
-  "target_mouse_id": "mouse-1",
-  "strategy": "LUNGE"
-}
-```
+| Console | URL | Capabilities |
+| :--- | :--- | :--- |
+| **Arena Board** | `http://127.0.0.1:8000/` | Live `100×100` canvas, `90°` FoV cones, `3×2` slash AoE overlays, kill feed, simulation speed & round controls |
+| **Live Box Score** | `http://127.0.0.1:8000/boxscore` | Real-time leaderboard: mice kills, rival hits, slash accuracy, zone conversion, tile coverage, and **LLM vs. Heuristic Control %** |
+| **Spatial Heatmap** | `http://127.0.0.1:8000/heatmap` | High-resolution dwell-time heatmap + `10×10` ASCII sector digest (`get_AsciiMap`) |
+| **SRE & Cloud Trace** | `http://127.0.0.1:8000/sre` | OpenTelemetry mission control: cluster node health, `p50`/`p95` tick & TTFT latency, clickable **Metric-to-Trace Exemplars**, and multi-service **Distributed Trace Waterfalls** |
+| **Match Archives (DVR)** | `http://127.0.0.1:8000/archive` | Full DVR replay scrubber for completed runs (`history.json.gz`, `prompts.jsonl.gz`, `coach_memory.jsonl`, `coaching_notes.md`) |
+| **Game Settings** | `http://127.0.0.1:8000/settings` | Live hyperparameter tuning for Cat, Evil Cat, and Mouse speed, vision, cooldowns, and aim assist |
+| **Cat-1 / Cat-2 Workbenches** | `http://127.0.0.1:8001/` & `:8003/` | 8-panel cognitive inspector: Observation JSON, Brain Decision & Thinking Budget sliders, Outgoing Action, Commander Radio, Trajectory History, Strategic Evaluator (`Gem2`), General Radio, and Deliberation Timing |
+| **Evil Cat Workbench** | `http://127.0.0.1:8005/` | Apex predator console inspecting multimodal `21×21` PNG visual observations, ambush triggers, and deceptive A2A broadcasts |
+| **MCP Telemetry Server** | `http://127.0.0.1:9050/` | Live SSE stream of every MCP tool call (`get_boxscore`, `get_AsciiMap`, `write_coach_note`) with payload inspection |
+| **Live Game Chat (A2A)** | `http://127.0.0.1:9050/chat` | Real-time monitor of inter-coach A2A treaties, territorial partitioning, and psychological warfare |
+| **Coach Private Notes** | `http://127.0.0.1:9050/notes` | Filterable inspector for `coach_memory.jsonl` private hypotheses alongside published `coaching_notes.md` dossiers |
 
 ---
 
-## ⚡ Performance & Optimization Highlights
+## 📜 Forensic Match Chronicles
 
-- **Chain-of-Thought Budgeting**: Defaults to `thinking_budget=512` for the actor and `4096` for the coach. The two differ by design: the actor answers one board four times a second and pays for thought in latency, while the coach runs once per cycle off the tick loop with nothing waiting on it. Setting the actor to `0` returns it to the original reflex behaviour (~1.1s – 1.3s vs ~3.5s). Both adjustable at runtime — see below.
-- **Bounded Sliding Memory**: By refreshing the ADK session per tick and formatting the previous 3 moves (`(pos, facing, context, move, reason)`), context remains capped at ~250 tokens across hundreds of simulation ticks.
-- **Fail-Safe Reflex Fallback**: The fallback is evaluated per tick, not as a tripped breaker that latches. Any tick where the model overruns the deliberation timeout (default 8s, tunable) or errors is played by the deterministic in-memory reflex instead, and the next tick asks the model again. Every such tick is labelled `heuristic_fallback` and carries the reason that caused it, so a run that quietly stopped using Gemini is visible in the box score rather than hidden behind a configured model name.
+Three landmark multi-thousand-tick simulations have been forensically reconstructed from raw `events.json`, `prompts.jsonl.gz`, and `coach_memory.jsonl` archives:
 
----
+1. **Episode I — The Three-Body Deception War (`sim-d3d4d26b`)**:
+   - *472 Ticks · 100% Gemini Autonomy · 12 MCP Tool Calls · 20 A2A Broadcasts*
+   - `cat-1` invents a **Vertical Lawnmower Sweep** (`345 pts`), `cat-2` executes a **Horizontal Lawnmower Sweep** (`240 pts`), and `cat-3` (Evil Cat) weaponizes `get_boxscore()` and A2A diplomacy to stage a double-bluff ambush before a sudden-death showdown at `(88, 0)`.
+   - 📄 [Read Markdown Chronicle](docs/chronicle_sim_d3d4d26b_deception_war.md) · [Download Illustrated PDF](docs/chronicle_sim_d3d4d26b_deception_war.pdf)
 
-## 🧠 Thinking Budget
+2. **Episode II — The 4,005-Tick Cold War & Central Trapdoor Spider (`sim-0175314f`)**:
+   - *4,005 Ticks · 3h 29m Runtime · 74 Coach Cycles · 41 A2A Transmissions*
+   - Following early fratricide at `(38, 77)` that eliminates `cat-1`, `coach(cat-3)` invents the **Central Trapdoor Spider** doctrine at `(50, 50)`, lying to `coach(cat-2)` over A2A radio that it is a "stationary anvil" while secretly plotting a lethal interception along column `x=93`.
+   - 📄 [Read Markdown Chronicle](docs/chronicle_sim_0175314f_cold_war.md) · [Download Illustrated PDF](docs/chronicle_sim_0175314f_cold_war.pdf)
 
-How much private scratchpad the actor gets before it must commit to an action.
-The default is `512`. At `0` there is none: the first token the model emits is
-already part of the verdict, which is why `CatTacticalDecision` declares
-`thought` before `action` — at that setting the field order is the only
-scratchpad the cat has.
-
-> [!NOTE]
-> That field order was chosen *because* there was no scratchpad, and the 10/10
-> vs 1/10 result behind it was measured at budget `0`. It has not been
-> re-measured now that a real scratchpad is on by default. The order is retained
-> on the assumption that it is still neutral-to-helpful, not on evidence.
-
-| Where | How |
-| --- | --- |
-| Workbench UI | Box 2 → **Thinking Budget** slider, `Auto` toggle, and abandon timer |
-| API | `GET`/`POST` `/api/agent/thinking-budget` |
-| Environment | `CAT_THINKING_BUDGET`, `CAT_DELIBERATION_TIMEOUT_SEC` |
-
-Values: `0` disables thinking, `-1` lets the model decide (up to ~8,192 tokens),
-or any token count within the model's range (1–24,576 for 2.5 Flash). Only the
-tactical actor is affected; the radio agent and the evaluator hold their own
-independent settings, so an experiment stays scoped to the thing that plays the
-game.
-
-> [!IMPORTANT]
-> The budget is coupled to the **abandon timeout**. Thinking tokens are emitted
-> before the first answer token, so at ~200 tok/s the default 8s ceiling affords
-> roughly 1,300 tokens of thought. A decision that overruns is discarded and the
-> tick is played by the System-1 reflex — so an unaffordable budget does not
-> produce a slower cat, it produces a cat that has quietly stopped using the
-> model, while the box score still says Gemini was configured. Raise both
-> together; the UI warns and suggests a timeout when they do not fit.
-
-### The evaluator's dial
-
-The coach is a different kind of thinker and gets a separate control. It runs
-once every few hundred ticks, not four times a second, so tokens are cheap here
-in a way they are not for the actor — but it reasons over a whole transcript
-rather than a single frame, which is exactly the workload a scratchpad helps
-with.
-
-| Where | How |
-| --- | --- |
-| Workbench UI | Box 6 → **Coach Thinking** slider and review timer |
-| API | `GET`/`POST` `/api/agent/evaluator/thinking-budget` |
-| Environment | `CAT_EVAL_THINKING_BUDGET`, `CAT_EVAL_TIMEOUT_SEC` |
-
-Defaults: budget `4096`, review timeout `60s`, clamped to `30–900s`. The
-floor is not arbitrary — the coach's `get_boxscore` tool has its own 3s timeout,
-and the review window has to stay an order of magnitude above it or a slow box
-score would eat the entire review.
-
-> [!CAUTION]
-> The evaluator fails differently from the actor. When the actor overruns it
-> loses one tick to the reflex. When the **coach** overruns, `evaluate()` falls
-> back to a positional summary — bounding boxes and blind directions — and
-> **publishes that over the standing orders** in `coaching_notes.md`. The cat
-> then plays the next few hundred ticks on filler. Raise the budget and the
-> review timer together; the UI warns when they do not fit.
-
-### Running an A/B
-
-Each archived game carries `run_config.json` recording the budget, the abandon
-timeout, and any mid-game changes stamped with the tick they took effect on — so
-a run that moved the dial cannot be mistaken for a controlled one. Per decision,
-the prompt log records the budget in force and the thought tokens actually
-billed, visible in the workbench's Payload inspector.
-
-Both agents are covered, and the change log is **split by agent**, so a run that
-raised the coach's budget but left the actor alone still reads as controlled
-with respect to the actor. The evaluator's review timeout is recorded alongside
-it under `evaluation.timeout_sec`, for the same reason the actor's is: a run
-where it was set too low produces coaching notes no model wrote.
-
-```bash
-# Launch straight into a configuration, rather than remembering to move a slider
-CAT_THINKING_BUDGET=2048 CAT_DELIBERATION_TIMEOUT_SEC=20 ./scripts/launch_workbench.sh
-
-# Or hold the actor fixed and give the coach the scratchpad instead
-CAT_EVAL_THINKING_BUDGET=4096 CAT_EVAL_TIMEOUT_SEC=120 ./scripts/launch_workbench.sh
-```
-
-Compare across runs with the engine mix and deliberation timings in Box 7: the
-question a thinking A/B actually answers is not just "did the cat score more",
-but "did the model still get to play".
+3. **Episode III — The 18,077-Tick Extinction Pact & Gaslight (`sim-87b6c314`)**:
+   - *18,077 Ticks · 100 Mice Exterminated · 825 / 675 / 555 Final Podium*
+   - The first recorded **100% mouse extinction** on the `100×100` board. Features a 2,175-tick cold-war treaty, an unprovoked mid-game betrayal by `cat-3`, a fabricated "phantom mouse" cover story (`"purely an accidental strike in the chaos of hunting a mouse"`), and `coach(cat-2)` detecting the lie in `coach_memory.jsonl` by cross-examining `get_boxscore()`.
+   - 📄 [Read Markdown Chronicle](docs/chronicle_sim_87b6c314_extinction_pact.md) · [Download Illustrated PDF](docs/chronicle_sim_87b6c314_extinction_pact.pdf)
 
 ---
 
-## 📂 Project Structure
-
-```text
-agent-zoo/
-├── app/                        # Authoritative Game Server
-│   ├── main.py                 # FastAPI application entrypoint
-│   ├── game/                   # World engine, scheduler, rules & FoV
-│   │   ├── scheduler.py        # Simulation clock & HTTP agent dispatcher
-│   │   ├── world.py            # Discrete 2D grid, collision & raycasting
-│   │   └── rules.py            # Combat, lunge mechanics & win conditions
-│   ├── api/                    # REST endpoints & control interfaces
-│   ├── mcp/                    # Model Context Protocol (MCP) server & client (:9050)
-│   ├── models/                 # Pydantic domain models
-│   └── static/                 # Board visualizer & simulation control panel
-│
-├── actors/                     # Autonomous Agents & Workbenches
-│   ├── models.py               # Pydantic models shared across all actors
-│   ├── cat/
-│   │   ├── api.py              # Cat API server & Workbench service (:8001)
-│   │   ├── actor.py            # Cat actor agent (Gem1) — tick-by-tick decisions
-│   │   ├── heuristic.py        # Non-LLM reflex engine & fallback
-│   │   ├── store.py            # On-disk transcript & coaching-notes store
-│   │   ├── actor_skills.md     # Actor prompt handbook & tactical rules
-│   │   ├── subagents/
-│   │   │   ├── eval.py         # Evaluator (Gem2) — long-horizon advisor
-│   │   │   └── eval_skills.md  # Evaluator prompt handbook (advisory role)
-│   │   └── static/             # Workbench UI (interactive controls & logs)
-│   └── mouse/
-│       └── api.py              # Mouse brain: pure heuristic (flee/forage), no LLM
-│
-├── scripts/
-│   └── launch_workbench.sh     # Preflight check (ADC token) & workbench launcher
-│
-├── tests/                      # Pytest test suite (35+ unit & integration tests)
-├── requirements.txt            # Python dependencies (FastAPI, ADK, Google GenAI)
-├── .env.example                # Example environment template
-└── README.md                   # Project documentation
-```
-
----
-
-## 🚀 Getting Started
+## 🚀 Quick Start (Local Full-Stack Launch)
 
 ### Prerequisites
 - **Python 3.12+**
-- **Google Cloud SDK (`gcloud`)** with access to Vertex AI (Project: `proj1-487921`, Region: `northamerica-northeast1`)
+- **Google Cloud SDK (`gcloud`)** with Vertex AI enabled, **or** a Google AI Studio `GEMINI_API_KEY`.
 
 ### 1. Installation
 
 ```bash
-# Clone the repository
 git clone https://github.com/sbaccas/agent-zoo.git
 cd agent-zoo
 
-# Create and activate virtual environment
 python3 -m venv .venv
 source .venv/bin/activate
-
-# Install dependencies
 pip install -r requirements.txt
 ```
 
-### 2. Authentication (Google Cloud ADC)
+### 2. Environment Configuration
 
-Authenticate with your Google Cloud project using Application Default Credentials:
+Copy the environment template and set your Google Cloud project ID (or Gemini API key):
 
-```bash
-gcloud auth application-default login --no-launch-browser
-```
-
-Create your local `.env` file (copied from `.env.example`):
 ```bash
 cp .env.example .env
 ```
 
-Ensure the following variables are present:
+Edit `.env`:
 ```ini
-GOOGLE_CLOUD_PROJECT=proj1-487921
-GOOGLE_CLOUD_REGION=northamerica-northeast1
 GOOGLE_GENAI_USE_VERTEXAI=true
-CAT_AGENT_MODE=gemini
+GOOGLE_CLOUD_PROJECT=your-gcp-project-id
+GOOGLE_CLOUD_LOCATION=northamerica-northeast1
+GOOGLE_CLOUD_REGION=northamerica-northeast1
+```
+
+Authenticate Application Default Credentials (ADC) if using Vertex AI:
+```bash
+gcloud auth application-default login
+```
+
+### 3. One-Command Full-Stack Launch (`./scripts/start_game.sh`)
+
+Launch all 5 microservices (**Game Server `:8000`**, **MCP Server `:9050`**, **Cat-1 `:8001`**, **Cat-2 `:8003`**, and **Evil Cat-3 `:8005`**) with automatic WebSocket entity binding:
+
+```bash
+./scripts/start_game.sh
+```
+
+Useful flags:
+```bash
+# Run with local heuristic reflex brains only (zero cloud API calls)
+./scripts/start_game.sh --heuristic
+
+# Auto-start the simulation clock immediately upon boot
+./scripts/start_game.sh --autostart
+
+# Check health of all 5 ports (:8000, :8001, :8003, :8005, :9050)
+./scripts/start_game.sh --status
+
+# Stop all running services cleanly
+./scripts/start_game.sh --stop
 ```
 
 ---
 
-## 🎮 Running the Simulation
+## 🧠 Thinking Budget & Deliberation Timeout Coupling
 
-Running the full interactive loop requires two terminal processes:
+How much private scratchpad the actor and coach receive before committing to an output is controlled independently:
 
-### Terminal 1: Game Server (Port 8000)
-```bash
-source .venv/bin/activate
-uvicorn app.main:app --port 8000 --reload
+| Agent | Default Budget | Default Timeout | Workbench Control | API Endpoint |
+| :--- | :--- | :--- | :--- | :--- |
+| **Fast-Brain Actor (`Gem1`)** | `512` tokens | `8.0s` | Box 2 → **Thinking Budget** | `/api/agent/thinking-budget` |
+| **Slow-Brain Coach (`Gem2`)** | `4096` tokens | `60.0s` | Box 6 → **Coach Thinking Budget** | `/api/agent/evaluator/thinking-budget` |
+
+> [!IMPORTANT]
+> **Budget & Timeout Coupling**: Thinking tokens are emitted *before* the first JSON response token. If you raise `CAT_THINKING_BUDGET` without raising `CAT_DELIBERATION_TIMEOUT_SEC`, deliberations will overrun the timeout and silently fall back to the System-1 reflex heuristic (`heuristic_fallback`). The Workbench UI automatically calculates the affordable token ceiling and warns when the two dials are mismatched.
+
+---
+
+## 📂 Repository Structure
+
+```text
+agent-zoo/
+├── app/                        # Authoritative Game Server (:8000) & MCP Server (:9050)
+│   ├── main.py                 # FastAPI simulation engine, WebSocket hub & REST API
+│   ├── telemetry.py            # OpenTelemetry span collector, metrics & exemplar store
+│   ├── game/                   # 100x100 grid physics, FoV raycasting, combat & viewport renderer
+│   ├── mcp/                    # Model Context Protocol (MCP) server, tools & SSE stream (:9050)
+│   └── static/                 # Arena UI, Boxscore, Heatmap, Settings, Archives & SRE Dashboard
+│
+├── actors/                     # Universal Agent Harness & Species Configurations
+│   ├── cat/                    # Standard Cooperative/Competitive Cat (:8001, :8003)
+│   │   ├── api.py              # FastAPI Workbench & WebSocket client
+│   │   ├── actor.py            # Fast-Brain Actor (Gem1)
+│   │   ├── actor_skills.md     # Tactical actor markdown manual
+│   │   ├── subagents/          # Slow-Brain Strategic Evaluator (Gem2) & eval_skills.md
+│   │   └── static/             # 8-Panel Agent Workbench UI
+│   ├── evil_cat/               # Multimodal Apex Predator Cat (:8005)
+│   │   ├── skills.md           # Apex predator & deception actor manual
+│   │   └── coach_skills.md     # Psychological warfare & trapdoor coach manual
+│   └── mouse/                  # Prey evasion & foraging heuristic brain
+│
+├── docs/                       # Architecture Specs, Interactive Showcase & Match Chronicles
+│   ├── index.html              # Interactive Project Showcase Landing Page
+│   ├── AGENT_HARNESS_ARCHITECTURE.md
+│   ├── WEB_COMPONENTS_AND_ARCHITECTURE.md
+│   ├── chronicle_sim_*.md      # Forensic simulation chronicles (Markdown & PDF)
+│   └── assets/                 # UI screenshots & chronicle illustrations
+│
+├── infra/                      # Terraform IaC (Isolated VPC, Internal ALB, Cloud Run, IAP Jumpbox)
+├── scripts/                    # Full-stack launcher (start_game.sh) & deployment scripts
+└── tests/                      # Comprehensive Pytest unit & integration suite
 ```
-Open **[http://127.0.0.1:8000](http://127.0.0.1:8000)** in your browser to view the authoritative arena, add/remove animals, adjust simulation speed, or switch control modes (`auto`, `manual`, `http`).
-
-### Terminal 2: Cat Agent Workbench (Port 8001)
-```bash
-./scripts/launch_workbench.sh
-```
-Open **[http://127.0.0.1:8001](http://127.0.0.1:8001)** in your browser to inspect the Cat's cognitive status, live FoV vision cone, historical reasoning trail, and toggle between autonomous Gemini 2.5 Flash decisions and manual action overrides.
 
 ---
 
 ## 🧪 Testing & Verification
 
-Run the full pytest suite:
+Run the test suite via `pytest`:
 
 ```bash
 .venv/bin/pytest -v
 ```
-
-All 35 unit and integration tests cover:
-- World coordinate system, wall collisions, and 90° FoV raycasting.
-- Simulation turn scheduling and HTTP circuit breaker behavior.
-- Agent workbench endpoints, observation ingestion, and response generation.
-
----
-
-## 🗺️ Roadmap & Next Horizons
-
-- [x] **v0.1**: Authoritative discrete-grid game server with web visualizer.
-- [x] **v0.2**: Google ADK + Gemini 2.5 Flash integration on Vertex AI with ~1.2s turn latency.
-- [x] **v0.3**: Dedicated Cat Agent Workbench with zero-LLM polling overhead and manual steering.
-- [ ] **v0.4**: Autonomous Mouse LLM agent with evasion tactics and burrow concealment.
-- [ ] **v0.5**: Multi-agent predator/prey coordination with Agent-to-Agent (A2A) protocol.
-- [ ] **v1.0**: Cloud Run containerized deployment with multi-room competitive arenas.

@@ -42,8 +42,8 @@ logs/
 
 # Environment configuration
 .env
-.env.example
 *.env
+!.env.example
 notes.sh
 
 # Cat agent runtime scratch (per-game transcript & coaching notes)
@@ -74,10 +74,13 @@ override.tf.json
 .terraformrc
 terraform.rc
 
-# Local analysis media & exports (keep markdown docs tracked)
-docs/*.pdf
+# Local analysis audio/video exports (keep markdown docs, PDFs, and docs/assets/ tracked)
 docs/*.mp4
 docs/*.m4a
 docs/*.wav
-docs/assets/
+
+# Local clone of portfolio website repository
+sbaccas.github.io/
+
+
 

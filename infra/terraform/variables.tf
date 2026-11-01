@@ -61,3 +61,9 @@ variable "mcp_server_image" {
   description = "Container image for Cat & Mouse MCP Server (defaults to GAR placeholder if not yet pushed)"
   default     = "us-docker.pkg.dev/cloudrun/container/hello"
 }
+
+variable "allowed_domain" {
+  type        = string
+  description = "Authorized Google Workspace domain for Cloud Run IAM invoker bindings"
+  default     = "your-organization.example.com"
+}

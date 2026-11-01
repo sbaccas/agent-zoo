@@ -741,7 +741,7 @@ class InMemoryAndJSONLSpanExporter(SpanExporter):
                 creds, detected_project = google.auth.default(
                     scopes=["https://www.googleapis.com/auth/trace.append", "https://www.googleapis.com/auth/cloud-platform"]
                 )
-                project_id = configured_project or detected_project or "catz-app-prod"
+                project_id = configured_project or detected_project or "agent-zoo"
                 if not creds.valid:
                     creds.refresh(google.auth.transport.requests.Request())
                 gcp_spans = []

@@ -1,23 +1,23 @@
 #!/usr/bin/env bash
 # ==============================================================================
 # Script: scripts/push_images_to_gar.sh
-# Description: Tag and push container images built on CloudTop to Google
-#              Artifact Registry (GAR).
+# Description: Tag and push container images built on a remote build host to
+#              Google Artifact Registry (GAR).
 # ==============================================================================
 set -e
 
-PROJECT_ID="${GCP_PROJECT:-catz-app-prod}"
+PROJECT_ID="${GCP_PROJECT:-your-gcp-project-id}"
 REGION="${GCP_REGION:-northamerica-northeast1}"
-GAR_REPO="${GAR_REPO_ID:-catz-repo}"
-CLOUDTOP_HOST="${CLOUDTOP_HOST:-scb.c.googlers.com}"
+GAR_REPO="${GAR_REPO_ID:-agent-zoo-repo}"
+BUILD_HOST="${BUILD_HOST:-your-build-host.example.com}"
 REGISTRY="${REGION}-docker.pkg.dev"
 REPO_PATH="${REGISTRY}/${PROJECT_ID}/${GAR_REPO}"
 
 echo "================================================================="
-echo "📦 Push Container Images from CloudTop to Artifact Registry (GAR)"
+echo "📦 Push Container Images to Artifact Registry (GAR)"
 echo "================================================================="
 echo "Target Registry: ${REPO_PATH}"
-echo "CloudTop Host:   ${CLOUDTOP_HOST}"
+echo "Build Host:      ${BUILD_HOST}"
 echo ""
 
 # 1. Obtain GCP Access Token from local gcloud
@@ -29,16 +29,16 @@ if [ -z "${ACCESS_TOKEN}" ]; then
 fi
 echo "✓ Access token generated successfully."
 
-# 2. Authenticate Podman on CloudTop
+# 2. Authenticate Podman on Build Host
 echo ""
-echo "🔐 Authenticating Podman on CloudTop to ${REGISTRY}..."
-ssh "${CLOUDTOP_HOST}" "podman login -u oauth2accesstoken -p '${ACCESS_TOKEN}' ${REGISTRY}"
+echo "🔐 Authenticating Podman on ${BUILD_HOST} to ${REGISTRY}..."
+ssh "${BUILD_HOST}" "podman login -u oauth2accesstoken -p '${ACCESS_TOKEN}' ${REGISTRY}"
 
 # 3. Tag and Push Game Server Image
 GAME_REMOTE_TAG="${REPO_PATH}/game-server:latest"
 echo ""
 echo "🏷️ Tagging and pushing Game Server image..."
-ssh "${CLOUDTOP_HOST}" "
+ssh "${BUILD_HOST}" "
   podman tag localhost/agent-zoo-game:latest ${GAME_REMOTE_TAG}
   echo '🚀 Pushing ${GAME_REMOTE_TAG}...'
   podman push ${GAME_REMOTE_TAG}
@@ -49,7 +49,7 @@ echo "✓ Game Server image pushed successfully!"
 CAT_REMOTE_TAG="${REPO_PATH}/cat-agent:latest"
 echo ""
 echo "🏷️ Tagging and pushing Cat Agent image..."
-ssh "${CLOUDTOP_HOST}" "
+ssh "${BUILD_HOST}" "
   podman tag localhost/agent-zoo-cat:latest ${CAT_REMOTE_TAG}
   echo '🚀 Pushing ${CAT_REMOTE_TAG}...'
   podman push ${CAT_REMOTE_TAG}
@@ -60,7 +60,7 @@ echo "✓ Cat Agent image pushed successfully!"
 MCP_REMOTE_TAG="${REPO_PATH}/mcp-server:latest"
 echo ""
 echo "🏷️ Tagging and pushing MCP Server image..."
-ssh "${CLOUDTOP_HOST}" "
+ssh "${BUILD_HOST}" "
   podman tag localhost/agent-zoo-mcp:latest ${MCP_REMOTE_TAG}
   echo '🚀 Pushing ${MCP_REMOTE_TAG}...'
   podman push ${MCP_REMOTE_TAG}

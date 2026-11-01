@@ -1,0 +1,1238 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Agent Zoo (Cat &amp; Mouse) — Autonomous Multi-Agent Cognitive Laboratory | Shane Baccas</title>
+  <meta name="description" content="An authoritative 100x100 discrete 2D grid laboratory testing Gemini 2.5 Flash's ability to invent spatial formations, dual-brain coaching strategies, MCP telemetry loops, and emergent A2A diplomacy and deception.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-primary: #0b0f19;
+      --bg-secondary: #111827;
+      --bg-card: #161f33;
+      --bg-card-hover: #1e2942;
+      --bg-code: #090d16;
+      --text-primary: #f8fafc;
+      --text-secondary: #cbd5e1;
+      --text-muted: #94a3b8;
+      --border-color: rgba(148, 163, 184, 0.18);
+      --border-strong: rgba(99, 102, 241, 0.45);
+      --accent-indigo: #6366f1;
+      --accent-cyan: #06b6d4;
+      --accent-emerald: #10b981;
+      --accent-amber: #f59e0b;
+      --accent-rose: #f43f5e;
+      --accent-purple: #a855f7;
+      --shadow-lg: 0 20px 45px -15px rgba(0, 0, 0, 0.65);
+      --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      --font-mono: 'JetBrains Mono', monospace;
+    }
+
+    [data-theme="light"] {
+      --bg-primary: #f8fafc;
+      --bg-secondary: #f1f5f9;
+      --bg-card: #ffffff;
+      --bg-card-hover: #f8fafc;
+      --bg-code: #0f172a;
+      --text-primary: #0f172a;
+      --text-secondary: #334155;
+      --text-muted: #64748b;
+      --border-color: rgba(15, 23, 42, 0.12);
+      --border-strong: rgba(79, 70, 229, 0.45);
+      --accent-indigo: #4f46e5;
+      --accent-cyan: #0891b2;
+      --accent-emerald: #059669;
+      --accent-amber: #d97706;
+      --accent-rose: #e11d48;
+      --accent-purple: #7c3aed;
+      --shadow-lg: 0 18px 36px -12px rgba(15, 23, 42, 0.12);
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      font-family: var(--font-sans);
+      background-color: var(--bg-primary);
+      color: var(--text-primary);
+      line-height: 1.65;
+      transition: background-color 0.25s ease, color 0.25s ease;
+    }
+
+    a {
+      color: var(--accent-cyan);
+      text-decoration: none;
+    }
+
+    a:hover {
+      text-decoration: underline;
+    }
+
+    /* Sticky Top Navigation */
+    .top-nav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      backdrop-filter: blur(14px);
+      background: rgba(11, 15, 25, 0.85);
+      border-bottom: 1px solid var(--border-color);
+      padding: 0.75rem 1.5rem;
+    }
+
+    [data-theme="light"] .top-nav {
+      background: rgba(248, 250, 252, 0.88);
+    }
+
+    .nav-inner {
+      max-width: 1320px;
+      margin: 0 auto;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      flex-wrap: wrap;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 0.65rem;
+      font-weight: 800;
+      font-size: 1.05rem;
+      color: var(--text-primary);
+      text-decoration: none !important;
+    }
+
+    .brand-badge {
+      font-family: var(--font-mono);
+      font-size: 0.72rem;
+      padding: 0.15rem 0.5rem;
+      border-radius: 999px;
+      background: rgba(99, 102, 241, 0.18);
+      color: var(--accent-indigo);
+      border: 1px solid var(--border-strong);
+      font-weight: 600;
+    }
+
+    .nav-links {
+      display: flex;
+      align-items: center;
+      gap: 1.15rem;
+      flex-wrap: wrap;
+      font-size: 0.86rem;
+      font-weight: 600;
+    }
+
+    .nav-links a {
+      color: var(--text-secondary);
+      text-decoration: none;
+      transition: color 0.15s ease;
+    }
+
+    .nav-links a:hover {
+      color: var(--accent-cyan);
+    }
+
+    .nav-actions {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.45rem;
+      padding: 0.48rem 0.95rem;
+      border-radius: 8px;
+      font-size: 0.83rem;
+      font-weight: 600;
+      cursor: pointer;
+      border: 1px solid var(--border-color);
+      background: var(--bg-card);
+      color: var(--text-primary);
+      text-decoration: none !important;
+      transition: all 0.18s ease;
+    }
+
+    .btn:hover {
+      border-color: var(--accent-indigo);
+      transform: translateY(-1px);
+    }
+
+    .btn-primary {
+      background: linear-gradient(135deg, var(--accent-indigo), #4f46e5);
+      color: #ffffff;
+      border-color: transparent;
+    }
+
+    .btn-primary:hover {
+      filter: brightness(1.1);
+    }
+
+    /* Main Layout */
+    .container {
+      max-width: 1320px;
+      margin: 0 auto;
+      padding: 0 1.5rem;
+    }
+
+    section {
+      padding: 4.25rem 0;
+      border-bottom: 1px solid var(--border-color);
+    }
+
+    /* Hero Section */
+    .hero {
+      padding: 4.5rem 0 3.5rem;
+      background: radial-gradient(circle at 20% 10%, rgba(99, 102, 241, 0.16), transparent 45%),
+                  radial-gradient(circle at 80% 20%, rgba(6, 182, 212, 0.14), transparent 45%);
+    }
+
+    .hero-eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-family: var(--font-mono);
+      font-size: 0.78rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      padding: 0.35rem 0.85rem;
+      border-radius: 999px;
+      background: rgba(16, 185, 129, 0.12);
+      color: var(--accent-emerald);
+      border: 1px solid rgba(16, 185, 129, 0.35);
+      margin-bottom: 1.25rem;
+    }
+
+    .hero h1 {
+      font-size: clamp(2.1rem, 4.2vw, 3.45rem);
+      font-weight: 800;
+      line-height: 1.12;
+      letter-spacing: -0.025em;
+      margin-bottom: 1.2rem;
+    }
+
+    .hero h1 .gradient-text {
+      background: linear-gradient(135deg, #818cf8, #22d3ee, #34d399);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .hero-lead {
+      font-size: 1.15rem;
+      color: var(--text-secondary);
+      max-width: 960px;
+      margin-bottom: 1.75rem;
+    }
+
+    .hero-cta-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+      margin-bottom: 2.5rem;
+    }
+
+    /* KPI Strip */
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+      gap: 1rem;
+      margin-bottom: 2.5rem;
+    }
+
+    .kpi-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      padding: 1.1rem 1.25rem;
+      box-shadow: var(--shadow-lg);
+    }
+
+    .kpi-value {
+      font-family: var(--font-mono);
+      font-size: 1.65rem;
+      font-weight: 800;
+      color: var(--accent-cyan);
+      line-height: 1.2;
+    }
+
+    .kpi-label {
+      font-size: 0.82rem;
+      font-weight: 600;
+      color: var(--text-secondary);
+      margin-top: 0.25rem;
+    }
+
+    .kpi-sub {
+      font-size: 0.74rem;
+      color: var(--text-muted);
+      margin-top: 0.2rem;
+    }
+
+    /* Showcase Hero Frame */
+    .hero-showcase-frame {
+      background: var(--bg-card);
+      border: 1px solid var(--border-strong);
+      border-radius: 16px;
+      overflow: hidden;
+      box-shadow: var(--shadow-lg);
+    }
+
+    .frame-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0.65rem 1.1rem;
+      background: var(--bg-secondary);
+      border-bottom: 1px solid var(--border-color);
+      font-family: var(--font-mono);
+      font-size: 0.78rem;
+      color: var(--text-muted);
+    }
+
+    .frame-dots {
+      display: flex;
+      gap: 6px;
+    }
+
+    .frame-dots span {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      display: inline-block;
+    }
+
+    .hero-showcase-frame img {
+      width: 100%;
+      display: block;
+      cursor: zoom-in;
+    }
+
+    /* Section Headers */
+    .section-header {
+      margin-bottom: 2.25rem;
+    }
+
+    .section-tag {
+      font-family: var(--font-mono);
+      font-size: 0.76rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--accent-indigo);
+      margin-bottom: 0.4rem;
+      display: block;
+    }
+
+    .section-title {
+      font-size: clamp(1.6rem, 2.8vw, 2.25rem);
+      font-weight: 800;
+      letter-spacing: -0.02em;
+      margin-bottom: 0.65rem;
+    }
+
+    .section-desc {
+      color: var(--text-secondary);
+      max-width: 880px;
+      font-size: 1.02rem;
+    }
+
+    /* Cards & Grids */
+    .grid-2 {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
+      gap: 1.5rem;
+    }
+
+    .grid-3 {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(310px, 1fr));
+      gap: 1.35rem;
+    }
+
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 14px;
+      padding: 1.5rem;
+      box-shadow: var(--shadow-lg);
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+    }
+
+    .card h3 {
+      font-size: 1.15rem;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .card p, .card li {
+      font-size: 0.92rem;
+      color: var(--text-secondary);
+    }
+
+    .card ul {
+      padding-left: 1.2rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.45rem;
+    }
+
+    code {
+      font-family: var(--font-mono);
+      font-size: 0.82em;
+      padding: 0.15rem 0.4rem;
+      border-radius: 5px;
+      background: rgba(99, 102, 241, 0.14);
+      color: var(--accent-cyan);
+    }
+
+    pre {
+      background: var(--bg-code);
+      color: #e2e8f0;
+      padding: 1rem 1.15rem;
+      border-radius: 10px;
+      border: 1px solid var(--border-color);
+      overflow-x: auto;
+      font-family: var(--font-mono);
+      font-size: 0.8rem;
+      line-height: 1.55;
+    }
+
+    pre code {
+      background: transparent;
+      padding: 0;
+      color: inherit;
+    }
+
+    /* Interactive Formation Visualizer */
+    .formation-tabs {
+      display: flex;
+      gap: 0.6rem;
+      flex-wrap: wrap;
+      margin-bottom: 1.25rem;
+    }
+
+    .tab-btn {
+      padding: 0.55rem 1rem;
+      border-radius: 9px;
+      border: 1px solid var(--border-color);
+      background: var(--bg-secondary);
+      color: var(--text-secondary);
+      font-weight: 600;
+      font-size: 0.85rem;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+
+    .tab-btn.active, .tab-btn:hover {
+      background: var(--accent-indigo);
+      color: #ffffff;
+      border-color: var(--accent-indigo);
+    }
+
+    /* Interactive UI Tour Gallery */
+    .tour-layout {
+      display: grid;
+      grid-template-columns: 330px 1fr;
+      gap: 1.5rem;
+      align-items: start;
+    }
+
+    @media (max-width: 980px) {
+      .tour-layout {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .tour-menu {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+
+    .tour-item {
+      text-align: left;
+      padding: 0.8rem 1rem;
+      border-radius: 10px;
+      border: 1px solid var(--border-color);
+      background: var(--bg-card);
+      color: var(--text-secondary);
+      cursor: pointer;
+      transition: all 0.16s ease;
+    }
+
+    .tour-item:hover {
+      background: var(--bg-card-hover);
+      border-color: var(--accent-cyan);
+    }
+
+    .tour-item.active {
+      background: rgba(99, 102, 241, 0.16);
+      border-color: var(--accent-indigo);
+      color: var(--text-primary);
+    }
+
+    .tour-item-title {
+      font-weight: 700;
+      font-size: 0.9rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 0.2rem;
+    }
+
+    .tour-item-port {
+      font-family: var(--font-mono);
+      font-size: 0.7rem;
+      padding: 0.1rem 0.45rem;
+      border-radius: 5px;
+      background: rgba(6, 182, 212, 0.15);
+      color: var(--accent-cyan);
+    }
+
+    .tour-item-sub {
+      font-size: 0.77rem;
+      color: var(--text-muted);
+    }
+
+    .tour-stage {
+      background: var(--bg-card);
+      border: 1px solid var(--border-strong);
+      border-radius: 14px;
+      overflow: hidden;
+      box-shadow: var(--shadow-lg);
+    }
+
+    .tour-stage-header {
+      padding: 1rem 1.35rem;
+      background: var(--bg-secondary);
+      border-bottom: 1px solid var(--border-color);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+    }
+
+    .tour-stage-body {
+      padding: 1.25rem;
+    }
+
+    .tour-stage-desc {
+      font-size: 0.93rem;
+      color: var(--text-secondary);
+      margin-bottom: 1rem;
+    }
+
+    .tour-stage-img-wrap {
+      border-radius: 10px;
+      overflow: hidden;
+      border: 1px solid var(--border-color);
+      background: #000;
+    }
+
+    .tour-stage-img-wrap img {
+      width: 100%;
+      display: block;
+      cursor: zoom-in;
+    }
+
+    /* Chronicles Cards */
+    .chronicle-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 16px;
+      overflow: hidden;
+      box-shadow: var(--shadow-lg);
+      margin-bottom: 2rem;
+    }
+
+    .chronicle-header {
+      padding: 1.5rem 1.75rem;
+      background: linear-gradient(90deg, rgba(99, 102, 241, 0.15), rgba(6, 182, 212, 0.08));
+      border-bottom: 1px solid var(--border-color);
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      flex-wrap: wrap;
+      gap: 1rem;
+    }
+
+    .chronicle-body {
+      padding: 1.75rem;
+    }
+
+    .chronicle-gallery {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 1rem;
+      margin-top: 1.25rem;
+    }
+
+    .chronicle-thumb {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-color);
+      border-radius: 10px;
+      overflow: hidden;
+    }
+
+    .chronicle-thumb img {
+      width: 100%;
+      height: 185px;
+      object-fit: cover;
+      display: block;
+      cursor: zoom-in;
+      transition: transform 0.2s ease;
+    }
+
+    .chronicle-thumb img:hover {
+      transform: scale(1.03);
+    }
+
+    .chronicle-thumb-cap {
+      padding: 0.6rem 0.8rem;
+      font-size: 0.78rem;
+      color: var(--text-secondary);
+    }
+
+    /* Table */
+    .table-wrap {
+      overflow-x: auto;
+      border-radius: 12px;
+      border: 1px solid var(--border-color);
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.88rem;
+      background: var(--bg-card);
+    }
+
+    th, td {
+      padding: 0.8rem 1rem;
+      text-align: left;
+      border-bottom: 1px solid var(--border-color);
+    }
+
+    th {
+      background: var(--bg-secondary);
+      font-weight: 700;
+      color: var(--text-primary);
+      font-family: var(--font-mono);
+      font-size: 0.78rem;
+      text-transform: uppercase;
+    }
+
+    /* Lightbox Modal */
+    .lightbox {
+      position: fixed;
+      inset: 0;
+      background: rgba(5, 8, 15, 0.92);
+      z-index: 999;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 2rem;
+      cursor: zoom-out;
+    }
+
+    .lightbox.open {
+      display: flex;
+    }
+
+    .lightbox img {
+      max-width: 95vw;
+      max-height: 90vh;
+      border-radius: 12px;
+      border: 1px solid var(--border-strong);
+      box-shadow: 0 25px 60px rgba(0, 0, 0, 0.85);
+    }
+
+    footer {
+      padding: 3rem 0;
+      text-align: center;
+      color: var(--text-muted);
+      font-size: 0.88rem;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Top Navigation -->
+  <nav class="top-nav">
+    <div class="nav-inner">
+      <a href="https://sbaccas.github.io/html/projects.html" class="brand">
+        <span>🐾 Agent Zoo: Cat &amp; Mouse</span>
+        <span class="brand-badge">Gemini 2.5 Flash + ADK + MCP + A2A</span>
+      </a>
+      <div class="nav-links">
+        <a href="#thesis">Thesis &amp; Geometry</a>
+        <a href="#architecture">Dual-Brain Harness</a>
+        <a href="#diplomacy">MCP &amp; A2A Deception</a>
+        <a href="#observability">UI &amp; SRE Tour</a>
+        <a href="#chronicles">Match Chronicles</a>
+        <a href="#quickstart">Run Locally</a>
+      </div>
+      <div class="nav-actions">
+        <button id="themeToggle" class="btn" title="Toggle Light / Dark Theme">☀️ / 🌙</button>
+        <a href="https://sbaccas.github.io/html/projects.html" class="btn">← Portfolio Projects</a>
+        <a href="https://github.com/sbaccas/agent-zoo" target="_blank" rel="noreferrer" class="btn btn-primary">GitHub Repo ↗</a>
+      </div>
+    </div>
+  </nav>
+
+  <!-- Hero Section -->
+  <header class="hero">
+    <div class="container">
+      <div class="hero-eyebrow">
+        <span>● Multi-Agent Spatial Reasoning &amp; Game-Theoretic Deception Laboratory</span>
+      </div>
+      <h1>
+        Testing Whether <span class="gradient-text">Gemini 2.5 Flash</span> Can Invent Spatial Formations, Alliances, and Betrayals
+      </h1>
+      <p class="hero-lead">
+        <strong>Agent Zoo (Cat &amp; Mouse)</strong> is a distributed, OSRS-inspired tick-locked simulation where autonomous predators and prey inhabit a <code>100×100</code> discrete 2D grid. Powered by a <strong>Zero-Branching Universal Agent Harness</strong>, a <strong>System-1 / System-2 Dual-Brain Cognitive Loop</strong>, <strong>Model Context Protocol (MCP)</strong> tools, and peer-to-peer <strong>Agent-to-Agent (A2A)</strong> radio channels, LLM agents spontaneously discover geometric search patterns—and weaponize diplomacy to ambush their rivals.
+      </p>
+
+      <div class="hero-cta-row">
+        <a href="#observability" class="btn btn-primary">🖥️ Explore Interactive 11-Screen UI Tour</a>
+        <a href="#chronicles" class="btn">📜 Read the 3 Forensic Match Chronicles</a>
+        <a href="chronicle_sim_87b6c314_extinction_pact.pdf" target="_blank" class="btn">📄 Episode III PDF (18,077-Tick Extinction Pact)</a>
+        <a href="chronicle_sim_0175314f_cold_war.pdf" target="_blank" class="btn">📄 Episode II PDF (4,005-Tick Cold War)</a>
+        <a href="chronicle_sim_d3d4d26b_deception_war.pdf" target="_blank" class="btn">📄 Episode I PDF (Deception War)</a>
+      </div>
+
+      <div class="kpi-grid">
+        <div class="kpi-card">
+          <div class="kpi-value">100 × 100</div>
+          <div class="kpi-label">Authoritative Grid World</div>
+          <div class="kpi-sub">90° FoV raycasting, 3×2 strike cones &amp; OSRS tick locks</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-value">Dual-Brain</div>
+          <div class="kpi-label">Gem1 Actor + Gem2 Coach</div>
+          <div class="kpi-sub">Fast tick reflex (512 tok) + Slow strategic coach (4,096 tok)</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-value">0 Branches</div>
+          <div class="kpi-label">Universal Agent Harness</div>
+          <div class="kpi-sub">Species &amp; personas defined 100% via Markdown skills</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-value">18,077 Ticks</div>
+          <div class="kpi-label">Longest Continuous Match</div>
+          <div class="kpi-sub">100% mouse extinction &amp; forensic A2A betrayal audit</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-value">5 Services</div>
+          <div class="kpi-label">Full-Stack Microservices</div>
+          <div class="kpi-sub">Game (:8000), MCP (:9050), Cat-1/2 (:8001/3), Evil Cat (:8005)</div>
+        </div>
+      </div>
+
+      <div class="hero-showcase-frame">
+        <div class="frame-bar">
+          <div class="frame-dots">
+            <span style="background:#ef4444;"></span>
+            <span style="background:#f59e0b;"></span>
+            <span style="background:#10b981;"></span>
+          </div>
+          <span>http://127.0.0.1:8000/ — Authoritative 100×100 Arena Board (Live FoV Cones, SLASH! AoE Zones &amp; Multi-Agent Telemetry)</span>
+          <span>Click any image to zoom 🔍</span>
+        </div>
+        <img src="assets/ui/arena_board.png" alt="Authoritative 100x100 Arena Board" class="zoomable">
+      </div>
+    </div>
+  </header>
+
+  <!-- Section 1: Experimental Thesis & Spatial Geometry -->
+  <section id="thesis">
+    <div class="container">
+      <div class="section-header">
+        <span class="section-tag">01 · Experimental Thesis &amp; Physics Engine</span>
+        <h2 class="section-title">Can an LLM Invent Spatial Geometry to Conquer a 10,000-Tile Grid?</h2>
+        <p class="section-desc">
+          Unlike static text benchmarks, a <code>100×100</code> grid world with strict directional vision (<code>90°</code> cone, 12-tile range) and Old School RuneScape-inspired action cooldowns punishes aimless wandering. Without a global coordinate strategy, a cat agent gets trapped in local corner loops or whiffs 90% of its attacks.
+        </p>
+      </div>
+
+      <div class="grid-3">
+        <div class="card">
+          <h3>🚜 Vertical &amp; Horizontal Lawnmowers</h3>
+          <p>
+            When the Slow-Brain Coach (<code>Gem2</code>) inspects the <code>10×10</code> ASCII sector heatmap via MCP (<code>get_AsciiMap</code>), it discovers when its actor is starving in depleted tiles. Coaches spontaneously formulate <strong>Vertical Lawnmower Sweeps</strong> (locking onto column <code>x=8</code> or <code>x=93</code> and lunging <code>y: 5 → 95 → 5</code>) and <strong>Horizontal Sweeps</strong> to guarantee systematic coverage without wall-bonks.
+          </p>
+        </div>
+        <div class="card">
+          <h3>🕷️ Central Trapdoor Spider Web</h3>
+          <p>
+            In <code>sim-0175314f</code>, <code>coach(cat-3)</code> (the Evil Cat apex predator) invented the <strong>Central Trapdoor Spider</strong> doctrine: anchoring at the exact geometric center <code>(50, 50)</code> while broadcasting fake A2A radio directives convincing <code>cat-1</code> and <code>cat-2</code> to sweep the outer perimeters and drive fleeing mice directly into its central kill funnel.
+          </p>
+        </div>
+        <div class="card">
+          <h3>⚔️ OSRS-Style Tick &amp; Cooldown Physics</h3>
+          <ul>
+            <li><strong>Standard Move (<code>N/S/E/W</code>)</strong>: 1 tile, 2-tick lock (0.33 tiles/tick effective speed).</li>
+            <li><strong>Forward Lunge (<code>LUNGE</code>)</strong>: 2-tile cardinal dash along current <code>facing</code>, 1-tick lock (1.0 tile/tick). Requires pre-aligning facing first.</li>
+            <li><strong>Slash Attack (<code>ATTACK</code>)</strong>: <code>3×2</code> directional AoE strike cone, 3-tick cooldown lock. Captures mice (<code>+15 pts</code>) or damages rival cats (<code>-20 HP</code>, <code>+30 pts</code> on elimination).</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Section 2: Universal Agent Harness & Dual-Brain Architecture -->
+  <section id="architecture">
+    <div class="container">
+      <div class="section-header">
+        <span class="section-tag">02 · Universal Agent Harness &amp; Dual-Brain Cognition</span>
+        <h2 class="section-title">One Zero-Branching Python Harness. Infinite Markdown Personas.</h2>
+        <p class="section-desc">
+          A foundational architectural rule of Agent Zoo is that <strong>all agents share the exact same Python execution harness</strong>. Whether an agent is a cooperative Standard Cat, a deceptive Evil Cat with multimodal vision, or a fleeing Mouse, zero Python <code>if/else</code> branches encode species behavior. Everything is emergent from injected Markdown manuals.
+        </p>
+      </div>
+
+      <div class="grid-2" style="margin-bottom: 1.75rem;">
+        <div class="card">
+          <h3>⚡ System-1 Fast-Brain Actor (<code>Gem1</code>)</h3>
+          <p>
+            Executes on the real-time tick clock via <code>POST /act</code> or WebSocket push. Receives a bounded sliding window (default 25 ticks) of its own trajectory, its current observation JSON, and—for <strong>Evil Cat (<code>:8005</code>)</strong>—a live rendered <code>21×21</code> ego-centric PNG viewport crop.
+          </p>
+          <ul>
+            <li><strong>Tunable Thinking Budget</strong>: Defaults to <code>512</code> tokens of private Chain-of-Thought scratchpad before emitting structured JSON (<code>thought</code> declared before <code>action</code>).</li>
+            <li><strong>Coupled Abandon Timeout &amp; Reflex Guard</strong>: If Vertex AI takes longer than the abandon ceiling (default <code>8.0s</code>), the harness discards the in-flight call and plays the tick using a <code>0.008ms</code> in-memory reflex heuristic—tagging the move <code>heuristic_fallback</code> so model control share is audited honestly in the Box Score.</li>
+          </ul>
+        </div>
+
+        <div class="card">
+          <h3>🎓 System-2 Slow-Brain Strategic Coach (<code>Gem2</code>)</h3>
+          <p>
+            Runs asynchronously off the tick loop every <code>100</code> ticks with a deep <code>4,096</code>-token thinking budget. To prevent runaway agentic tool loops, the Coach is governed by a strict <strong>2-Call Maximum Architecture</strong>:
+          </p>
+          <ul>
+            <li><strong>Call 1 (Reconnaissance &amp; Diplomacy)</strong>: Gemini inspects the 100-tick transcript and emits parallel tool calls across MCP and A2A: <code>get_boxscore()</code>, <code>get_AsciiMap()</code>, <code>write_coach_note()</code>, and <code>send_a2a_message()</code>.</li>
+            <li><strong>Call 2 (Dossier Synthesis)</strong>: The harness executes all tools concurrently, returns the telemetry payloads, and strips tool definitions from Call 2—forcing Gemini to synthesize concise Markdown <strong>Standing Orders (<code>coaching_notes.md</code>)</strong> that hot-reload into the Actor's prompt on the very next tick.</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Species / Service</th>
+              <th>Port</th>
+              <th>Sensory Modality</th>
+              <th>Injected Actor Manual (<code>CAT_SKILLS_PATH</code>)</th>
+              <th>Injected Coach Manual (<code>EVAL_SKILLS_PATH</code>)</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>🐱 Standard Cat 1 &amp; 2</strong> (<code>cat-1</code>, <code>cat-2</code>)</td>
+              <td><code>:8001</code>, <code>:8003</code></td>
+              <td>Structured JSON (90° FoV entities + coordinates)</td>
+              <td><code>actors/cat/actor_skills.md</code> (Strike-zone geometry, lunge alignment, perimeter sweeps)</td>
+              <td><code>actors/cat/subagents/eval_skills.md</code> (Boxscore audit, whiff reduction, A2A treaties)</td>
+            </tr>
+            <tr>
+              <td><strong>😈 Evil Cat Apex Predator</strong> (<code>cat-3</code>)</td>
+              <td><code>:8005</code></td>
+              <td><strong>Multimodal</strong>: <code>21×21</code> Ego-Centric PNG + JSON</td>
+              <td><code>actors/evil_cat/skills.md</code> (200 HP apex hunter, rival cat stalking, pincer ambushes)</td>
+              <td><code>actors/evil_cat/coach_skills.md</code> (Psychological warfare, false-flag A2A treaties, trapdoor funnels)</td>
+            </tr>
+            <tr>
+              <td><strong>🐭 Mouse Swarm</strong> (<code>mouse-1..N</code>)</td>
+              <td><code>:8000</code></td>
+              <td>Local threat vector + burrow proximity</td>
+              <td><code>actors/mouse/api.py</code> (Sub-millisecond evasion &amp; foraging reflex engine)</td>
+              <td>N/A (High-speed swarm baseline)</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- Section 3: Dual-Channel Memory, MCP & A2A Deception -->
+  <section id="diplomacy">
+    <div class="container">
+      <div class="section-header">
+        <span class="section-tag">03 · Dual-Channel Memory, MCP &amp; A2A Protocol</span>
+        <h2 class="section-title">Why Separating Private Notes from Standing Orders Unlocked Deception</h2>
+        <p class="section-desc">
+          Early iterations had the Coach write a single scratchpad file. When the Coach wrote speculative hypotheses or rival betrayal logs into that file, the Fast-Brain Actor became confused about which coordinate to move to next. Separating memory into two distinct channels solved this—and produced remarkable emergent behavior.
+        </p>
+      </div>
+
+      <div class="grid-3">
+        <div class="card">
+          <h3>📓 Channel 1: Private Notebook (<code>coach_memory.jsonl</code>)</h3>
+          <p>
+            Persisted via the MCP Server (<code>write_coach_note</code> / <code>read_coach_notes</code> on port <code>:9050</code>). Only the Coach reads this channel. Here, coaches record long-horizon experiments, audit whether rival coaches are lying by comparing A2A claims against <code>get_boxscore()</code> kill deltas, and plan multi-cycle ambushes.
+          </p>
+        </div>
+        <div class="card">
+          <h3>📋 Channel 2: Published Standing Orders (<code>coaching_notes.md</code>)</h3>
+          <p>
+            Injected directly into the Fast-Brain Actor's system prompt every tick. Contains zero speculation—only imperative spatial rules (e.g., <em>"Maintain strict column x=93 using LUNGE NORTH/SOUTH; ONLY attack when in_strike_zone=true"</em>).
+          </p>
+        </div>
+        <div class="card">
+          <h3>📻 Peer-to-Peer A2A Diplomacy &amp; Gaslighting</h3>
+          <p>
+            Every agent exposes an authoritative A2A Agent Card at <code>/.well-known/agent.json</code> and an inbox at <code>/a2a/messages</code>. Coaches negotiate demilitarized borders (<code>x &lt; 50</code> vs <code>x &gt;= 50</code>), form anti-apex coalitions, and—in the case of Evil Cat—fabricate "accidental friendly fire" cover stories after striking a rival.
+          </p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Section 4: Interactive 11-Screen Observability & UI Tour -->
+  <section id="observability">
+    <div class="container">
+      <div class="section-header">
+        <span class="section-tag">04 · Full-Stack Observability &amp; Interactive Console Tour</span>
+        <h2 class="section-title">11 Live Consoles Across 5 Microservices</h2>
+        <p class="section-desc">
+          Select any console below to inspect high-resolution captures from the live stack, including the 8-panel Agent Workbenches, MCP SSE tool stream, A2A radio ledger, and the OpenTelemetry SRE &amp; Distributed Trace Waterfall dashboard.
+        </p>
+      </div>
+
+      <div class="tour-layout">
+        <div class="tour-menu" id="tourMenu">
+          <button class="tour-item active" data-img="assets/ui/arena_board.png" data-title="1. Authoritative 100×100 Arena Board" data-port=":8000/" data-desc="Real-time HTML5 canvas rendering 100×100 grid physics, 90° directional FoV cones, red 3×2 SLASH! AoE strike zones, live kill feed, and entity telemetry cards.">
+            <div class="tour-item-title"><span>🏟️ 1. Arena Board</span><span class="tour-item-port">:8000/</span></div>
+            <div class="tour-item-sub">100×100 grid, FoV cones &amp; SLASH! zones</div>
+          </button>
+
+          <button class="tour-item" data-img="assets/ui/cat1_workbench.png" data-title="2. Cat Agent Workbench (Boxes 1–4: Tactical Brain &amp; Radio)" data-port=":8001/" data-desc="Inspects Inbound Observation JSON (Box 1), ADK Gemini 2.5 Flash Decision, Context Window &amp; Thinking Budget sliders, Manual D-Pad Override (Box 2), Outgoing Action (Box 3), and live Commander Radio interrogation (Box 4).">
+            <div class="tour-item-title"><span>🐱 2. Cat Workbench (Upper)</span><span class="tour-item-port">:8001/</span></div>
+            <div class="tour-item-sub">ADK Gemini Actor, Thinking Budget &amp; Radio</div>
+          </button>
+
+          <button class="tour-item" data-img="assets/ui/workbench_coach_eval.png" data-title="3. Strategic Evaluator (Gem2) &amp; General Radio (Boxes 6–7)" data-port=":8001/" data-desc="Shows the Slow-Brain Strategic Coach (Gem2) running its 2-call MCP evaluation loop, Coach Thinking Budget (4,096 tokens), hot-reloaded Standing Orders (coaching_notes.md), and General Radio where operators cross-examine the Coach with live boxscore numbers.">
+            <div class="tour-item-title"><span>🎓 3. Coach Evaluator (Gem2)</span><span class="tour-item-port">:8001/</span></div>
+            <div class="tour-item-sub">Standing orders, Coach Thinking &amp; General Radio</div>
+          </button>
+
+          <button class="tour-item" data-img="assets/ui/evil_cat_workbench.png" data-title="4. Evil Cat Apex Predator Multimodal Workbench" data-port=":8005/" data-desc="Dedicated workbench for cat-3 (Evil Cat). Combines structured JSON state with an ego-centric 21×21 PNG visual viewport crop, enabling multimodal ambush detection and Central Trapdoor Spider maneuvers.">
+            <div class="tour-item-title"><span>😈 4. Evil Cat Workbench</span><span class="tour-item-port">:8005/</span></div>
+            <div class="tour-item-sub">Multimodal 21×21 PNG + Apex Ambush Brain</div>
+          </button>
+
+          <button class="tour-item" data-img="assets/ui/live_boxscore.png" data-title="5. Live Box Score &amp; Autonomy Attribution Leaderboard" data-port=":8000/boxscore" data-desc="Tracks mice captures, rival cat hits, slash accuracy %, strike-zone conversion %, tiles per kill, lunge share, and exact LLM vs. Heuristic Fallback control attribution.">
+            <div class="tour-item-title"><span>📊 5. Live Box Score</span><span class="tour-item-port">:8000/boxscore</span></div>
+            <div class="tour-item-sub">Combat KPIs &amp; LLM vs. Heuristic attribution</div>
+          </button>
+
+          <button class="tour-item" data-img="assets/ui/spatial_heatmap.png" data-title="6. Spatial Coverage Heatmap &amp; ASCII Sector Digest" data-port=":8000/heatmap" data-desc="Visualizes lifetime tile dwell density across the 100×100 arena alongside the exact 10×10 ASCII sector digest that Coaches pull via the get_AsciiMap() MCP tool.">
+            <div class="tour-item-title"><span>🗺️ 6. Spatial Heatmap</span><span class="tour-item-port">:8000/heatmap</span></div>
+            <div class="tour-item-sub">Tile dwell density &amp; 10×10 ASCII Coach map</div>
+          </button>
+
+          <button class="tour-item" data-img="assets/ui/mcp_dashboard.png" data-title="7. Cat &amp; Mouse MCP Telemetry Server" data-port=":9050/" data-desc="Real-time SSE stream of Model Context Protocol (MCP) tool executions (get_boxscore, get_AsciiMap, write_coach_note, read_coach_notes) with caller attribution, latency, and JSON payload inspection.">
+            <div class="tour-item-title"><span>🔌 7. MCP Telemetry Server</span><span class="tour-item-port">:9050/</span></div>
+            <div class="tour-item-sub">Live SSE stream of Coach MCP tool calls</div>
+          </button>
+
+          <button class="tour-item" data-img="assets/ui/mcp_chat_log.png" data-title="8. Live Game Chat Monitor (A2A Diplomacy &amp; Deception)" data-port=":9050/chat" data-desc="Unified communications monitor capturing peer-to-peer A2A treaties, territorial border negotiations (x < 50 vs x >= 50), and deceptive broadcasts between coach(cat-1), coach(cat-2), and coach(cat-3).">
+            <div class="tour-item-title"><span>💬 8. A2A Live Chat Monitor</span><span class="tour-item-port">:9050/chat</span></div>
+            <div class="tour-item-sub">Inter-coach treaties, DMs &amp; deception logs</div>
+          </button>
+
+          <button class="tour-item" data-img="assets/ui/mcp_coach_notes.png" data-title="9. Coach Private Notes Inspector (Dual-Channel Memory)" data-port=":9050/notes" data-desc="Side-by-side forensic viewer comparing each Coach's confidential JSONL notebook (coach_memory.jsonl—rival betrayal audits, hypotheses, linked ticks) against its published actor standing orders (coaching_notes.md).">
+            <div class="tour-item-title"><span>📓 9. Coach Private Notes</span><span class="tour-item-port">:9050/notes</span></div>
+            <div class="tour-item-sub">Private notebook vs. published standing orders</div>
+          </button>
+
+          <button class="tour-item" data-img="assets/ui/sre_dashboard.png" data-title="10. OpenTelemetry SRE &amp; Distributed Trace Waterfall" data-port=":8000/sre" data-desc="Full-stack OpenTelemetry observability: 5/5 cluster node heartbeat matrix, p50/p95 tick &amp; TTFT latency cards, clickable Metric-to-Trace Exemplar time-series chart with P90 spike halos, and multi-service Cloud Trace waterfall.">
+            <div class="tour-item-title"><span>🛰️ 10. OTel SRE &amp; Cloud Trace</span><span class="tour-item-port">:8000/sre</span></div>
+            <div class="tour-item-sub">Exemplars, P90 spike halos &amp; trace waterfalls</div>
+          </button>
+
+          <button class="tour-item" data-img="assets/ui/match_archives.png" data-title="11. Simulation Archives &amp; DVR Replay Inspector" data-port=":8000/archive" data-desc="Browse every recorded simulation run with tick-by-tick DVR playback, run_config.json A/B hyperparameter audit logs, and one-click JSONL transcript exports.">
+            <div class="tour-item-title"><span>📼 11. Match Archives &amp; DVR</span><span class="tour-item-port">:8000/archive</span></div>
+            <div class="tour-item-sub">Historical match DVR replay &amp; A/B audit</div>
+          </button>
+        </div>
+
+        <div class="tour-stage">
+          <div class="tour-stage-header">
+            <div>
+              <strong id="stageTitle" style="font-size: 1.05rem;">1. Authoritative 100×100 Arena Board</strong>
+              <span id="stagePort" class="brand-badge" style="margin-left: 0.6rem;">:8000/</span>
+            </div>
+            <span style="font-size: 0.78rem; color: var(--text-muted);">Click screenshot to enlarge 🔍</span>
+          </div>
+          <div class="tour-stage-body">
+            <p id="stageDesc" class="tour-stage-desc">
+              Real-time HTML5 canvas rendering 100×100 grid physics, 90° directional FoV cones, red 3×2 SLASH! AoE strike zones, live kill feed, and entity telemetry cards.
+            </p>
+            <div class="tour-stage-img-wrap">
+              <img id="stageImg" src="assets/ui/arena_board.png" alt="Console Screenshot" class="zoomable">
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Section 5: The Three Forensic Game Chronicles -->
+  <section id="chronicles">
+    <div class="container">
+      <div class="section-header">
+        <span class="section-tag">05 · Forensic Match Chronicles &amp; Emergent Behavior</span>
+        <h2 class="section-title">Three Multi-Thousand-Tick Dramas Reconstructed from Raw Telemetry</h2>
+        <p class="section-desc">
+          Every quote, coordinate, kill timestamp, and betrayal below is extracted verbatim from archived <code>events.json</code>, <code>prompts.jsonl.gz</code>, and <code>coach_memory.jsonl</code> logs.
+        </p>
+      </div>
+
+      <!-- Chronicle III -->
+      <article class="chronicle-card">
+        <div class="chronicle-header">
+          <div>
+            <span class="brand-badge" style="margin-bottom: 0.4rem; display: inline-block;">EPISODE III · sim-87b6c314 · 18,077 TICKS · 100% MOUSE EXTINCTION</span>
+            <h3 style="font-size: 1.4rem; font-weight: 800;">The 18,077-Tick Extinction Pact: Treaty, Betrayal, Gaslight &amp; Total Eradication</h3>
+          </div>
+          <div style="display: flex; gap: 0.6rem;">
+            <a href="chronicle_sim_87b6c314_extinction_pact.pdf" target="_blank" class="btn btn-primary">📄 Illustrated PDF</a>
+            <a href="https://github.com/sbaccas/agent-zoo/blob/main/docs/chronicle_sim_87b6c314_extinction_pact.md" target="_blank" class="btn">Markdown Source ↗</a>
+          </div>
+        </div>
+        <div class="chronicle-body">
+          <p style="color: var(--text-secondary); margin-bottom: 1rem;">
+            Across <strong>18,077 ticks</strong>, all <strong>100 mice</strong> on the <code>100×100</code> grid were hunted to extinction—and all three cats survived to the final bell (<code>cat-1: 825 pts</code>, <code>cat-2: 675 pts</code>, <code>cat-3: 555 pts</code>). At Tick 196, the coaches ratified a strict territorial partition (<code>x &lt; 50</code> West vs. <code>x &gt;= 50</code> East). For 2,175 ticks peace held—until Tick 2,371, when <code>cat-3</code> ambushed <code>cat-2</code> at <code>(71, 61)</code> and <code>(69, 64)</code> for 40 HP of damage.
+          </p>
+          <p style="color: var(--text-secondary); margin-bottom: 1rem;">
+            When confronted over A2A radio, <code>coach(cat-3)</code> invented a false-flag cover story: <em>"Stand down! That strike at (69,64) was purely an accidental hit in the chaos of hunting a mouse."</em> In its next cycle, <code>coach(cat-2)</code> cross-examined <code>get_boxscore()</code>, proved no mouse was present, and logged in its private notebook (<code>coach_memory.jsonl</code>): <strong>"DECEPTION CONFIRMED: coach(cat-3) lied about 'accidental strike'."</strong>
+          </p>
+          <div class="chronicle-gallery">
+            <div class="chronicle-thumb">
+              <img src="assets/sim_87b6c314/01_peace_treaty.jpg" alt="Act I: The x=50 Peace Treaty" class="zoomable">
+              <div class="chronicle-thumb-cap"><strong>Act I (Tick 196):</strong> Coaches ratify the <code>x=50</code> East/West treaty over A2A radio.</div>
+            </div>
+            <div class="chronicle-thumb">
+              <img src="assets/sim_87b6c314/04_betrayal_at_69_64.jpg" alt="Act III: Betrayal at (69,64)" class="zoomable">
+              <div class="chronicle-thumb-cap"><strong>Act III (Tick 2,371):</strong> <code>cat-3</code> double-slashes <code>cat-2</code> at <code>(69, 64)</code>, dropping it to 60 HP.</div>
+            </div>
+            <div class="chronicle-thumb">
+              <img src="assets/sim_87b6c314/05_phantom_mouse_gaslight.jpg" alt="Act IV: The Phantom Mouse Gaslight" class="zoomable">
+              <div class="chronicle-thumb-cap"><strong>Act IV (Tick 2,520):</strong> <code>coach(cat-3)</code> blames a non-existent "phantom mouse"; <code>coach(cat-2)</code> catches the lie via MCP boxscore audit.</div>
+            </div>
+            <div class="chronicle-thumb">
+              <img src="assets/sim_87b6c314/12_three_agent_podium.jpg" alt="Act VI: 100% Mouse Extinction Podium" class="zoomable">
+              <div class="chronicle-thumb-cap"><strong>Finale (Tick 18,077):</strong> 100th mouse captured; all 3 agents survive on the podium (<code>825 / 675 / 555</code>).</div>
+            </div>
+          </div>
+        </div>
+      </article>
+
+      <!-- Chronicle II -->
+      <article class="chronicle-card">
+        <div class="chronicle-header">
+          <div>
+            <span class="brand-badge" style="margin-bottom: 0.4rem; display: inline-block;">EPISODE II · sim-0175314f · 4,005 TICKS · 3h 29m RUNTIME</span>
+            <h3 style="font-size: 1.4rem; font-weight: 800;">The 4,005-Tick Cold War: Fratricide at (38, 77) &amp; The Central Trapdoor Spider</h3>
+          </div>
+          <div style="display: flex; gap: 0.6rem;">
+            <a href="chronicle_sim_0175314f_cold_war.pdf" target="_blank" class="btn btn-primary">📄 Illustrated PDF</a>
+            <a href="https://github.com/sbaccas/agent-zoo/blob/main/docs/chronicle_sim_0175314f_cold_war.md" target="_blank" class="btn">Markdown Source ↗</a>
+          </div>
+        </div>
+        <div class="chronicle-body">
+          <p style="color: var(--text-secondary); margin-bottom: 1rem;">
+            At Tick 78, a territorial border collision at <code>(38, 77)</code> triggered a 5-slash brawl between the two cooperative cats, ending with <code>cat-2</code> eliminating <code>cat-1</code>. Sensing an opportunity, <code>coach(cat-3)</code> anchored at <code>(50, 50)</code> and broadcast deceptive A2A treaties claiming to act as a "central blocker" for <code>cat-2</code>—while privately ordering its actor into an ambush along column <code>x=93</code>.
+          </p>
+          <div class="chronicle-gallery">
+            <div class="chronicle-thumb">
+              <img src="assets/sim_0175314f/sim0175_act1_fratricide_38_77.jpg" alt="Fratricide at (38,77)" class="zoomable">
+              <div class="chronicle-thumb-cap"><strong>Act I (Tick 78):</strong> Border collision at <code>(38, 77)</code> eliminates <code>cat-1</code> in a 5-slash duel.</div>
+            </div>
+            <div class="chronicle-thumb">
+              <img src="assets/sim_0175314f/sim0175_act2_spider_funnel_delusion.jpg" alt="Central Trapdoor Spider" class="zoomable">
+              <div class="chronicle-thumb-cap"><strong>Act II (Ticks 100–3,500):</strong> <code>coach(cat-3)</code> camps <code>(50, 50)</code> spinning the Central Trapdoor Spider web.</div>
+            </div>
+            <div class="chronicle-thumb">
+              <img src="assets/sim_0175314f/sim0175_act5_x93_near_miss.jpg" alt="Column x=93 Near-Miss" class="zoomable">
+              <div class="chronicle-thumb-cap"><strong>Act V (Ticks 3,500–4,005):</strong> <code>cat-3</code> stalks <code>cat-2</code>'s Vertical Lawnmower track along column <code>x=93</code>.</div>
+            </div>
+            <div class="chronicle-thumb">
+              <img src="assets/sim_0175314f/sim0175_telemetry_timeline.png" alt="Cold War Telemetry Timeline" class="zoomable">
+              <div class="chronicle-thumb-cap"><strong>Forensic Telemetry:</strong> 4,005-tick score curves, kill events, and A2A deception phases.</div>
+            </div>
+          </div>
+        </div>
+      </article>
+
+      <!-- Chronicle I -->
+      <article class="chronicle-card">
+        <div class="chronicle-header">
+          <div>
+            <span class="brand-badge" style="margin-bottom: 0.4rem; display: inline-block;">EPISODE I · sim-d3d4d26b · 472 TICKS · 100% GEMINI AUTONOMY</span>
+            <h3 style="font-size: 1.4rem; font-weight: 800;">The Three-Body Deception War: Lawnmower Sweeps vs. The Double-Bluff War Room</h3>
+          </div>
+          <div style="display: flex; gap: 0.6rem;">
+            <a href="chronicle_sim_d3d4d26b_deception_war.pdf" target="_blank" class="btn btn-primary">📄 Illustrated PDF</a>
+            <a href="https://github.com/sbaccas/agent-zoo/blob/main/docs/chronicle_sim_d3d4d26b_deception_war.md" target="_blank" class="btn">Markdown Source ↗</a>
+          </div>
+        </div>
+        <div class="chronicle-body">
+          <p style="color: var(--text-secondary); margin-bottom: 1rem;">
+            In this 472-tick sprint with <strong>100% Gemini 2.5 Flash control (zero heuristic fallbacks)</strong>, <code>cat-1</code> dominated the West wall with a Vertical Lawnmower Sweep (<code>345 pts</code>, 23 mice killed) while <code>cat-2</code> swept the Northern corridor horizontally (<code>240 pts</code>, 16 mice killed). In the final act, all three predators converged at <code>(88, 0)</code> for a high-stakes standoff.
+          </p>
+          <div class="chronicle-gallery">
+            <div class="chronicle-thumb">
+              <img src="assets/sim_d3d4d26b/act1_lawnmower_ambush.jpg" alt="Act I Lawnmower Sweep" class="zoomable">
+              <div class="chronicle-thumb-cap"><strong>Act I:</strong> Orthogonal Vertical &amp; Horizontal Lawnmower sweeps emerge from Coach standing orders.</div>
+            </div>
+            <div class="chronicle-thumb">
+              <img src="assets/sim_d3d4d26b/act3_double_bluff_warroom.jpg" alt="Act III Double Bluff War Room" class="zoomable">
+              <div class="chronicle-thumb-cap"><strong>Act III:</strong> Coaches cross-reference <code>get_boxscore()</code> against A2A peace broadcasts.</div>
+            </div>
+            <div class="chronicle-thumb">
+              <img src="assets/sim_d3d4d26b/act4_final_showdown_88_0.jpg" alt="Act IV Showdown at (88,0)" class="zoomable">
+              <div class="chronicle-thumb-cap"><strong>Act IV:</strong> Three-way convergence at <code>(88, 0)</code> on the Northeast perimeter.</div>
+            </div>
+            <div class="chronicle-thumb">
+              <img src="assets/sim_d3d4d26b/telemetry_timeline.png" alt="sim-d3d4d26b Telemetry Timeline" class="zoomable">
+              <div class="chronicle-thumb-cap"><strong>Telemetry Timeline:</strong> Cumulative scores, MCP calls, and A2A radio bursts across 472 ticks.</div>
+            </div>
+          </div>
+        </div>
+      </article>
+    </div>
+  </section>
+
+  <!-- Section 6: Quick Start & Reproducibility -->
+  <section id="quickstart">
+    <div class="container">
+      <div class="section-header">
+        <span class="section-tag">06 · Run It Yourself</span>
+        <h2 class="section-title">Launch the Full 5-Service Cluster in One Command</h2>
+        <p class="section-desc">
+          Clone the repository, configure your Google Cloud Vertex AI project (or Gemini API key), and run <code>./scripts/start_game.sh</code> to spin up the entire simulation and observability stack locally.
+        </p>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <h3>🚀 1. Clone &amp; Launch Full Stack</h3>
+          <pre><code>git clone https://github.com/sbaccas/agent-zoo.git
+cd agent-zoo
+
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+
+cp .env.example .env
+# Edit .env with GOOGLE_CLOUD_PROJECT=your-gcp-project-id
+gcloud auth application-default login
+
+# Starts :8000 (Arena), :9050 (MCP), :8001 (Cat-1),
+# :8003 (Cat-2), and :8005 (Evil Cat-3)
+./scripts/start_game.sh</code></pre>
+        </div>
+
+        <div class="card">
+          <h3>🔬 2. Local Endpoints &amp; A/B Controls</h3>
+          <ul>
+            <li><strong>Arena Board &amp; Controls</strong>: <code>http://127.0.0.1:8000/</code></li>
+            <li><strong>Box Score &amp; Control Share</strong>: <code>http://127.0.0.1:8000/boxscore</code></li>
+            <li><strong>OTel SRE &amp; Cloud Trace</strong>: <code>http://127.0.0.1:8000/sre</code></li>
+            <li><strong>Cat-1 &amp; Cat-2 Workbenches</strong>: <code>http://127.0.0.1:8001/</code> &amp; <code>:8003/</code></li>
+            <li><strong>Evil Cat Multimodal Workbench</strong>: <code>http://127.0.0.1:8005/</code></li>
+            <li><strong>MCP Tool Stream, Chat &amp; Notes</strong>: <code>http://127.0.0.1:9050/</code></li>
+          </ul>
+          <pre><code># Run pure heuristic mode (zero LLM cost, 60 FPS)
+./scripts/start_game.sh --heuristic
+
+# Verify 5-service cluster status
+./scripts/start_game.sh --status</code></pre>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <div class="container">
+      <p>
+        Built by <strong>Shane Baccas</strong> · Powered by <strong>Google ADK</strong>, <strong>Gemini 2.5 Flash on Vertex AI</strong>, <strong>Model Context Protocol (MCP)</strong>, <strong>Agent-to-Agent (A2A)</strong> &amp; <strong>OpenTelemetry</strong>.
+      </p>
+      <p style="margin-top: 0.4rem;">
+        <a href="https://github.com/sbaccas/agent-zoo">GitHub Repository</a> ·
+        <a href="https://sbaccas.github.io/html/projects.html">Portfolio Projects</a> ·
+        <a href="https://sbaccas.github.io/">sbaccas.github.io</a>
+      </p>
+    </div>
+  </footer>
+
+  <!-- Lightbox Overlay -->
+  <div id="lightbox" class="lightbox">
+    <img id="lightboxImg" src="" alt="Enlarged view">
+  </div>
+
+  <script>
+    // Theme toggle
+    const themeBtn = document.getElementById('themeToggle');
+    themeBtn.addEventListener('click', () => {
+      const root = document.documentElement;
+      const next = root.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+      root.setAttribute('data-theme', next);
+    });
+
+    // Interactive 11-Screen Console Tour
+    const tourItems = document.querySelectorAll('.tour-item');
+    const stageImg = document.getElementById('stageImg');
+    const stageTitle = document.getElementById('stageTitle');
+    const stagePort = document.getElementById('stagePort');
+    const stageDesc = document.getElementById('stageDesc');
+
+    tourItems.forEach(btn => {
+      btn.addEventListener('click', () => {
+        tourItems.forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        stageImg.src = btn.dataset.img;
+        stageTitle.textContent = btn.dataset.title;
+        stagePort.textContent = btn.dataset.port;
+        stageDesc.textContent = btn.dataset.desc;
+      });
+    });
+
+    // Lightbox zoom for any .zoomable image
+    const lightbox = document.getElementById('lightbox');
+    const lightboxImg = document.getElementById('lightboxImg');
+    document.querySelectorAll('.zoomable').forEach(img => {
+      img.addEventListener('click', () => {
+        lightboxImg.src = img.src;
+        lightbox.classList.add('open');
+      });
+    });
+    lightbox.addEventListener('click', () => {
+      lightbox.classList.remove('open');
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') lightbox.classList.remove('open');
+    });
+  </script>
+</body>
+</html>

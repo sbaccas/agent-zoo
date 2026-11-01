@@ -14,7 +14,7 @@ RED='\033[0;31m'
 BOLD='\033[1m'
 NC='\033[0m'
 
-PROJECT_BASE_NAME="${1:-catz-app-prod}"
+PROJECT_BASE_NAME="${1:-agent-zoo-prod}"
 REGION="${REGION:-northamerica-northeast1}"
 ZONE="${ZONE:-northamerica-northeast1-a}"
 
@@ -24,7 +24,7 @@ TF_DIR="${ROOT_DIR}/infra/terraform"
 
 echo -e "${BLUE}${BOLD}"
 echo "================================================================================"
-echo "          🚀 CATZ APP PROD: TERRAFORM BOOTSTRAP PIPELINE"
+echo "          🚀 AGENT ZOO: TERRAFORM BOOTSTRAP PIPELINE"
 echo "================================================================================"
 echo -e "${NC}"
 

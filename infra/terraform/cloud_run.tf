@@ -58,7 +58,7 @@ resource "google_cloud_run_v2_service_iam_member" "game_server_invoker" {
   location = var.region
   name     = google_cloud_run_v2_service.game_server.name
   role     = "roles/run.invoker"
-  member   = "domain:shanebaccas.altostrat.com"
+  member   = "domain:${var.allowed_domain}"
 }
 
 resource "google_cloud_run_v2_service_iam_member" "game_server_invoker_jumpbox" {
@@ -152,7 +152,7 @@ resource "google_cloud_run_v2_service_iam_member" "cat_agent_invoker" {
   location = var.region
   name     = google_cloud_run_v2_service.cat_agent.name
   role     = "roles/run.invoker"
-  member   = "domain:shanebaccas.altostrat.com"
+  member   = "domain:${var.allowed_domain}"
 }
 
 resource "google_cloud_run_v2_service_iam_member" "cat_agent_invoker_jumpbox" {
@@ -242,7 +242,7 @@ resource "google_cloud_run_v2_service_iam_member" "cat_agent_2_invoker" {
   location = var.region
   name     = google_cloud_run_v2_service.cat_agent_2.name
   role     = "roles/run.invoker"
-  member   = "domain:shanebaccas.altostrat.com"
+  member   = "domain:${var.allowed_domain}"
 }
 
 resource "google_cloud_run_v2_service_iam_member" "cat_agent_2_invoker_jumpbox" {
@@ -311,7 +311,7 @@ resource "google_cloud_run_v2_service_iam_member" "mcp_server_invoker" {
   location = var.region
   name     = google_cloud_run_v2_service.mcp_server.name
   role     = "roles/run.invoker"
-  member   = "domain:shanebaccas.altostrat.com"
+  member   = "domain:${var.allowed_domain}"
 }
 
 resource "google_cloud_run_v2_service_iam_member" "mcp_server_invoker_jumpbox" {

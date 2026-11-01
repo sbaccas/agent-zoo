@@ -1248,7 +1248,7 @@ SRE_DASHBOARD_HTML = """<!DOCTYPE html>
         <a href="http://127.0.0.1:9050">🔌 MCP Hub (:9050)</a>
         <a href="/sre" class="active">📈 SRE Dashboard</a>
         <a href="/metrics" target="_blank">🔥 Prometheus /metrics</a>
-        <a href="https://console.cloud.google.com/traces/list?project=catz-app-prod" target="_blank">☁️ GCP Cloud Trace</a>
+        <a href="https://console.cloud.google.com/traces/list" target="_blank">☁️ GCP Cloud Trace</a>
       </nav>
     </div>
     <div class="controls-bar">
@@ -1268,7 +1268,7 @@ SRE_DASHBOARD_HTML = """<!DOCTYPE html>
         <select id="sel-backend" onchange="changeBackend(this.value)">
           <option value="local">Local SRE Hub + /metrics</option>
           <option value="otlp">OTLP Collector / Jaeger</option>
-          <option value="gcp">Google Cloud Trace (catz-app-prod)</option>
+          <option value="gcp">Google Cloud Trace (GCP)</option>
         </select>
       </label>
     </div>
